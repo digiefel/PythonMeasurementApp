@@ -370,26 +370,34 @@ class MainUI:
         self.log_text.see(tk.END)
 
     # Live plotting helpers wired via MeasurementRunner callbacks
-    def start_plot(self, title, xlabel, ylabel, series_label="Data"):
+    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None):
         # Fully reset the figure/axes so subsequent runs always start clean
         self.fig.clf()
         self.ax = self.fig.add_subplot(111)
+        self.ax2 = None
+        self.secondary_series = set(secondary_series or [])
+        self.styles = styles or {}
         self.ax.set_title(title)
         self.ax.set_xlabel(xlabel)
         self.ax.set_ylabel(ylabel)
         self.ax.grid(True, linestyle="--", alpha=0.4)
         self.lines = {}
-        line, = self.ax.plot([], [], label=series_label, color="#1f77b4")
-        self.lines[series_label] = {"line": line, "x": [], "y": []}
-        self.ax.legend(loc="upper left")
+        styles = styles or {}
+        if self.secondary_series:
+            self.ax2 = self.ax.twinx()
+            self.ax2.set_ylabel("Resistance (Ohm)")
+        # Create initial series and any known secondary series so styles/legend are correct up-front
+        self._ensure_line(series_label)
+        for sec in self.secondary_series:
+            self._ensure_line(sec)
+        self._update_legend()
         self.canvas.draw_idle()
         self.root.update_idletasks()
 
     def add_plot_point(self, x, y, series_label="Data"):
         if series_label not in self.lines:
-            line, = self.ax.plot([], [], label=series_label)
-            self.lines[series_label] = {"line": line, "x": [], "y": []}
-            self.ax.legend(loc="upper left")
+            self._ensure_line(series_label)
+            self._update_legend()
 
         series = self.lines[series_label]
         series["x"].append(x)
@@ -398,8 +406,32 @@ class MainUI:
 
         self.ax.relim()
         self.ax.autoscale_view()
+        if self.ax2:
+            self.ax2.relim()
+            self.ax2.autoscale_view()
         self.canvas.draw_idle()
         self.root.update_idletasks()
+
+    def _ensure_line(self, label):
+        """Create a line for the given label if it does not exist."""
+        if label in self.lines:
+            return
+        target_ax = self.ax2 if (self.ax2 and label in self.secondary_series) else self.ax
+        style_key = label if label in self.styles else ('R_fit' if 'R_fit' in self.styles else label)
+        style = self.styles.get(style_key, {})
+        line, = target_ax.plot(
+            [], [],
+            label=label,
+            marker=style.get("marker", "o"),
+            color=style.get("color", None)
+        )
+        self.lines[label] = {"line": line, "x": [], "y": [], "ax": target_ax}
+
+    def _update_legend(self):
+        """Refresh legend including secondary axis series."""
+        handles = [meta["line"] for meta in self.lines.values()]
+        if handles:
+            self.ax.legend(handles=handles, loc="upper left")
 
     def finish_plot(self, save_path=None):
         if save_path:
