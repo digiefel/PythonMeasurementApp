@@ -1,6 +1,6 @@
 import os
 from procedures.base import MeasurementProcedure
-from bindings import B1500Session
+from bindings import B1500Session, SMU_CHANNEL_MAP
 
 class FourTerminalIVProcedure(MeasurementProcedure):
     def __init__(self, settings, output_dir):
@@ -13,6 +13,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.force_low_channel = settings.get('force_low_channel', 3)   # Force low terminal
         self.sense_high_channel = settings.get('sense_high_channel', 5)  # Sense high terminal
         self.sense_low_channel = settings.get('sense_low_channel', 6)   # Sense low terminal
+        self.force_current_range = settings.get('force_current_range', 0.0)
 
         # Sweep parameters (current forcing for 4-terminal measurement)
         self.start_current = settings.get('start_current', 0.0)
@@ -27,6 +28,12 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.hold_time = settings.get('hold_time', 0.0)
         self.delay_time = settings.get('delay_time', 0.0)
         self.second_delay = settings.get('second_delay', 0.0)
+
+        # Normalize SMU names to channel numbers if needed
+        self.force_high_channel = SMU_CHANNEL_MAP.get(str(self.force_high_channel), self.force_high_channel)
+        self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
+        self.sense_high_channel = SMU_CHANNEL_MAP.get(str(self.sense_high_channel), self.sense_high_channel)
+        self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
 
     def run(self, device, runner):
         self.log(f'Starting 4-Terminal I-V Sweep on {device.name}', runner)
@@ -101,7 +108,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Sweep by stepping current; measure voltages on both sense channels per point
         for idx, current_set in enumerate(current_points):
-            b1500.force_current(source_channel, current_set, self.voltage_compliance)
+            b1500.force_current(source_channel, current_set, self.voltage_compliance, self.force_current_range)
 
             if self.delay_time > 0:
                 import time

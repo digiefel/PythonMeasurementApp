@@ -26,6 +26,23 @@ ViPReal64 = ct.POINTER(ViReal64)
 ViPReal32 = ct.POINTER(ViReal32)
 ViPSession = ct.POINTER(ViSession)
 
+# Hardware channel helpers
+SMU_CHANNEL_MAP = {
+    "SMU1": 3,
+    "SMU2": 4,
+    "SMU3": 5,
+    "SMU4": 6,
+}
+
+# Range presets (only AUTO is available with current bindings; add module-specific values when known)
+B1500_VOLTAGE_RANGES = [
+    (0.0, "Auto"),
+]
+
+B1500_CURRENT_RANGES = [
+    (0.0, "Auto"),
+]
+
 # Load DLLs
 dll_b1500 = ct.windll.LoadLibrary(r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll")
 dll_wgfmu = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\WGFMU.dll")
