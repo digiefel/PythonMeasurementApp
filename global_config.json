@@ -1,6 +1,6 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "C:/Users/EMN Lab/Documents/DATA/Davide",
+    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
     "procedures": {
         "RVSweep": {
             "rv_start": 0.1,

@@ -47,7 +47,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             self.save_data(results, filename,
                           ['Current_A', 'Voltage_V', 'Time_sec', 'Status'],
                           runner)
-
+            plot_path = os.path.join(self.output_dir, f'four_terminal_iv_{device.name}_plot.png')
+            runner.finalize_plot(plot_path)
             self.log(f'4-Terminal I-V sweep completed for {device.name}', runner)
 
         except Exception as e:
@@ -91,6 +92,13 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         results = []
 
+        runner.start_live_plot(
+            title=f'4-Terminal I-V - {device.name}',
+            xlabel='Current (A)',
+            ylabel='Voltage (V)',
+            series_label='V(I)'
+        )
+
         # Sweep by stepping current; measure voltages on both sense channels per point
         for idx, current_set in enumerate(current_points):
             b1500.force_current(source_channel, current_set, self.voltage_compliance)
@@ -111,6 +119,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                 t_high,
                 status_combined
             ])
+            runner.add_live_point(current_set, v_diff, 'V(I)')
 
         # Zero outputs and disable switches
         b1500.zero_output(B1500Session.CH_ALL)

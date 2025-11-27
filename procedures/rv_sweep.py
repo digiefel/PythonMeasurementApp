@@ -1,6 +1,8 @@
-import pyvisa
+import os
 import time
+
 import numpy as np
+import pyvisa
 from procedures.base import MeasurementProcedure
 
 class RVSweepProcedure(MeasurementProcedure):
@@ -35,6 +37,14 @@ class RVSweepProcedure(MeasurementProcedure):
             # Initialize results storage
             results = []
 
+            # Initialize live plot
+            runner.start_live_plot(
+                title=f'RV Sweep - {device.name}',
+                xlabel='Voltage (V)',
+                ylabel='Current (A)',
+                series_label='I(V)'
+            )
+
             # Perform measurements for each voltage level
             for i, voltage in enumerate(rv_vector):
                 self.log(f'Pulse {i+1}/{len(rv_vector)}: {voltage:.3f} V', runner)
@@ -42,12 +52,15 @@ class RVSweepProcedure(MeasurementProcedure):
                 # Perform the measurement
                 current = self.perform_measurement(instr, voltage)
                 results.append([voltage, current])
+                runner.add_live_point(voltage, current, 'I(V)')
 
                 # Small delay between measurements
                 time.sleep(0.01)
 
             # Save results
             self.save_data(results, f'rv_{device.name}.csv', ['Voltage_V', 'Current_A'], runner)
+            plot_path = os.path.join(self.output_dir, f'rv_{device.name}_plot.png')
+            runner.finalize_plot(plot_path)
             self.log(f'RV sweep completed for {device.name}', runner)
 
         except Exception as e:
