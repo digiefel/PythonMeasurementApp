@@ -52,7 +52,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             # Save results
             filename = f'four_terminal_iv_{device.name}.csv'
             self.save_data(results, filename,
-                          ['Current_A', 'Voltage_V', 'Time_sec', 'Status'],
+                          ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
                           runner)
             plot_path = self.make_output_path(f'four_terminal_iv_{device.name}_plot.png')
             runner.finalize_plot(plot_path)
@@ -122,7 +122,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
             results.append([
                 current_set,
-                v_diff,
+                v_high,
+                v_low,
                 t_high,
                 status_combined
             ])

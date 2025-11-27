@@ -34,13 +34,53 @@ SMU_CHANNEL_MAP = {
     "SMU4": 6,
 }
 
-# Range presets (only AUTO is available with current bindings; add module-specific values when known)
+# Range presets (from agb1500.h: positive = limited auto, negative = fixed, 0 = auto)
 B1500_VOLTAGE_RANGES = [
     (0.0, "Auto"),
+    (0.5, "Auto (≥0.5 V)"),
+    (2.0, "Auto (≥2 V)"),
+    (5.0, "Auto (≥5 V)"),
+    (20.0, "Auto (≥20 V)"),
+    (40.0, "Auto (≥40 V)"),
+    (100.0, "Auto (≥100 V)"),
+    (200.0, "Auto (≥200 V)"),
+    (-0.5, "Fixed 0.5 V"),
+    (-2.0, "Fixed 2 V"),
+    (-5.0, "Fixed 5 V"),
+    (-20.0, "Fixed 20 V"),
+    (-40.0, "Fixed 40 V"),
+    (-100.0, "Fixed 100 V"),
+    (-200.0, "Fixed 200 V"),
 ]
 
 B1500_CURRENT_RANGES = [
     (0.0, "Auto"),
+    (1.0e-12, "Auto (≥1 pA)"),
+    (1.0e-11, "Auto (≥10 pA)"),
+    (1.0e-10, "Auto (≥100 pA)"),
+    (1.0e-9, "Auto (≥1 nA)"),
+    (10.0e-9, "Auto (≥10 nA)"),
+    (100.0e-9, "Auto (≥100 nA)"),
+    (1.0e-6, "Auto (≥1 µA)"),
+    (10.0e-6, "Auto (≥10 µA)"),
+    (100.0e-6, "Auto (≥100 µA)"),
+    (1.0e-3, "Auto (≥1 mA)"),
+    (10.0e-3, "Auto (≥10 mA)"),
+    (100.0e-3, "Auto (≥100 mA)"),
+    (1.0, "Auto (≥1 A)"),
+    (-1.0e-12, "Fixed 1 pA"),
+    (-1.0e-11, "Fixed 10 pA"),
+    (-1.0e-10, "Fixed 100 pA"),
+    (-1.0e-9, "Fixed 1 nA"),
+    (-10.0e-9, "Fixed 10 nA"),
+    (-100.0e-9, "Fixed 100 nA"),
+    (-1.0e-6, "Fixed 1 µA"),
+    (-10.0e-6, "Fixed 10 µA"),
+    (-100.0e-6, "Fixed 100 µA"),
+    (-1.0e-3, "Fixed 1 mA"),
+    (-10.0e-3, "Fixed 10 mA"),
+    (-100.0e-3, "Fixed 100 mA"),
+    (-1.0, "Fixed 1 A"),
 ]
 
 # Load DLLs
