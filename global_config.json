@@ -1,0 +1,29 @@
+{
+    "gpib_address": "GPIB0::17::INSTR",
+    "output_dir": "C:/Users/EMN Lab/Documents/DATA/Davide",
+    "procedures": {
+        "RVSweep": {
+            "rv_start": 0.1,
+            "rv_stop": 2.0,
+            "rv_step": 0.1,
+            "pulse_length": 0.0001,
+            "read_bias": 0.3,
+            "set_amplitude": -1.8
+        },
+        "FourTerminalIV": {
+            "force_high_channel": 4,
+            "force_low_channel": 3,
+            "sense_high_channel": 5,
+            "sense_low_channel": 6,
+            "start_current": 0.0,
+            "stop_current": 1e-6,
+            "points": 75,
+            "voltage_compliance": 10.0,
+            "power_compliance": 0.0,
+            "measurement_range": 0.0,
+            "hold_time": 0.0,
+            "delay_time": 0.0,
+            "second_delay": 0.0
+        }
+    }
+}
