@@ -15,6 +15,8 @@ DEFAULT_CONFIG = {
         'subsite': '',
         'device': '',
         'procedure': '',
+        'set_home_before_run': True,
+        'run_subsite': False,
     },
 }
 
@@ -53,11 +55,7 @@ class Config:
     def get_last_selection(self):
         return self.data.get('last_selection', DEFAULT_CONFIG['last_selection'])
 
-    def set_last_selection(self, site, subsite, device, procedure):
-        self.data['last_selection'] = {
-            'site': site,
-            'subsite': subsite,
-            'device': device,
-            'procedure': procedure,
-        }
+    def set_last_selection(self, selection: dict):
+        """Persist an arbitrary last_selection dictionary."""
+        self.data['last_selection'] = selection or {}
         self.save()

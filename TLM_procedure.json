@@ -37,6 +37,8 @@
         "site": "VI",
         "subsite": "TLM",
         "device": "L800W8",
-        "procedure": "FourTerminalIV"
+        "procedure": "FourTerminalIV",
+        "run_subsite": false,
+        "set_home_before_run": false
     }
 }

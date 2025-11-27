@@ -353,12 +353,7 @@ class MainUI:
         # Update config in memory before saving
         # Global ASU settings are already merged into config.data by update_global_asu_from_ui
         self.config.set_procedure_settings(proc_name, settings)
-        self.config.set_last_selection(
-            self.site_var.get(),
-            self.subsite_var.get(),
-            self.device_var.get(),
-            proc_name
-        )
+        self.config.set_last_selection(self.build_last_selection())
         self.log(f'Saved settings to {path}')
 
     def run(self):
@@ -379,12 +374,7 @@ class MainUI:
         # Persist the settings as part of the run so they are available next time
         self.config.set_procedure_settings(proc_name, settings)
         # Persist last selection
-        self.config.set_last_selection(
-            self.site_var.get(),
-            self.subsite_var.get(),
-            self.device_var.get(),
-            proc_name
-        )
+        self.config.set_last_selection(self.build_last_selection())
         run_all = self.run_subsite_var.get()
         set_home = self.set_home_var.get()
         if run_all:
@@ -539,6 +529,21 @@ class MainUI:
             self.update_devices()
         if last_sel.get('device'):
             self.device_var.set(last_sel['device'])
+        if 'run_subsite' in last_sel:
+            self.run_subsite_var.set(bool(last_sel['run_subsite']))
+        if 'set_home_before_run' in last_sel:
+            self.set_home_var.set(bool(last_sel['set_home_before_run']))
+
+    def build_last_selection(self):
+        """Capture current UI selections; new fields are automatically persisted."""
+        return {
+            'site': self.site_var.get(),
+            'subsite': self.subsite_var.get(),
+            'device': self.device_var.get(),
+            'procedure': self.proc_var.get(),
+            'run_subsite': self.run_subsite_var.get(),
+            'set_home_before_run': self.set_home_var.get(),
+        }
 
     def load_global_asu(self):
         asu_ch = self.config.data.get('asu_channels', [])
