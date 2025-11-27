@@ -560,6 +560,7 @@ class B1500Session:
     High-level wrapper for B1500 instrument using ctypes bindings.
     """
     # Constants
+    INSTR_ERROR_DETECTED = -1074000633
     CH_ALL = 0
     IM_MODE = 1  # Measure current
     VM_MODE = 2  # Measure voltage
@@ -580,6 +581,22 @@ class B1500Session:
         ret = dll_b1500.agb1500_init(gpib_addr.encode(), 1, 1, ct.byref(self.session))
         if ret != 0:
             raise RuntimeError(f"B1500 init failed: {ret}")
+    
+    def error_query(self):
+        """Return (error_number, error_message) from instrument."""
+        errnum = ViInt32()
+        errmsg = ct.create_string_buffer(256)
+        ret = dll_b1500.agb1500_error_query(self.session, ct.byref(errnum), errmsg)
+        if ret != 0:
+            raise RuntimeError(f"Error query failed: {ret}")
+        return errnum.value, errmsg.value.decode(errors='ignore').strip()
+
+    def _check_ret(self, ret, context):
+        if ret == self.INSTR_ERROR_DETECTED:
+            errnum, errmsg = self.error_query()
+            raise RuntimeError(f"{context}: instrument error {errnum}: {errmsg}")
+        if ret != 0:
+            raise RuntimeError(f"{context} failed: {ret}")
 
     def reset(self):
         dll_b1500.agb1500_reset(self.session)
@@ -593,8 +610,7 @@ class B1500Session:
     def set_switch(self, channel, state):
         """Control switch matrix channel on/off state."""
         ret = dll_b1500.agb1500_setSwitch(self.session, channel, 1 if state else 0)
-        if ret != 0:
-            raise RuntimeError(f"Set switch failed: {ret}")
+        self._check_ret(ret, "Set switch")
 
     def reset_timestamp(self):
         """Reset internal timestamp for measurements."""
@@ -605,14 +621,12 @@ class B1500Session:
     def force_current(self, channel, current, compliance=10.0, range_=AUTO_RANGE, polarity=0):
         """Force a current level on the specified channel."""
         ret = dll_b1500.agb1500_force(self.session, channel, self.IF_MODE, range_, current, compliance, polarity)
-        if ret != 0:
-            raise RuntimeError(f"Force current failed: {ret}")
+        self._check_ret(ret, "Force current")
 
     def force_voltage(self, channel, voltage, compliance=0.1, range_=AUTO_RANGE, polarity=0):
         """Force a voltage level on the specified channel."""
         ret = dll_b1500.agb1500_force(self.session, channel, self.VF_MODE, range_, voltage, compliance, polarity)
-        if ret != 0:
-            raise RuntimeError(f"Force voltage failed: {ret}")
+        self._check_ret(ret, "Force voltage")
 
     def set_ic_sweep(self, channel, sweep_mode, range_, start, stop, bias, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
         """
@@ -620,8 +634,7 @@ class B1500Session:
         For voltage sweeps use sweep_mode=SWP_VF_SGLLIN and range_ as the source voltage range.
         """
         ret = dll_b1500.agb1500_setIv(self.session, channel, sweep_mode, range_, start, stop, bias, points, hold, delay, second_delay, compliance, power_compliance)
-        if ret != 0:
-            raise RuntimeError(f"Set IC sweep failed: {ret}")
+        self._check_ret(ret, "Set IC sweep")
 
     def sweep_ic(self, channel, measurement_mode, measurement_range, expected_points):
         """Execute configured sweep on channel and return measurement data."""
@@ -631,15 +644,13 @@ class B1500Session:
         time_ = (ViReal64 * expected_points)()
         point_count = ViInt32(expected_points)
         ret = dll_b1500.agb1500_sweepIv(self.session, channel, measurement_mode, measurement_range, ct.byref(point_count), source, value, status, time_)
-        if ret != 0:
-            raise RuntimeError(f"Sweep IC failed: {ret}")
+        self._check_ret(ret, "Sweep IC")
         return list(source), list(value), list(status), list(time_), point_count.value
 
     def zero_output(self, channel):
         """Return channel to zero output state."""
         ret = dll_b1500.agb1500_zeroOutput(self.session, channel)
-        if ret != 0:
-            raise RuntimeError(f"Zero output failed: {ret}")
+        self._check_ret(ret, "Zero output")
 
     def spot_meas(self, channel, mode, range_=AUTO_RANGE):
         """Single spot measurement on a channel."""
@@ -647,8 +658,7 @@ class B1500Session:
         status = ViInt32()
         timestamp = ViReal64()
         ret = dll_b1500.agb1500_spotMeas(self.session, channel, mode, range_, ct.byref(value), ct.byref(status), ct.byref(timestamp))
-        if ret != 0:
-            raise RuntimeError(f"Spot measurement failed: {ret}")
+        self._check_ret(ret, "Spot measurement")
         return value.value, status.value, timestamp.value
 
     def close(self):
