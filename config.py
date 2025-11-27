@@ -2,6 +2,19 @@ import json
 import os
 from models import load_devices_csv
 
+DEFAULT_CONFIG = {
+    'gpib_address': 'GPIB0::17::INSTR',
+    'output_dir': 'C:/Users/EMN Lab/Documents/DATA/Davide',
+    'procedures': {},
+    'last_selection': {
+        'site': '',
+        'subsite': '',
+        'device': '',
+        'procedure': '',
+    },
+}
+
+
 class Config:
     def __init__(self, config_path: str, devices_csv_path: str):
         self.config_path = config_path
@@ -12,16 +25,35 @@ class Config:
     def load(self):
         if os.path.exists(self.config_path):
             with open(self.config_path, 'r') as f:
-                return json.load(f)
-        return {'gpib_address': 'GPIB0::17::INSTR', 'output_dir': 'C:/Users/EMN Lab/Documents/DATA/Davide', 'procedures': {}}
+                data = json.load(f)
+            # ensure keys exist
+            for k, v in DEFAULT_CONFIG.items():
+                if k not in data:
+                    data[k] = v
+            if 'last_selection' not in data:
+                data['last_selection'] = DEFAULT_CONFIG['last_selection'].copy()
+            return data
+        return DEFAULT_CONFIG.copy()
     
     def save(self):
         with open(self.config_path, 'w') as f:
             json.dump(self.data, f, indent=4)
     
     def get_procedure_settings(self, proc_name: str):
-        return self.data['procedures'].get(proc_name, {})
+        return self.data.get('procedures', {}).get(proc_name, {})
     
     def set_procedure_settings(self, proc_name: str, settings: dict):
-        self.data['procedures'][proc_name] = settings
+        self.data.setdefault('procedures', {})[proc_name] = settings
+        self.save()
+
+    def get_last_selection(self):
+        return self.data.get('last_selection', DEFAULT_CONFIG['last_selection'])
+
+    def set_last_selection(self, site, subsite, device, procedure):
+        self.data['last_selection'] = {
+            'site': site,
+            'subsite': subsite,
+            'device': device,
+            'procedure': procedure,
+        }
         self.save()

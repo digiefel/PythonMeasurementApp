@@ -103,9 +103,12 @@ class MainUI:
         self.populate_sites()
         # Default to first procedure in list
         default_proc = next(iter(self.procedure_fields.keys()))
-        self.proc_var.set(default_proc)
-        self.proc_cb.set(default_proc)
-        self.render_param_form(default_proc)
+        last_sel = self.config.get_last_selection()
+        proc_to_use = last_sel.get('procedure') or default_proc
+        self.proc_var.set(proc_to_use)
+        self.proc_cb.set(proc_to_use)
+        self.render_param_form(proc_to_use)
+        self.apply_last_selection(last_sel)
 
     def build_layout(self):
         # Selection section
@@ -288,6 +291,7 @@ class MainUI:
             self.log(f'Failed to load settings: {e}')
             return
         self.render_param_form(proc_name)
+        self.apply_last_selection(self.config.get_last_selection())
         self.log(f'Loaded settings from {path}')
 
     def save_settings(self):
@@ -305,7 +309,14 @@ class MainUI:
         if not path:
             return
         self.config.config_path = path
+        # Update config in memory before saving
         self.config.set_procedure_settings(proc_name, settings)
+        self.config.set_last_selection(
+            self.site_var.get(),
+            self.subsite_var.get(),
+            self.device_var.get(),
+            proc_name
+        )
         self.log(f'Saved settings to {path}')
 
     def run(self):
@@ -324,6 +335,13 @@ class MainUI:
         settings = self.collect_settings()
         # Persist the settings as part of the run so they are available next time
         self.config.set_procedure_settings(proc_name, settings)
+        # Persist last selection
+        self.config.set_last_selection(
+            self.site_var.get(),
+            self.subsite_var.get(),
+            self.device_var.get(),
+            proc_name
+        )
         self.runner.run_procedure(site, subsite, device, proc_class, settings)
     
     def log(self, msg):
@@ -387,6 +405,20 @@ class MainUI:
             if lbl == label:
                 return val
         return options[0][0] if options else 0.0
+
+    def apply_last_selection(self, last_sel):
+        if last_sel.get('procedure'):
+            self.proc_var.set(last_sel['procedure'])
+            self.proc_cb.set(last_sel['procedure'])
+            self.render_param_form(last_sel['procedure'])
+        if last_sel.get('site'):
+            self.site_var.set(last_sel['site'])
+            self.update_subsites()
+        if last_sel.get('subsite'):
+            self.subsite_var.set(last_sel['subsite'])
+            self.update_devices()
+        if last_sel.get('device'):
+            self.device_var.set(last_sel['device'])
 
 
 if __name__ == '__main__':
