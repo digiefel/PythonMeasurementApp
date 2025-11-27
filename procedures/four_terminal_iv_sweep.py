@@ -10,8 +10,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # SMU channel assignments for 4-terminal measurement (default to installed modules on this tool)
         self.force_high_channel = settings.get('force_high_channel', 4)  # Force high terminal
-        self.force_low_channel = settings.get('force_low_channel', 3)   # Force low terminal
         self.sense_high_channel = settings.get('sense_high_channel', 5)  # Sense high terminal
+        self.force_low_channel = settings.get('force_low_channel', 3)   # Force low terminal
         self.sense_low_channel = settings.get('sense_low_channel', 6)   # Sense low terminal
         self.force_current_range = settings.get('force_current_range', 0.0)
 
@@ -31,8 +31,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Normalize SMU names to channel numbers if needed
         self.force_high_channel = SMU_CHANNEL_MAP.get(str(self.force_high_channel), self.force_high_channel)
-        self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
         self.sense_high_channel = SMU_CHANNEL_MAP.get(str(self.sense_high_channel), self.sense_high_channel)
+        self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
         self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
 
     def run(self, device, runner):
@@ -42,7 +42,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             # Initialize B1500 session
             b1500 = B1500Session(self.gpib_address)
             b1500.reset()
-            b1500.set_timeout(60000)  # 60 second timeout
+            b1500.set_timeout(10000)  # 10 second timeout
             b1500.enable_error_detect(True)
             self.log(f'Connected to B1500 at {self.gpib_address}', runner)
 
@@ -54,7 +54,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             self.save_data(results, filename,
                           ['Current_A', 'Voltage_V', 'Time_sec', 'Status'],
                           runner)
-            plot_path = os.path.join(self.output_dir, f'four_terminal_iv_{device.name}_plot.png')
+            plot_path = self.make_output_path(f'four_terminal_iv_{device.name}_plot.png')
             runner.finalize_plot(plot_path)
             self.log(f'4-Terminal I-V sweep completed for {device.name}', runner)
 
