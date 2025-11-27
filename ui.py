@@ -38,6 +38,10 @@ class MainUI:
         self.device_var = tk.StringVar()
         self.proc_var = tk.StringVar()
         self.param_vars = {}
+        # Global ASU state
+        self.asu_channels_var = tk.StringVar()
+        self.asu_path_var = tk.StringVar()
+        self.asu_range_var = tk.BooleanVar()
 
         # Procedure field definitions (label, type)
         self.procedure_fields = {
@@ -56,7 +60,6 @@ class MainUI:
                 ('force_low_channel', 'Force Low SMU', 'smu'),
                 ('sense_high_channel', 'Sense High SMU', 'smu'),
                 ('sense_low_channel', 'Sense Low SMU', 'smu'),
-                ('force_current_range', 'Force Current Range', 'current_range'),
                 ('start_current', 'Start Current (A)', float),
                 ('stop_current', 'Stop Current (A)', float),
                 ('points', 'Points', int),
@@ -85,7 +88,6 @@ class MainUI:
                 'force_low_channel': 3,
                 'sense_high_channel': 5,
                 'sense_low_channel': 6,
-                'force_current_range': 0.0,
                 'start_current': 0.0,
                 'stop_current': 1e-6,
                 'points': 75,
@@ -109,6 +111,7 @@ class MainUI:
         self.proc_cb.set(proc_to_use)
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
+        self.load_global_asu()
 
     def build_layout(self):
         # Selection section
@@ -136,15 +139,28 @@ class MainUI:
         self.proc_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
+        # Global ASU config
+        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=4, column=0, sticky="w")
+        self.asu_channels_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_channels_var)
+        self.asu_channels_entry.grid(row=4, column=1, sticky="ew", pady=2)
+
+        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=5, column=0, sticky="w")
+        self.asu_path_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_path_var)
+        self.asu_path_entry.grid(row=5, column=1, sticky="ew", pady=2)
+
+        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=6, column=0, sticky="w")
+        self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
+        self.asu_range_check.grid(row=6, column=1, sticky="w", pady=2)
+
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -290,6 +306,8 @@ class MainUI:
         except Exception as e:
             self.log(f'Failed to load settings: {e}')
             return
+        # Refresh ASU globals and UI fields
+        self.load_global_asu()
         self.render_param_form(proc_name)
         self.apply_last_selection(self.config.get_last_selection())
         self.log(f'Loaded settings from {path}')
@@ -299,6 +317,7 @@ class MainUI:
         if not proc_name:
             self.log("Select a procedure before saving settings.")
             return
+        self.update_global_asu_from_ui()
         settings = self.collect_settings()
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
@@ -310,6 +329,7 @@ class MainUI:
             return
         self.config.config_path = path
         # Update config in memory before saving
+        # Global ASU settings are already merged into config.data by update_global_asu_from_ui
         self.config.set_procedure_settings(proc_name, settings)
         self.config.set_last_selection(
             self.site_var.get(),
@@ -324,6 +344,7 @@ class MainUI:
         if not proc_name:
             self.log("Select a procedure before running.")
             return
+        self.update_global_asu_from_ui()
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
@@ -350,7 +371,9 @@ class MainUI:
 
     # Live plotting helpers wired via MeasurementRunner callbacks
     def start_plot(self, title, xlabel, ylabel, series_label="Data"):
-        self.ax.clear()
+        # Fully reset the figure/axes so subsequent runs always start clean
+        self.fig.clf()
+        self.ax = self.fig.add_subplot(111)
         self.ax.set_title(title)
         self.ax.set_xlabel(xlabel)
         self.ax.set_ylabel(ylabel)
@@ -359,7 +382,7 @@ class MainUI:
         line, = self.ax.plot([], [], label=series_label, color="#1f77b4")
         self.lines[series_label] = {"line": line, "x": [], "y": []}
         self.ax.legend(loc="upper left")
-        self.canvas.draw()
+        self.canvas.draw_idle()
         self.root.update_idletasks()
 
     def add_plot_point(self, x, y, series_label="Data"):
@@ -375,7 +398,7 @@ class MainUI:
 
         self.ax.relim()
         self.ax.autoscale_view()
-        self.canvas.draw()
+        self.canvas.draw_idle()
         self.root.update_idletasks()
 
     def finish_plot(self, save_path=None):
@@ -419,6 +442,33 @@ class MainUI:
             self.update_devices()
         if last_sel.get('device'):
             self.device_var.set(last_sel['device'])
+
+    def load_global_asu(self):
+        asu_ch = self.config.data.get('asu_channels', [])
+        # Display as comma-separated
+        self.asu_channels_var.set(','.join(map(str, asu_ch)) if asu_ch else '')
+        self.asu_path_var.set('' if self.config.data.get('asu_path_mode') is None else str(self.config.data.get('asu_path_mode')))
+        self.asu_range_var.set(bool(self.config.data.get('asu_range_mode')))
+
+    def update_global_asu_from_ui(self):
+        # Parse channels list (accept labels or numbers)
+        raw = self.asu_channels_var.get().strip()
+        chans = []
+        if raw:
+            for token in raw.split(','):
+                tok = token.strip()
+                if not tok:
+                    continue
+                # Store the raw token to preserve labels; mapping happens at use time
+                chans.append(tok)
+        path_val = self.asu_path_var.get().strip()
+        range_val = self.asu_range_var.get()
+        self.config.data['asu_channels'] = chans
+        self.config.data['asu_path_mode'] = None if path_val == '' else int(float(path_val))
+        # Treat checkbox True as enabling the 1pA range (set to 1), False as None/disabled
+        self.config.data['asu_range_mode'] = 1 if range_val else None
+        # Persist immediately so other operations see updated globals
+        self.config.save()
 
 
 if __name__ == '__main__':

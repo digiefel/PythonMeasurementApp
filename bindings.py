@@ -630,6 +630,9 @@ class B1500Session:
     # Sweep mode definitions (see agb1500.h)
     SWP_IF_SGLLIN = -1  # Single linear current sweep
     SWP_VF_SGLLIN = 1   # Single linear voltage sweep
+    # Measurement type constants (agb1500.h)
+    MEAS_TYPE_MSPOT = 1
+    MEAS_TYPE_SWEEP = 2
     
     def __init__(self, gpib_addr="GPIB0::17::INSTR"):
         if not dll_b1500:
@@ -648,10 +651,23 @@ class B1500Session:
             raise RuntimeError(f"Error query failed: {ret}")
         return errnum.value, errmsg.value.decode(errors='ignore').strip()
 
+    def _describe_status(self, ret):
+        """Return human-readable description for a driver status code."""
+        try:
+            buf = ct.create_string_buffer(256)
+            dll_b1500.agb1500_error_message(self.session, ret, buf)
+            msg = buf.value.decode(errors="ignore").strip()
+            return msg
+        except Exception:
+            return ""
+
     def _check_ret(self, ret, context):
         if ret == self.INSTR_ERROR_DETECTED:
             errnum, errmsg = self.error_query()
-            raise RuntimeError(f"{context}: instrument error {errnum}: {errmsg}")
+            raise RuntimeError(f"{context}: instrument error {errnum}: {errmsg} (ret={ret})")
+        if ret < 0:
+            msg = self._describe_status(ret)
+            raise RuntimeError(f"{context} failed: {ret} {f'({msg})' if msg else ''}".strip())
         if ret != 0:
             raise RuntimeError(f"{context} failed: {ret}")
 
@@ -685,12 +701,28 @@ class B1500Session:
         ret = dll_b1500.agb1500_force(self.session, channel, self.VF_MODE, range_, voltage, compliance, polarity)
         self._check_ret(ret, "Force voltage")
 
-    def set_ic_sweep(self, channel, sweep_mode, range_, start, stop, bias, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
+    def asu_path(self, channel, path):
+        """Select ASU path for a channel (see B1500 ASU path modes)."""
+        ret = dll_b1500.agb1500_asuPath(self.session, channel, path)
+        self._check_ret(ret, "ASU path")
+
+    def asu_range(self, channel, rng):
+        """Select ASU range for a channel (see B1500 ASU ranges)."""
+        ret = dll_b1500.agb1500_asuRange(self.session, channel, rng)
+        self._check_ret(ret, "ASU range")
+
+    def asu_led(self, channel, on):
+        """Control ASU LED (optional helper)."""
+        ret = dll_b1500.agb1500_asuLed(self.session, channel, 1 if on else 0)
+        self._check_ret(ret, "ASU LED")
+
+    def set_ic_sweep(self, channel, sweep_mode, range_, start, stop, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
         """
-        Configure a sweep. For current sweeps use sweep_mode=SWP_IF_SGLLIN and range_ as the source current range.
+        Configure a source sweep on a single channel.
+        For current sweeps use sweep_mode=SWP_IF_SGLLIN and range_ as the source current range.
         For voltage sweeps use sweep_mode=SWP_VF_SGLLIN and range_ as the source voltage range.
         """
-        ret = dll_b1500.agb1500_setIv(self.session, channel, sweep_mode, range_, start, stop, bias, points, hold, delay, second_delay, compliance, power_compliance)
+        ret = dll_b1500.agb1500_setIv(self.session, channel, sweep_mode, range_, start, stop, points, hold, delay, second_delay, compliance, power_compliance)
         self._check_ret(ret, "Set IC sweep")
 
     def sweep_ic(self, channel, measurement_mode, measurement_range, expected_points):
@@ -702,7 +734,33 @@ class B1500Session:
         point_count = ViInt32(expected_points)
         ret = dll_b1500.agb1500_sweepIv(self.session, channel, measurement_mode, measurement_range, ct.byref(point_count), source, value, status, time_)
         self._check_ret(ret, "Sweep IC")
-        return list(source), list(value), list(status), list(time_), point_count.value
+        return list(source)[:point_count.value], list(value)[:point_count.value], list(status)[:point_count.value], list(time_)[:point_count.value], point_count.value
+
+    def sweep_miv(self, channels, modes, ranges, expected_points):
+        """Execute a sweep and measure multiple channels per point (agb1500_sweepMiv)."""
+        n = len(channels)
+        ch_arr = (ViInt32 * n)(*channels)
+        mode_arr = (ViInt32 * n)(*modes)
+        range_arr = (ViReal64 * n)(*ranges)
+        total_points = expected_points * n
+        source = (ViReal64 * total_points)()
+        value = (ViReal64 * total_points)()
+        status = (ViInt32 * total_points)()
+        time_ = (ViReal64 * total_points)()
+        point_count = ViInt32(expected_points)
+        ret = dll_b1500.agb1500_sweepMiv(self.session, ch_arr, mode_arr, range_arr, ct.byref(point_count), source, value, status, time_)
+        self._check_ret(ret, "Sweep MIV")
+        data = {}
+        for i, ch in enumerate(channels):
+            start = i * point_count.value
+            end = start + point_count.value
+            data[ch] = {
+                "source": list(source)[start:end],
+                "value": list(value)[start:end],
+                "status": list(status)[start:end],
+                "time": list(time_)[start:end],
+            }
+        return data, point_count.value
 
     def zero_output(self, channel):
         """Return channel to zero output state."""
@@ -717,6 +775,31 @@ class B1500Session:
         ret = dll_b1500.agb1500_spotMeas(self.session, channel, mode, range_, ct.byref(value), ct.byref(status), ct.byref(timestamp))
         self._check_ret(ret, "Spot measurement")
         return value.value, status.value, timestamp.value
+
+    def start_measure(self, channels, modes, ranges, source_output=1, timestamp=1, monitor=0, meas_type=MEAS_TYPE_SWEEP):
+        """
+        Begin a measurement to enable streaming via read_data.
+        startMeasure expects channel array terminated by 0. The source_output flag controls whether source data is reported.
+        """
+        ch_list = list(channels) + [0]
+        mode_list = list(modes) + [0]
+        range_list = list(ranges) + [0.0]
+        ch_arr = (ViInt32 * len(ch_list))(*ch_list)
+        mode_arr = (ViInt32 * len(mode_list))(*mode_list)
+        range_arr = (ViReal64 * len(range_list))(*range_list)
+        ret = dll_b1500.agb1500_startMeasure(self.session, meas_type, ch_arr, mode_arr, range_arr, source_output, timestamp, monitor)
+        self._check_ret(ret, "Start measure")
+
+    def read_data(self):
+        """Read one measurement record from the streaming buffer."""
+        eod = ViInt32()
+        data_type = ViInt32()
+        value = ViReal64()
+        status = ViInt32()
+        channel = ViInt32()
+        ret = dll_b1500.agb1500_readData(self.session, ct.byref(eod), ct.byref(data_type), ct.byref(value), ct.byref(status), ct.byref(channel))
+        self._check_ret(ret, "Read data")
+        return eod.value, data_type.value, value.value, status.value, channel.value
 
     def close(self):
         dll_b1500.agb1500_close(self.session)

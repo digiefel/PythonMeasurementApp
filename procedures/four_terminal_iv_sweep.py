@@ -13,7 +13,6 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.sense_high_channel = settings.get('sense_high_channel', 5)  # Sense high terminal
         self.force_low_channel = settings.get('force_low_channel', 3)   # Force low terminal
         self.sense_low_channel = settings.get('sense_low_channel', 6)   # Sense low terminal
-        self.force_current_range = settings.get('force_current_range', 0.0)
 
         # Sweep parameters (current forcing for 4-terminal measurement)
         self.start_current = settings.get('start_current', 0.0)
@@ -29,6 +28,11 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.delay_time = settings.get('delay_time', 0.0)
         self.second_delay = settings.get('second_delay', 0.0)
 
+        # Optional ASU configuration
+        self.asu_channels = settings.get('asu_channels', [])
+        self.asu_path_mode = settings.get('asu_path_mode', None)
+        self.asu_range_mode = settings.get('asu_range_mode', None)
+
         # Normalize SMU names to channel numbers if needed
         self.force_high_channel = SMU_CHANNEL_MAP.get(str(self.force_high_channel), self.force_high_channel)
         self.sense_high_channel = SMU_CHANNEL_MAP.get(str(self.sense_high_channel), self.sense_high_channel)
@@ -37,6 +41,10 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
     def run(self, device, runner):
         self.log(f'Starting 4-Terminal I-V Sweep on {device.name}', runner)
+        self.log(
+            f'ASU config -> channels: {self.asu_channels}, path: {self.asu_path_mode}, range: {self.asu_range_mode}',
+            runner
+        )
 
         try:
             # Initialize B1500 session
@@ -84,11 +92,21 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         b1500.set_switch(sense_high, True)
         b1500.set_switch(sense_low, True)
 
+        # If requested, configure ASU path/range for low-leakage channels
+        asu_list = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels] if self.asu_channels else []
+        for ch in asu_list:
+            if self.asu_path_mode is not None:
+                b1500.asu_path(ch, self.asu_path_mode)
+            if self.asu_range_mode is not None:
+                b1500.asu_range(ch, self.asu_range_mode)
+
         # Reset timestamp
         b1500.reset_timestamp()
 
         # Hold the return SMU at 0 V with a safe current compliance
         b1500.force_voltage(return_channel, 0.0, self.current_compliance)
+        b1500.force_current(sense_high, 0.0, B1500Session.AUTO_RANGE)
+        b1500.force_current(sense_low, 0.0, B1500Session.AUTO_RANGE)
 
         # Generate current sweep vector (inclusive of stop)
         if self.points < 2:
@@ -97,8 +115,27 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             step = (self.stop_current - self.start_current) / (self.points - 1)
             current_points = [self.start_current + i * step for i in range(self.points)]
 
-        results = []
+        # Program the sweep on the source channel
+        b1500.set_ic_sweep(
+            source_channel,
+            B1500Session.SWP_IF_SGLLIN,
+            B1500Session.AUTO_RANGE,
+            self.start_current,
+            self.stop_current,
+            self.points,
+            hold=self.hold_time,
+            delay=self.delay_time,
+            second_delay=self.second_delay,
+            compliance=self.voltage_compliance,
+            power_compliance=self.power_compliance
+        )
 
+        # Configure multi-channel measurement and run sweepMiv to capture data
+        channels = [source_channel, sense_high, return_channel, sense_low]
+        modes = [B1500Session.IM_MODE, B1500Session.VM_MODE, B1500Session.IM_MODE, B1500Session.VM_MODE]
+        ranges = [B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE]
+
+        # Initialize live plot
         runner.start_live_plot(
             title=f'4-Terminal I-V - {device.name}',
             xlabel='Current (A)',
@@ -106,28 +143,50 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             series_label='V(I)'
         )
 
-        # Sweep by stepping current; measure voltages on both sense channels per point
-        for idx, current_set in enumerate(current_points):
-            b1500.force_current(source_channel, current_set, self.voltage_compliance, self.force_current_range)
+        # Start streaming for live plot updates and full capture
+        b1500.start_measure(channels, modes, ranges, source_output=1)
+        data_by_ch = {ch: [] for ch in channels}
+        status_by_ch = {ch: [] for ch in channels}
+        timestamps = []
+        plotted = 0
+        while True:
+            eod, data_type, value, status, channel = b1500.read_data()
+            if channel in data_by_ch and data_type in (1, 2, 3, 4):
+                data_by_ch[channel].append(value)
+                status_by_ch[channel].append(status)
+            elif data_type == 5:
+                timestamps.append(value)
 
-            if self.delay_time > 0:
-                import time
-                time.sleep(self.delay_time)
+            # Push live plot when we have paired sense readings
+            paired = min(len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
+            while plotted < paired and plotted < len(current_points):
+                idx = plotted
+                v_diff = data_by_ch[sense_high][idx] - data_by_ch[sense_low][idx]
+                runner.add_live_point(current_points[idx], v_diff, 'V(I)')
+                plotted += 1
 
-            v_high, status_high, t_high = b1500.spot_meas(sense_high, B1500Session.VM_MODE, self.measurement_range)
-            v_low, status_low, _ = b1500.spot_meas(sense_low, B1500Session.VM_MODE, self.measurement_range)
+            if eod:
+                break
 
-            v_diff = v_high - v_low
-            status_combined = max(status_high, status_low)
-
+        results = []
+        point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
+        for i in range(point_count):
+            current_set = data_by_ch[source_channel][i]
+            v_high = data_by_ch[sense_high][i]
+            v_low = data_by_ch[sense_low][i]
+            t_val = timestamps[i] if i < len(timestamps) else 0.0
+            status_combined = max(
+                status_by_ch[sense_high][i] if i < len(status_by_ch[sense_high]) else 0,
+                status_by_ch[sense_low][i] if i < len(status_by_ch[sense_low]) else 0,
+                status_by_ch[source_channel][i] if i < len(status_by_ch[source_channel]) else 0,
+            )
             results.append([
                 current_set,
                 v_high,
                 v_low,
-                t_high,
+                t_val,
                 status_combined
             ])
-            runner.add_live_point(current_set, v_diff, 'V(I)')
 
         # Zero outputs and disable switches
         b1500.zero_output(B1500Session.CH_ALL)

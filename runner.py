@@ -35,6 +35,19 @@ class MeasurementRunner:
         # Example: subprocess.run(['sentio', 'subsite_move', str(device.x), str(device.y)])
     
     def run_procedure(self, site, subsite, device, proc_class, settings):
+        # Apply global ASU overrides if present
+        for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
+            if key not in settings and key in self.config.data:
+                settings[key] = self.config.data.get(key)
+
+        # Log the ASU settings being applied so the operator can verify them in the GUI log
+        if self.log_callback:
+            self.log_callback(
+                f"ASU settings -> channels: {settings.get('asu_channels', [])}, "
+                f"path: {settings.get('asu_path_mode', None)}, "
+                f"range: {settings.get('asu_range_mode', None)}"
+            )
+
         proc = proc_class(settings, os.path.join(self.config.data['output_dir'], site.name, subsite.name, device.name))
         self.move_to_device(device)
         proc.run(device, self)
