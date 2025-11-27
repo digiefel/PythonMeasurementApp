@@ -1,3 +1,4 @@
 pyvisa
 pandas
 matplotlib
+sentio-prober-control

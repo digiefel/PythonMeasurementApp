@@ -31,6 +31,7 @@ class MainUI:
             self.root.grid_columnconfigure(col, weight=weight)
         self.root.grid_rowconfigure(0, weight=3)
         self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(2, weight=2)
 
         # GUI state
         self.site_var = tk.StringVar()
@@ -42,6 +43,11 @@ class MainUI:
         self.asu_channels_var = tk.StringVar()
         self.asu_path_var = tk.StringVar()
         self.asu_range_var = tk.BooleanVar()
+        # Run options
+        self.run_subsite_var = tk.BooleanVar(value=False)
+        self.set_home_var = tk.BooleanVar(value=False)
+        self.prober_contact_state = tk.BooleanVar(value=False)
+        self.position_var = tk.StringVar(value="X=-- , Y=--")
 
         # Procedure field definitions (label, type)
         self.procedure_fields = {
@@ -152,15 +158,18 @@ class MainUI:
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
         self.asu_range_check.grid(row=6, column=1, sticky="w", pady=2)
 
+        ttk.Checkbutton(self.selection_frame, text="Run all devices in subsite", variable=self.run_subsite_var).grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=8, column=0, columnspan=2, sticky="w")
+
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -176,9 +185,22 @@ class MainUI:
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.grid(row=0, column=2, rowspan=1, padx=8, pady=8, sticky="nsew")
 
-        # Log section
+        # Prober controls (bottom left)
+        prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
+        prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        for c in range(2):
+            prober_frame.grid_columnconfigure(c, weight=1)
+        ttk.Button(prober_frame, text="Go Home", command=self.prober_go_home).grid(row=0, column=0, sticky="ew", padx=4, pady=2)
+        ttk.Button(prober_frame, text="Set Home", command=self.prober_set_home).grid(row=0, column=1, sticky="ew", padx=4, pady=2)
+        ttk.Button(prober_frame, text="Go To Device", command=self.prober_go_to_device).grid(row=1, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        self.contact_button = ttk.Button(prober_frame, text="Contact", command=self.toggle_contact)
+        self.contact_button.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=3, column=0, sticky="ew", padx=4, pady=2)
+        ttk.Label(prober_frame, textvariable=self.position_var).grid(row=3, column=1, sticky="w", padx=4, pady=2)
+
+        # Log section (bottom right)
         log_frame = ttk.LabelFrame(self.root, text="Log")
-        log_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=8, pady=8)
+        log_frame.grid(row=1, column=1, columnspan=2, sticky="nsew", padx=8, pady=8)
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
         self.log_text = tk.Text(log_frame, height=10, wrap="word")
@@ -363,7 +385,50 @@ class MainUI:
             self.device_var.get(),
             proc_name
         )
-        self.runner.run_procedure(site, subsite, device, proc_class, settings)
+        run_all = self.run_subsite_var.get()
+        set_home = self.set_home_var.get()
+        if run_all:
+            self.log("Running entire subsite; align to reference device before start.")
+            self.runner.run_subsite(site, subsite, proc_class, settings, set_home_before_run=set_home)
+        else:
+            self.runner.run_procedure(site, subsite, device, proc_class, settings)
+    
+    # --- Prober control handlers ---
+    def prober_go_home(self):
+        self.runner.prober_go_home()
+
+    def prober_set_home(self):
+        self.runner.prober_set_home()
+
+    def prober_go_to_device(self):
+        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
+        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        if not all([site, subsite, device]):
+            self.log("Select site, subsite, and device before moving.")
+            return
+        self.runner.move_to_device(device)
+
+    def toggle_contact(self):
+        target_contact = not self.prober_contact_state.get()
+        ok = self.runner.prober_contact() if target_contact else self.runner.prober_separation()
+        if ok:
+            self.prober_contact_state.set(target_contact)
+            self.contact_button.config(text="Separation" if target_contact else "Contact")
+
+    def prober_separation(self):
+        ok = self.runner.prober_separation()
+        if ok:
+            self.prober_contact_state.set(False)
+            self.contact_button.config(text="Contact")
+
+    def read_position(self):
+        pos = self.runner.prober_read_position()
+        if pos:
+            x, y = pos
+            self.position_var.set(f"X={x:.1f}um , Y={y:.1f}um")
+        else:
+            self.position_var.set("X=-- , Y=--")
     
     def log(self, msg):
         self.log_text.insert(tk.END, msg + '\n')
