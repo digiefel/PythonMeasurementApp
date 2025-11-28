@@ -157,6 +157,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             source_output=1,
             timestamp=1
         )
+        # Allow stop button to abort safely
+        self.register_abort_handler(runner, lambda: self.abort_b1500(b1500))
 
         high_currents, i_high_status = [], []
         low_currents, i_low_status = [], []
@@ -169,6 +171,10 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         nonzero_statuses = set()
 
         while True:
+            if self.stop_requested(runner):
+                self.log("Stop requested; aborting measurement", runner)
+                self.abort_b1500(b1500)
+                break
             try:
                 _ret, eod, data_type, value, status, channel = b1500.read_data()
             except Exception as exc:
@@ -216,20 +222,22 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             if eod or plotted >= max_points:
                 break
 
-        # Ensure any remaining points are pushed to the plot
-        for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
-            v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
-            ip_val = high_currents[idx]
-            in_val = low_currents[idx]
-            runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-            runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
+        if not self.stop_requested(runner):
+            # Ensure any remaining points are pushed to the plot
+            for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
+                v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
+                ip_val = high_currents[idx]
+                in_val = low_currents[idx]
+                runner.add_live_point(v_val, ip_val, '$I_+(V)$')
+                runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
 
-        # Add log-magnitude series once, at the end, on a log-scale secondary axis
-        floor = 1e-15
-        for idx in range(min(len(high_currents), max_points)):
-            v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
-            mag_i = max(abs(high_currents[idx]), floor)
-            runner.add_live_point(v_val, mag_i, 'log(I)')
+        if not self.stop_requested(runner):
+            # Add log-magnitude series once, at the end, on a log-scale secondary axis
+            floor = 1e-15
+            for idx in range(min(len(high_currents), max_points)):
+                v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
+                mag_i = max(abs(high_currents[idx]), floor)
+                runner.add_live_point(v_val, mag_i, 'log(I)')
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
@@ -248,8 +256,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             results.append([v_val, ip_val, in_val, t_val, status_combined])
 
         # Return instrument to safe state
-        b1500.zero_output(B1500Session.CH_ALL)
-        b1500.set_switch(B1500Session.CH_ALL, False)
+        self.abort_b1500(b1500)
 
         self.log(f'Collected {len(results)} oxide breakdown points', runner)
         return results

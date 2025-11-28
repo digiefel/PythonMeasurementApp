@@ -830,6 +830,10 @@ class B1500Session:
         ret = dll_b1500.agb1500_zeroOutput(self.session, channel)
         self._check_ret(ret, "Zero output")
 
+    def abort_measure(self):
+        """Abort ongoing measurement/sweep."""
+        dll_b1500.agb1500_abortMeasure(self.session)
+
     def spot_meas(self, channel, mode, range_=AUTO_RANGE):
         """Single spot measurement on a channel."""
         value = ViReal64()

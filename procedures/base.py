@@ -19,6 +19,36 @@ class MeasurementProcedure(ABC):
         print(log_msg)
         runner.log_to_gui(log_msg)
 
+    # --- Cooperative stop helpers ---
+    def stop_requested(self, runner) -> bool:
+        """Check whether a stop has been requested (runner may not support it)."""
+        return hasattr(runner, "should_stop") and runner.should_stop()
+
+    def register_abort_handler(self, runner, handler):
+        """Register a callable to abort instrument actions when stop is requested."""
+        if hasattr(runner, "set_abort_handler"):
+            runner.set_abort_handler(handler)
+
+    def clear_abort_handler(self, runner):
+        """Clear any abort handler on the runner."""
+        if hasattr(runner, "set_abort_handler"):
+            runner.set_abort_handler(None)
+
+    def abort_b1500(self, b1500):
+        """Abort measurement and reset outputs/switches safely for B1500."""
+        try:
+            b1500.abort_measure()
+        except Exception:
+            pass
+        try:
+            b1500.zero_output(b1500.CH_ALL)
+        except Exception:
+            pass
+        try:
+            b1500.set_switch(b1500.CH_ALL, False)
+        except Exception:
+            pass
+
     def get_run_timestamp(self):
         if self._run_timestamp is None:
             self._run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

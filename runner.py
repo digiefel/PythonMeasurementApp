@@ -1,6 +1,7 @@
 import os.path
 import subprocess
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
+import threading
 from procedures.base import MeasurementProcedure
 from sentio_prober_control.Sentio.ProberSentio import SentioProber
 from sentio_prober_control.Sentio.Enumerations import (
@@ -23,6 +24,8 @@ class MeasurementRunner:
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
+        self.stop_event = threading.Event()
+        self.abort_handler: Optional[Callable[[], None]] = None
     
     def log_to_gui(self, msg):
         if self.log_callback:
@@ -132,6 +135,27 @@ class MeasurementRunner:
             self._last_status_message = None
         if self.status_callback:
             self.status_callback(status_info)
+
+    def should_stop(self) -> bool:
+        """Check if a stop has been requested."""
+        return self.stop_event.is_set()
+
+    def request_stop(self):
+        """Request cooperative stop and invoke any registered abort handler."""
+        self.stop_event.set()
+        if self.abort_handler:
+            try:
+                self.abort_handler()
+            except Exception:
+                # Swallow errors from abort to avoid masking stop
+                pass
+
+    def clear_stop(self):
+        self.stop_event.clear()
+
+    def set_abort_handler(self, handler: Optional[Callable[[], None]]):
+        """Register a callable that will be invoked when stop is requested."""
+        self.abort_handler = handler
     
     def move_to_device(self, device):
         self.log_to_gui(f'Moving to {device.name} at X={device.x}, Y={device.y}')
@@ -167,6 +191,8 @@ class MeasurementRunner:
         self.current_site = site
         self.current_subsite = subsite
         self.report_status(None)
+        self.clear_stop()
+        self.set_abort_handler(None)
 
         proc = proc_class(
             settings,

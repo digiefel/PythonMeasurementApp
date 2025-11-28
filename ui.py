@@ -27,6 +27,10 @@ class MainUI:
         self.runner.plot_finalize_callback = self._post_plot_finish
         self.runner.status_callback = self._post_status
         self._run_thread = None
+        # Styles for Run/Stop
+        style = ttk.Style()
+        style.configure("Run.TButton", foreground="green")
+        style.configure("Stop.TButton", foreground="red")
 
         self.root.title("Python Measurement App")
         for col, weight in enumerate((1, 1, 2)):
@@ -202,7 +206,8 @@ class MainUI:
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.run_button = ttk.Button(self.selection_frame, text="Run", command=self.run, style="Run.TButton")
+        self.run_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -413,10 +418,9 @@ class MainUI:
             'OxideBreakdown': OxideBreakdownProcedure,
         }[proc_name]
         settings = self.collect_settings()
-        # Persist the settings as part of the run so they are available next time
-        self.config.set_procedure_settings(proc_name, settings)
-        # Persist last selection
-        self.config.set_last_selection(self.build_last_selection())
+        # Cache current settings/selection in memory only to avoid overwriting config files on run
+        self.config.data.setdefault('procedures', {})[proc_name] = settings
+        self.config.data['last_selection'] = self.build_last_selection()
         run_all = self.run_subsite_var.get()
         set_home = self.set_home_var.get()
         if self._run_thread and self._run_thread.is_alive():
@@ -434,9 +438,17 @@ class MainUI:
             finally:
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
+                self._post(self._set_running_state, False)
+        self._set_running_state(True)
         self._run_thread = threading.Thread(target=target, daemon=True)
         self._run_thread.start()
-    
+
+    def stop_run(self):
+        """Triggered by Stop button to abort measurement safely."""
+        self.runner.request_stop()
+        self.log("Stop requested.")
+        self._set_running_state(True)  # keep button as Stop until thread exits
+
     # --- Prober control handlers ---
     def prober_go_home(self):
         self.runner.prober_go_home()
@@ -495,6 +507,13 @@ class MainUI:
 
     def _post_plot_finish(self, *args, **kwargs):
         self._post(self.finish_plot, *args, **kwargs)
+
+    def _set_running_state(self, running: bool):
+        """Toggle Run/Stop button appearance and command."""
+        if running:
+            self.run_button.config(text="Stop", command=self.stop_run, style="Stop.TButton")
+        else:
+            self.run_button.config(text="Run", command=self.run, style="Run.TButton")
 
     def _render_status_ok(self):
         for lbl in self.status_frame.grid_slaves():
@@ -658,8 +677,6 @@ class MainUI:
         self.config.data['asu_path_mode'] = None if path_val == '' else int(float(path_val))
         # Treat checkbox True as enabling the 1pA range (set to 1), False as None/disabled
         self.config.data['asu_range_mode'] = 1 if range_val else None
-        # Persist immediately so other operations see updated globals
-        self.config.save()
 
 
 if __name__ == '__main__':
