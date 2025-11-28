@@ -1,15 +1,9 @@
-import json
+﻿import json
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
 from typing import Optional
-
-import matplotlib
-
-matplotlib.use("TkAgg")
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 
 from config import Config
 from runner import MeasurementRunner
@@ -18,6 +12,7 @@ from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
 from tooltip_helper import attach_tooltip
+from plot_manager import PlotManager, PlotSpec
 
 
 class MainUI:
@@ -213,12 +208,9 @@ class MainUI:
         self.params_frame.grid_columnconfigure(0, weight=1)
         self.params_frame.grid_columnconfigure(1, weight=1)
 
-        # Matplotlib figure embedded in Tk
-        self.fig = Figure(figsize=(5, 4), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.lines = {}
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
-        self.canvas_widget = self.canvas.get_tk_widget()
+        # Matplotlib figure embedded in Tk (managed by PlotManager)
+        self.plot = PlotManager(self.root)
+        self.canvas_widget = self.plot.canvas_widget
         self.canvas_widget.grid(row=0, column=2, rowspan=1, padx=8, pady=8, sticky="nsew")
 
         # Prober controls (bottom left)
@@ -535,78 +527,25 @@ class MainUI:
 
     # Live plotting helpers wired via MeasurementRunner callbacks
     def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None, secondary_yscale=None, series_labels=None):
-        # Fully reset the figure/axes so subsequent runs always start clean
-        self.fig.clf()
-        self.ax = self.fig.add_subplot(111)
-        self.ax2 = None
-        self.secondary_series = set(secondary_series or [])
-        self.styles = styles or {}
-        self.ax.set_title(title)
-        self.ax.set_xlabel(xlabel)
-        self.ax.set_ylabel(ylabel)
-        self.ax.grid(True, linestyle="--", alpha=0.4)
-        self.lines = {}
-        styles = styles or {}
-        if self.secondary_series:
-            self.ax2 = self.ax.twinx()
-            self.ax2.set_ylabel(secondary_ylabel or "Resistance (Ohm)")
-            if secondary_yscale:
-                self.ax2.set_yscale(secondary_yscale)
-        # Create initial series and any known secondary series so styles/legend are correct up-front
-        initial_labels = series_labels if series_labels is not None else ([series_label] if series_label else [])
-        for lbl in initial_labels:
-            self._ensure_line(lbl)
-        for sec in self.secondary_series:
-            self._ensure_line(sec)
-        self._update_legend()
-        self.canvas.draw_idle()
-        self.root.update_idletasks()
+        spec = PlotSpec(
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            primary_series=series_label or "Data",
+            styles=styles or {},
+            secondary_series=secondary_series or [],
+            secondary_ylabel=secondary_ylabel,
+            secondary_yscale=secondary_yscale,
+            initial_series=series_labels if series_labels is not None else ([series_label] if series_label else []),
+        )
+        self.plot.start(spec)
 
     def add_plot_point(self, x, y, series_label="Data"):
-        if series_label not in self.lines:
-            self._ensure_line(series_label)
-            self._update_legend()
-
-        series = self.lines[series_label]
-        series["x"].append(x)
-        series["y"].append(y)
-        series["line"].set_data(series["x"], series["y"])
-
-        self.ax.relim()
-        self.ax.autoscale_view()
-        if self.ax2:
-            self.ax2.relim()
-            self.ax2.autoscale_view()
-        self.canvas.draw_idle()
-        self.root.update_idletasks()
-
-    def _ensure_line(self, label):
-        """Create a line for the given label if it does not exist."""
-        if label in self.lines:
-            return
-        target_ax = self.ax2 if (self.ax2 and label in self.secondary_series) else self.ax
-        style_key = label if label in self.styles else ('R_fit' if 'R_fit' in self.styles else label)
-        style = self.styles.get(style_key, {})
-        line, = target_ax.plot(
-            [], [],
-            label=label,
-            marker=style.get("marker", None),
-            color=style.get("color", None),
-            linestyle=style.get("linestyle", "-"),
-            linewidth=style.get("linewidth", None)
-        )
-        self.lines[label] = {"line": line, "x": [], "y": [], "ax": target_ax}
-
-    def _update_legend(self):
-        """Refresh legend including secondary axis series."""
-        handles = [meta["line"] for meta in self.lines.values()]
-        if handles:
-            self.ax.legend(handles=handles, loc="upper left")
+        self.plot.add_point(x, y, series_label)
 
     def finish_plot(self, save_path=None):
+        self.plot.finish_plot(save_path)
         if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            self.fig.savefig(save_path, dpi=150, bbox_inches="tight")
             self.log(f'Plot saved to {save_path}')
 
     # Helpers
