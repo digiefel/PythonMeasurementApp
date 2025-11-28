@@ -3,6 +3,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
+from typing import Optional
 
 import matplotlib
 
@@ -12,10 +13,11 @@ from matplotlib.figure import Figure
 
 from config import Config
 from runner import MeasurementRunner
-from bindings import SMU_CHANNEL_MAP, B1500_VOLTAGE_RANGES, B1500_CURRENT_RANGES
+from bindings import SMU_CHANNEL_MAP, B1500_VOLTAGE_RANGES, B1500_CURRENT_RANGES, B1500Session
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
+from tooltip_helper import attach_tooltip
 
 
 class MainUI:
@@ -27,6 +29,7 @@ class MainUI:
         self.runner.plot_start_callback = self.start_plot
         self.runner.plot_point_callback = self.add_plot_point
         self.runner.plot_finalize_callback = self.finish_plot
+        self.runner.status_callback = self.show_status
 
         self.root.title("Python Measurement App")
         for col, weight in enumerate((1, 1, 2)):
@@ -45,6 +48,7 @@ class MainUI:
         self.asu_channels_var = tk.StringVar()
         self.asu_path_var = tk.StringVar()
         self.asu_range_var = tk.BooleanVar()
+        self.status_labels = {}
         # Run options
         self.run_subsite_var = tk.BooleanVar(value=False)
         self.set_home_var = tk.BooleanVar(value=False)
@@ -240,6 +244,10 @@ class MainUI:
         self.log_text.configure(yscrollcommand=log_scroll.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scroll.grid(row=0, column=1, sticky="ns")
+        self.status_frame = ttk.Frame(log_frame)
+        self.status_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.status_labels = {}
+        self._render_status_ok()
 
     def populate_sites(self):
         if self.config.sites:
@@ -463,6 +471,67 @@ class MainUI:
     def log(self, msg):
         self.log_text.insert(tk.END, msg + '\n')
         self.log_text.see(tk.END)
+
+    def _render_status_ok(self):
+        for lbl in self.status_frame.grid_slaves():
+            lbl.destroy()
+        self.status_labels = {}
+        ok_label = ttk.Label(self.status_frame, text="Status: OK", foreground="green")
+        ok_label.grid(row=0, column=0, sticky="w")
+        self.status_labels["OK"] = ok_label
+
+    def show_status(self, info: Optional[dict]):
+        # Clear all on None
+        if info is None:
+            self._render_status_ok()
+            return
+        # Remove default OK label once we have a real status
+        if "OK" in self.status_labels:
+            self.status_labels["OK"].destroy()
+            del self.status_labels["OK"]
+        key = (info.get("channel"), info.get("data_type"), info.get("status"))
+        if key in self.status_labels:
+            return
+        label_text, tooltip = self._format_status(info)
+        self.status_labels[key] = {"text": label_text, "tooltip": tooltip}
+        self._render_status_labels()
+
+    def _render_status_labels(self):
+        # Clear existing widgets
+        for child in self.status_frame.grid_slaves():
+            child.destroy()
+        if not self.status_labels:
+            self._render_status_ok()
+            return
+        # Sort by channel number (None/ALL/NOCH at end)
+        def sort_key(item):
+            (ch, dt, st), meta = item
+            # Place numeric channels first in ascending order; others after
+            try:
+                return (0, int(ch))
+            except Exception:
+                return (1, 0 if ch is None else ch)
+
+        for col, ((ch, dt, st), meta) in enumerate(sorted(self.status_labels.items(), key=sort_key)):
+            lbl = ttk.Label(self.status_frame, text=meta["text"], foreground="red", padding=(2, 0))
+            lbl.grid(row=0, column=col, sticky="w", padx=(0, 6))
+            attach_tooltip(lbl, meta["tooltip"])
+
+    def _format_status(self, info: dict) -> tuple[str, str]:
+        ch = info.get("channel")
+        dt = info.get("data_type")
+        status = info.get("status")
+        desc = info.get("desc", "")
+        if ch is None or ch == B1500Session.CH_NOCH:
+            ch_label = "N/A"
+        elif ch == B1500Session.CH_ALL:
+            ch_label = "ALL"
+        else:
+            ch_label = self.lookup_smu_label(ch)
+        dt_desc = B1500Session.describe_data_type_short(dt) if dt is not None else "T?"
+        label = f"{ch_label} {dt_desc} 0x{status:X}"
+        tooltip = f"{ch_label} | {B1500Session.describe_data_type(dt)} | {desc} (0x{status:X})"
+        return label, tooltip
 
     # Live plotting helpers wired via MeasurementRunner callbacks
     def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None, secondary_yscale=None, series_labels=None):

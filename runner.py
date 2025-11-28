@@ -1,5 +1,6 @@
 import os.path
 import subprocess
+from typing import Optional, Dict, Any
 from procedures.base import MeasurementProcedure
 from sentio_prober_control.Sentio.ProberSentio import SentioProber
 from sentio_prober_control.Sentio.Enumerations import (
@@ -15,6 +16,8 @@ class MeasurementRunner:
         self.plot_start_callback = None
         self.plot_point_callback = None
         self.plot_finalize_callback = None
+        self.status_callback = None
+        self._last_status_message = None
         self.prober = None
         self.subsite_origin = None
         self.current_chip = None
@@ -119,6 +122,16 @@ class MeasurementRunner:
         """Tell UI to persist the current plot image if requested."""
         if self.plot_finalize_callback:
             self.plot_finalize_callback(save_path)
+
+    def report_status(self, status_info: Optional[Dict[str, Any]]):
+        """
+        Surface measurement/driver status (non-zero codes) to the UI.
+        status_info: None clears; otherwise dict with channel, data_type, status, desc.
+        """
+        if status_info is None:
+            self._last_status_message = None
+        if self.status_callback:
+            self.status_callback(status_info)
     
     def move_to_device(self, device):
         self.log_to_gui(f'Moving to {device.name} at X={device.x}, Y={device.y}')
@@ -153,6 +166,7 @@ class MeasurementRunner:
         self.current_chip = chip_id
         self.current_site = site
         self.current_subsite = subsite
+        self.report_status(None)
 
         proc = proc_class(
             settings,
