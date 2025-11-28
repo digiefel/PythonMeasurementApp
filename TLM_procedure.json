@@ -30,7 +30,12 @@
             "current_compliance": 1e-05,
             "hold_time": 0.0,
             "delay_time": 0.0,
-            "second_delay": 0.0
+            "second_delay": 0.0,
+            "asu_channels": [
+                "SMU2"
+            ],
+            "asu_path_mode": 1,
+            "asu_range_mode": null
         },
         "OxideBreakdown": {
             "gpib_address": "GPIB0::17::INSTR",
@@ -51,7 +56,7 @@
         "subsite": "TLM",
         "device": "L800W8",
         "procedure": "FourTerminalIV",
-        "run_subsite": true,
+        "run_subsite": false,
         "set_home_before_run": true,
         "chip": "test"
     }

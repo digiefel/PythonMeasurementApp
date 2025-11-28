@@ -126,13 +126,14 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             xlabel='Voltage (V)',
             ylabel='Current (A)',
             series_label=None,
-            series_labels=['$I_+(V)$', '$I_-(V)$'],
+            series_labels=['$I_+(V)$', '$-I_-(V)$'],
             styles={
                 '$I_+(V)$': {'color': 'C0'},
-                '$I_-(V)$': {'color': 'C1'}
+                '$-I_-(V)$': {'color': 'C1'},
+                'log(I)': {'color': 'k', 'linestyle': 'dashed'}
             },
-            secondary_series=['|I|'],
-            secondary_ylabel='|I| (A)',
+            secondary_series=['log(I)'],
+            secondary_ylabel='log(I) (A)',
             secondary_yscale='log'
         )
 
@@ -165,13 +166,25 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         v_source_values, v_source_status = [], [] # source = high SMU, but forced (not measured)
         timestamps = []
         plotted = 0
+        nonzero_statuses = set()
 
         while True:
             try:
-                eod, data_type, value, status, channel = b1500.read_data()
+                _ret, eod, data_type, value, status, channel = b1500.read_data()
             except Exception as exc:
                 self.log(f'B1500 read_data error', runner)
                 raise
+            if status:
+                key = (channel, data_type, status)
+                if key not in nonzero_statuses:
+                    nonzero_statuses.add(key)
+                    desc = B1500Session.describe_status_bits(status)
+                    runner.report_status({
+                        "channel": channel,
+                        "data_type": data_type,
+                        "status": status,
+                        "desc": desc,
+                    })
             if data_type == 1:  # I measurement
                 if channel == high:
                     high_currents.append(value)
@@ -185,7 +198,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 elif channel == sense_low:
                     sense_low_voltages.append(value)
             elif data_type == 4:  # source output (voltage)
-                if len(v_source_values) < max_points:
+                if channel in (high, b1500.CH_NOCH, b1500.CH_ALL) and len(v_source_values) < max_points:
                     v_source_values.append(value)
                     v_source_status.append(status)
             elif data_type == 5:  # timestamp
@@ -197,7 +210,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 ip_val = high_currents[plotted]
                 in_val = low_currents[plotted]
                 runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-                runner.add_live_point(v_val, in_val, '$I_-(V)$')
+                runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
                 plotted += 1
 
             if eod or plotted >= max_points:
@@ -209,14 +222,14 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             ip_val = high_currents[idx]
             in_val = low_currents[idx]
             runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-            runner.add_live_point(v_val, in_val, '$I_-(V)$')
+            runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
 
         # Add log-magnitude series once, at the end, on a log-scale secondary axis
         floor = 1e-15
         for idx in range(min(len(high_currents), max_points)):
             v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
             mag_i = max(abs(high_currents[idx]), floor)
-            runner.add_live_point(v_val, mag_i, '|I|')
+            runner.add_live_point(v_val, mag_i, 'log(I)')
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
@@ -225,11 +238,13 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             ip_val = high_currents[i]
             in_val = low_currents[i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
-            status_combined = max(
-                i_high_status[i] if i < len(i_high_status) else 0,
-                i_low_status[i] if i < len(i_low_status) else 0,
-                v_source_status[i] if i < len(v_source_status) else 0
-            )
+            status_combined = 0
+            if i < len(i_high_status):
+                status_combined |= i_high_status[i]
+            if i < len(i_low_status):
+                status_combined |= i_low_status[i]
+            if i < len(v_source_status):
+                status_combined |= v_source_status[i]
             results.append([v_val, ip_val, in_val, t_val, status_combined])
 
         # Return instrument to safe state

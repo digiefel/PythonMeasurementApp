@@ -155,13 +155,27 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         source_status = []
         plotted = 0
         max_points = len(current_points)
+        nonzero_statuses = set()
         while True:
-            eod, data_type, value, status, channel = b1500.read_data()
+            _ret, eod, data_type, value, status, channel = b1500.read_data()
+            if status:
+                key = (channel, data_type, status)
+                if key not in nonzero_statuses:
+                    nonzero_statuses.add(key)
+                    desc = B1500Session.describe_status_bits(status)
+                    runner.report_status({
+                        "channel": channel,
+                        "data_type": data_type,
+                        "status": status,
+                        "desc": desc,
+                    })
             if channel in data_by_ch and data_type in (1, 2): # I measure, V measure
                 if len(data_by_ch[channel]) < max_points:
                     data_by_ch[channel].append(value)
                     status_by_ch[channel].append(status)
             elif data_type in (3, 4):  # source output data
+                if channel not in (source_channel, b1500.CH_NOCH, b1500.CH_ALL):
+                    continue
                 source_values.append(value)
                 source_status.append(status)
             elif data_type == 5:
@@ -204,11 +218,15 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             v_high = data_by_ch[sense_high][i]
             v_low = data_by_ch[sense_low][i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
-            status_combined = max(
-                status_by_ch[sense_high][i] if i < len(status_by_ch[sense_high]) else 0,
-                status_by_ch[sense_low][i] if i < len(status_by_ch[sense_low]) else 0,
-                status_by_ch[source_channel][i] if i < len(status_by_ch[source_channel]) else 0,
-            )
+            status_combined = 0
+            if i < len(status_by_ch[sense_high]):
+                status_combined |= status_by_ch[sense_high][i]
+            if i < len(status_by_ch[sense_low]):
+                status_combined |= status_by_ch[sense_low][i]
+            if i < len(status_by_ch[source_channel]):
+                status_combined |= status_by_ch[source_channel][i]
+            if i < len(source_status):
+                status_combined |= source_status[i]
             results.append([
                 current_set,
                 v_high,
