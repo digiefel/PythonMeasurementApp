@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
@@ -20,11 +21,12 @@ class MainUI:
         self.root = root
         self.config = Config('global_config.json', 'devices.csv')
         self.runner = MeasurementRunner(self.config)
-        self.runner.log_callback = self.log
-        self.runner.plot_start_callback = self.start_plot
-        self.runner.plot_point_callback = self.add_plot_point
-        self.runner.plot_finalize_callback = self.finish_plot
-        self.runner.status_callback = self.show_status
+        self.runner.log_callback = self._post_log
+        self.runner.plot_start_callback = self._post_plot_start
+        self.runner.plot_point_callback = self._post_plot_point
+        self.runner.plot_finalize_callback = self._post_plot_finish
+        self.runner.status_callback = self._post_status
+        self._run_thread = None
 
         self.root.title("Python Measurement App")
         for col, weight in enumerate((1, 1, 2)):
@@ -417,11 +419,23 @@ class MainUI:
         self.config.set_last_selection(self.build_last_selection())
         run_all = self.run_subsite_var.get()
         set_home = self.set_home_var.get()
-        if run_all:
-            self.log("Running entire subsite; align to reference device before start.")
-            self.runner.run_subsite(chip_id, site, subsite, proc_class, settings, set_home)
-        else:
-            self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings, set_home)
+        if self._run_thread and self._run_thread.is_alive():
+            self.log("A run is already in progress.")
+            return
+        def target():
+            try:
+                if run_all:
+                    self._post_log("Running entire subsite; align to reference device before start.")
+                    self.runner.run_subsite(chip_id, site, subsite, proc_class, settings, set_home)
+                else:
+                    self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings, set_home)
+            except Exception as e:
+                self._post_log(f'Run error: {e}')
+            finally:
+                self._post(lambda: None)  # ensure main loop wakes
+                self._run_thread = None
+        self._run_thread = threading.Thread(target=target, daemon=True)
+        self._run_thread.start()
     
     # --- Prober control handlers ---
     def prober_go_home(self):
@@ -463,6 +477,24 @@ class MainUI:
     def log(self, msg):
         self.log_text.insert(tk.END, msg + '\n')
         self.log_text.see(tk.END)
+
+    def _post(self, fn, *args):
+        self.root.after(0, lambda: fn(*args))
+
+    def _post_log(self, msg):
+        self._post(self.log, msg)
+
+    def _post_status(self, info: Optional[dict]):
+        self._post(self.show_status, info)
+
+    def _post_plot_start(self, *args, **kwargs):
+        self._post(self.start_plot, *args, **kwargs)
+
+    def _post_plot_point(self, *args, **kwargs):
+        self._post(self.add_plot_point, *args, **kwargs)
+
+    def _post_plot_finish(self, *args, **kwargs):
+        self._post(self.finish_plot, *args, **kwargs)
 
     def _render_status_ok(self):
         for lbl in self.status_frame.grid_slaves():
@@ -544,7 +576,7 @@ class MainUI:
         self.plot.add_point(x, y, series_label)
 
     def finish_plot(self, save_path=None):
-        self.plot.finish_plot(save_path)
+        self.plot.finish(save_path)
         if save_path:
             self.log(f'Plot saved to {save_path}')
 
