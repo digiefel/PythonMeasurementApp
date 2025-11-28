@@ -17,6 +17,9 @@ class MeasurementRunner:
         self.plot_finalize_callback = None
         self.prober = None
         self.subsite_origin = None
+        self.current_chip = None
+        self.current_site = None
+        self.current_subsite = None
     
     def log_to_gui(self, msg):
         if self.log_callback:
@@ -32,8 +35,7 @@ class MeasurementRunner:
             return True
         except Exception as e:
             self.log_to_gui(f'Warning: SENTIO init failed (GPIB0::28::INSTR): {e}')
-            self.prober = None
-            return False
+            raise e
 
     def set_subsite_origin(self):
         """
@@ -127,8 +129,6 @@ class MeasurementRunner:
             target_y = origin_y + device.y
             x, y = self.prober.move_chuck_xy(XyReference.Home, target_x, target_y)
             self.prober.wait_all()
-            # self.prober.move_chuck_contact(ChuckSite.Wafer)
-            # self.prober.wait_all(Home
             self.log_to_gui(
                 f'Chuck moved to X={x:.1f}um, Y={y:.1f}um '
                 f'(origin {"set" if self.subsite_origin else "unset"})'
@@ -136,7 +136,7 @@ class MeasurementRunner:
         except Exception as e:
             self.log_to_gui(f'Warning: SENTIO move failed: {e}')
     
-    def run_procedure(self, site, subsite, device, proc_class, settings):
+    def run_procedure(self, chip_id, site, subsite, device, proc_class, settings):
         # Apply global ASU overrides if present
         for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
             if key not in settings and key in self.config.data:
@@ -150,7 +150,15 @@ class MeasurementRunner:
                 f"range: {settings.get('asu_range_mode', None)}"
             )
 
-        proc = proc_class(settings, os.path.join(self.config.data['output_dir'], site.name, subsite.name, device.name))
+        # Update context for use by procedures
+        self.current_chip = chip_id
+        self.current_site = site
+        self.current_subsite = subsite
+
+        proc = proc_class(
+            settings,
+            os.path.join(self.config.data['output_dir'], chip_id, site.name, subsite.name, device.name)
+        )
         self.move_to_device(device)
         # Ensure contact right before measurement
         self.prober_contact()
@@ -159,7 +167,7 @@ class MeasurementRunner:
         # Move out of contact after completion
         self.prober_separation()
 
-    def run_subsite(self, site, subsite, proc_class, settings, set_home_before_run=False):
+    def run_subsite(self, chip_id, site, subsite, proc_class, settings, set_home_before_run=False):
         """
         Run the given procedure for every device in the subsite, optionally
         capturing the current chuck position as the subsite origin first.
@@ -169,4 +177,4 @@ class MeasurementRunner:
             self.set_subsite_origin()
         for device in subsite.devices:
             # Copy settings per device to avoid accidental mutation
-            self.run_procedure(site, subsite, device, proc_class, dict(settings))
+            self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))

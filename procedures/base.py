@@ -42,3 +42,13 @@ class MeasurementProcedure(ABC):
             for row in data:
                 f.write(','.join(map(str, row)) + '\n')
         self.log(f'Saved data to {path}', runner)
+
+    def format_filename(self, runner, procedure_tag: str, device_name: str):
+        """Generate base filename chip_site_subsite_device_timestamp_procedure."""
+        chip = getattr(runner, "current_chip", "") or "chip"
+        site = getattr(runner, "current_site", None)
+        subsite = getattr(runner, "current_subsite", None)
+        site_name = site.name if site else "site"
+        subsite_name = subsite.name if subsite else "subsite"
+        timestamp = self.get_run_timestamp()
+        return f"{chip}_{site_name}_{subsite_name}_{device_name}_{timestamp}_{procedure_tag}"

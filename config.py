@@ -11,6 +11,7 @@ DEFAULT_CONFIG = {
     'asu_range_mode': 0,
     'procedures': {},
     'last_selection': {
+        'chip_id': '',
         'site': '',
         'subsite': '',
         'device': '',

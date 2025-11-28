@@ -38,7 +38,8 @@
         "subsite": "TLM",
         "device": "L800W8",
         "procedure": "FourTerminalIV",
-        "run_subsite": false,
-        "set_home_before_run": false
+        "run_subsite": true,
+        "set_home_before_run": true,
+        "chip": ""
     }
 }

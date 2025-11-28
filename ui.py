@@ -48,6 +48,7 @@ class MainUI:
         self.set_home_var = tk.BooleanVar(value=False)
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
+        self.chip_var = tk.StringVar()
 
         # Procedure field definitions (label, type)
         self.procedure_fields = {
@@ -126,50 +127,53 @@ class MainUI:
         for col in range(2):
             self.selection_frame.grid_columnconfigure(col, weight=1)
 
-        ttk.Label(self.selection_frame, text="Site").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Chip ID", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Entry(self.selection_frame, textvariable=self.chip_var).grid(row=0, column=1, sticky="ew", pady=2)
+
+        ttk.Label(self.selection_frame, text="Site").grid(row=1, column=0, sticky="w")
         self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
-        self.site_cb.grid(row=0, column=1, sticky="ew", pady=2)
+        self.site_cb.grid(row=1, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
 
-        ttk.Label(self.selection_frame, text="Subsite").grid(row=1, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Subsite").grid(row=2, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
-        self.subsite_cb.grid(row=1, column=1, sticky="ew", pady=2)
+        self.subsite_cb.grid(row=2, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
 
-        ttk.Label(self.selection_frame, text="Device").grid(row=2, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Device").grid(row=3, column=0, sticky="w")
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
-        self.device_cb.grid(row=2, column=1, sticky="ew", pady=2)
+        self.device_cb.grid(row=3, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="Procedure").grid(row=3, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Procedure").grid(row=4, column=0, sticky="w")
         self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
-        self.proc_cb.grid(row=3, column=1, sticky="ew", pady=2)
+        self.proc_cb.grid(row=4, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
         # Global ASU config
-        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=4, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=5, column=0, sticky="w")
         self.asu_channels_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_channels_var)
-        self.asu_channels_entry.grid(row=4, column=1, sticky="ew", pady=2)
+        self.asu_channels_entry.grid(row=5, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=5, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=6, column=0, sticky="w")
         self.asu_path_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_path_var)
-        self.asu_path_entry.grid(row=5, column=1, sticky="ew", pady=2)
+        self.asu_path_entry.grid(row=6, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=6, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=7, column=0, sticky="w")
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
-        self.asu_range_check.grid(row=6, column=1, sticky="w", pady=2)
+        self.asu_range_check.grid(row=7, column=1, sticky="w", pady=2)
 
-        ttk.Checkbutton(self.selection_frame, text="Run all devices in subsite", variable=self.run_subsite_var).grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(self.selection_frame, text="Run all devices in subsite", variable=self.run_subsite_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=9, column=0, columnspan=2, sticky="w")
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        ttk.Button(self.selection_frame, text="Run", command=self.run).grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -362,6 +366,7 @@ class MainUI:
             self.log("Select a procedure before running.")
             return
         self.update_global_asu_from_ui()
+        chip_id = self.chip_var.get().strip() or "chip"
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
@@ -379,9 +384,9 @@ class MainUI:
         set_home = self.set_home_var.get()
         if run_all:
             self.log("Running entire subsite; align to reference device before start.")
-            self.runner.run_subsite(site, subsite, proc_class, settings, set_home_before_run=set_home)
+            self.runner.run_subsite(chip_id, site, subsite, proc_class, settings, set_home_before_run=set_home)
         else:
-            self.runner.run_procedure(site, subsite, device, proc_class, settings)
+            self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings)
     
     # --- Prober control handlers ---
     def prober_go_home(self):
@@ -533,6 +538,8 @@ class MainUI:
             self.run_subsite_var.set(bool(last_sel['run_subsite']))
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
+        if 'chip' in last_sel:
+            self.chip_var.set(last_sel['chip'])
 
     def build_last_selection(self):
         """Capture current UI selections; new fields are automatically persisted."""
@@ -543,6 +550,7 @@ class MainUI:
             'procedure': self.proc_var.get(),
             'run_subsite': self.run_subsite_var.get(),
             'set_home_before_run': self.set_home_var.get(),
+            'chip': self.chip_var.get(),
         }
 
     def load_global_asu(self):

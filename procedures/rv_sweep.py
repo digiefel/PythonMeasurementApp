@@ -58,8 +58,9 @@ class RVSweepProcedure(MeasurementProcedure):
                 time.sleep(0.01)
 
             # Save results
-            self.save_data(results, f'rv_{device.name}.csv', ['Voltage_V', 'Current_A'], runner)
-            plot_path = self.make_output_path(f'rv_{device.name}_plot.png')
+            base = self.format_filename(runner, "RVSweep", device.name)
+            self.save_data(results, f'{base}.csv', ['Voltage_V', 'Current_A'], runner, add_timestamp=False)
+            plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
             runner.finalize_plot(plot_path)
             self.log(f'RV sweep completed for {device.name}', runner)
 

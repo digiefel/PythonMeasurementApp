@@ -58,11 +58,12 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             results = self.perform_iv_sweep(b1500, device, runner)
 
             # Save results
-            filename = f'four_terminal_iv_{device.name}.csv'
+            base = self.format_filename(runner, "FourTerminalIV", device.name)
+            filename = f'{base}.csv'
             self.save_data(results, filename,
                           ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
-                          runner)
-            plot_path = self.make_output_path(f'four_terminal_iv_{device.name}_plot.png')
+                          runner, add_timestamp=False)
+            plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
             runner.finalize_plot(plot_path)
             self.log(f'4-Terminal I-V sweep completed for {device.name}', runner)
 
