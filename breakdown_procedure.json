@@ -36,8 +36,9 @@
             "gpib_address": "GPIB0::17::INSTR",
             "high_channel": 4,
             "low_channel": 3,
-            "v_max": 0.5,
+            "v_max": 0.2,
             "points": 75,
+            "double_sweep": true,
             "current_compliance": 0.001,
             "current_range": 1e-10,
             "hold_time": 0.0,
@@ -52,6 +53,6 @@
         "procedure": "OxideBreakdown",
         "run_subsite": false,
         "set_home_before_run": true,
-        "chip": "A10"
+        "chip": "test"
     }
 }

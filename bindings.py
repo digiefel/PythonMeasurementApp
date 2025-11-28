@@ -628,8 +628,16 @@ class B1500Session:
     AUTO_RANGE = 0.0
 
     # Sweep mode definitions (see agb1500.h)
-    SWP_IF_SGLLIN = -1  # Single linear current sweep
-    SWP_VF_SGLLIN = 1   # Single linear voltage sweep
+    SWP_IF_SGLLIN = -1   # Single linear current sweep
+    SWP_IF_DBLLIN = -3   # Double linear current sweep
+    SWP_VF_SGLLIN = 1    # Single linear voltage sweep
+    SWP_VF_DBLLIN = 3    # Double linear voltage sweep
+    # Stop/last mode (see agb1500_stopMode)
+    STOP_DISABLE = 0      # Do not abort on compliance/abort conditions
+    STOP_ENABLE = 1       # Abort on stop conditions
+    # hello
+    LAST_START = 1        # Return to start level after stop
+    LAST_STOP = 2         # Hold stop level after stop
     # Measurement type constants (agb1500.h)
     MEAS_TYPE_MSPOT = 1
     MEAS_TYPE_SWEEP = 2
@@ -690,6 +698,14 @@ class B1500Session:
         ret = dll_b1500.agb1500_resetTimestamp(self.session)
         if ret != 0:
             raise RuntimeError(f"Reset timestamp failed: {ret}")
+
+    def stop_mode(self, stop=STOP_DISABLE, last_mode=LAST_STOP):
+        """
+        Configure stop behavior. Set stop=STOP_DISABLE to prevent the instrument from
+        aborting the sweep on compliance; last_mode controls post-stop output level.
+        """
+        ret = dll_b1500.agb1500_stopMode(self.session, stop, last_mode)
+        self._check_ret(ret, "Stop mode")
 
     def force_current(self, channel, current, compliance=10.0, range_=AUTO_RANGE, polarity=0):
         """Force a current level on the specified channel."""

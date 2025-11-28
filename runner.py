@@ -104,10 +104,11 @@ class MeasurementRunner:
             self.log_to_gui(f'Warning: Read position failed: {e}')
             return None
 
-    def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None):
+    def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
         """Notify UI to initialize/clear the live plot."""
         if self.plot_start_callback:
-            self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [], secondary_ylabel)
+            labels = series_labels if series_labels is not None else ([series_label] if series_label else [])
+            self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [], secondary_ylabel, secondary_yscale, labels)
 
     def add_live_point(self, x, y, series_label: str = "Data"):
         """Send a single data point to the UI plot."""
@@ -136,7 +137,7 @@ class MeasurementRunner:
         except Exception as e:
             self.log_to_gui(f'Warning: SENTIO move failed: {e}')
     
-    def run_procedure(self, chip_id, site, subsite, device, proc_class, settings):
+    def run_procedure(self, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False):
         # Apply global ASU overrides if present
         for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
             if key not in settings and key in self.config.data:
@@ -144,13 +145,9 @@ class MeasurementRunner:
         if not chip_id:
             raise ValueError("Chip ID is required to run a procedure.")
 
-        # Log the ASU settings being applied so the operator can verify them in the GUI log
-        if self.log_callback:
-            self.log_callback(
-                f"ASU settings -> channels: {settings.get('asu_channels', [])}, "
-                f"path: {settings.get('asu_path_mode', None)}, "
-                f"range: {settings.get('asu_range_mode', None)}"
-            )
+        if set_home_before_run:
+            self.log_to_gui("Setting subsite origin at current chuck position...")
+            self.set_subsite_origin()
 
         # Update context for use by procedures
         self.current_chip = chip_id

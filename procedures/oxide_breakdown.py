@@ -1,4 +1,3 @@
-import math
 from procedures.base import MeasurementProcedure
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
@@ -23,6 +22,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         self.points = max(1, int(float(settings.get('points', 75))))
         self.current_compliance = float(settings.get('current_compliance', 1e-3))
         self.current_range = float(settings.get('current_range', B1500Session.AUTO_RANGE))
+        self.double_sweep = bool(settings.get('double_sweep', True))
 
         # Timing controls (optional; default to immediate sweep)
         self.hold_time = float(settings.get('hold_time', 0.0))
@@ -44,6 +44,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             b1500.reset()
             b1500.set_timeout(10000)
             b1500.enable_error_detect(True)
+            # Do not abort the sweep on compliance; hold final level at end.
+            b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_START)
             self.log(f'Connected to B1500 at {self.gpib_address}', runner)
 
             results = self.perform_breakdown_sweep(b1500, device, runner)
@@ -67,6 +69,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             try:
                 b1500.close()
             except Exception:
+                self.log('Warning: Failed to close B1500 session', runner)
                 pass
 
     def perform_breakdown_sweep(self, b1500: B1500Session, device, runner):
@@ -103,9 +106,10 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         b1500.force_voltage(low, 0.0, self.current_compliance)
 
         # Program voltage sweep on high terminal
+        sweep_mode = B1500Session.SWP_VF_DBLLIN if self.double_sweep else B1500Session.SWP_VF_SGLLIN
         b1500.set_iv_sweep(
             high,
-            B1500Session.SWP_VF_SGLLIN,
+            sweep_mode,
             B1500Session.AUTO_RANGE,
             self.start_voltage,
             self.v_max,
@@ -121,14 +125,15 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             title=f'Oxide Breakdown - {device.name}',
             xlabel='Voltage (V)',
             ylabel='Current (A)',
-            series_label='I(V)',
+            series_label=None,
+            series_labels=['$I_+(V)$', '$I_-(V)$'],
             styles={
                 '$I_+(V)$': {'color': 'C0'},
-                '$I_-(V)$': {'color': 'C1'},
-                'log10(I)': {'color': 'k', 'linestyle': '--'}
+                '$I_-(V)$': {'color': 'C1'}
             },
-            secondary_series=['log10(I)'],
-            secondary_ylabel='log10(|I|)'
+            secondary_series=['|I|'],
+            secondary_ylabel='|I| (A)',
+            secondary_yscale='log'
         )
 
         # Begin sweep with streaming readout
@@ -162,7 +167,11 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         plotted = 0
 
         while True:
-            eod, data_type, value, status, channel = b1500.read_data()
+            try:
+                eod, data_type, value, status, channel = b1500.read_data()
+            except Exception as exc:
+                self.log(f'B1500 read_data error', runner)
+                raise
             if data_type == 1:  # I measurement
                 if channel == high:
                     high_currents.append(value)
@@ -187,10 +196,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 v_val = v_source_values[plotted] if plotted < len(v_source_values) else voltages[plotted]
                 ip_val = high_currents[plotted]
                 in_val = low_currents[plotted]
-                log_i = math.log10(max(abs(ip_val), 1e-15))
                 runner.add_live_point(v_val, ip_val, '$I_+(V)$')
                 runner.add_live_point(v_val, in_val, '$I_-(V)$')
-                runner.add_live_point(v_val, log_i, 'log10(I)')
                 plotted += 1
 
             if eod or plotted >= max_points:
@@ -201,10 +208,15 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
             ip_val = high_currents[idx]
             in_val = low_currents[idx]
-            log_i = math.log10(max(abs(ip_val), 1e-15))
             runner.add_live_point(v_val, ip_val, '$I_+(V)$')
             runner.add_live_point(v_val, in_val, '$I_-(V)$')
-            runner.add_live_point(v_val, log_i, 'log10(I)')
+
+        # Add log-magnitude series once, at the end, on a log-scale secondary axis
+        floor = 1e-15
+        for idx in range(min(len(high_currents), max_points)):
+            v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
+            mag_i = max(abs(high_currents[idx]), floor)
+            runner.add_live_point(v_val, mag_i, '|I|')
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
@@ -212,7 +224,6 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             v_val = v_source_values[i] if i < len(v_source_values) else voltages[i]
             ip_val = high_currents[i]
             in_val = low_currents[i]
-            log_i = math.log10(max(abs(ip_val), 1e-15))
             t_val = timestamps[i] if i < len(timestamps) else 0.0
             status_combined = max(
                 i_high_status[i] if i < len(i_high_status) else 0,
@@ -230,6 +241,11 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
     def _build_voltage_vector(self):
         if self.points < 2:
-            return [self.v_max]
-        step = (self.v_max - self.start_voltage) / (self.points - 1)
-        return [self.start_voltage + i * step for i in range(self.points)]
+            base = [self.v_max]
+        else:
+            step = (self.v_max - self.start_voltage) / (self.points - 1)
+            base = [self.start_voltage + i * step for i in range(self.points)]
+        if self.double_sweep and len(base) > 1:
+            # Return to the start voltage without duplicating the endpoint
+            return base + base[-2::-1]
+        return base

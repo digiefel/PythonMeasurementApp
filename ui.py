@@ -86,6 +86,7 @@ class MainUI:
                 ('low_channel', 'Low SMU', 'smu'),
                 ('v_max', 'Vmax (V)', float),
                 ('points', 'Points', int),
+                ('double_sweep', 'Double Sweep (return)', bool),
                 ('current_compliance', 'Current Compliance (A)', float),
                 ('current_range', 'Current Range (A)', 'current_range'),
                 ('hold_time', 'Hold Time (s)', float),
@@ -126,6 +127,7 @@ class MainUI:
                 'low_channel': 3,
                 'v_max': 15.0,
                 'points': 75,
+                'double_sweep': True,
                 'current_compliance': 1e-3,
                 'current_range': 0.0,
                 'hold_time': 0.0,
@@ -417,9 +419,9 @@ class MainUI:
         set_home = self.set_home_var.get()
         if run_all:
             self.log("Running entire subsite; align to reference device before start.")
-            self.runner.run_subsite(chip_id, site, subsite, proc_class, settings, set_home_before_run=set_home)
+            self.runner.run_subsite(chip_id, site, subsite, proc_class, settings, set_home)
         else:
-            self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings)
+            self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings, set_home)
     
     # --- Prober control handlers ---
     def prober_go_home(self):
@@ -463,7 +465,7 @@ class MainUI:
         self.log_text.see(tk.END)
 
     # Live plotting helpers wired via MeasurementRunner callbacks
-    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None):
+    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None, secondary_yscale=None, series_labels=None):
         # Fully reset the figure/axes so subsequent runs always start clean
         self.fig.clf()
         self.ax = self.fig.add_subplot(111)
@@ -479,8 +481,12 @@ class MainUI:
         if self.secondary_series:
             self.ax2 = self.ax.twinx()
             self.ax2.set_ylabel(secondary_ylabel or "Resistance (Ohm)")
+            if secondary_yscale:
+                self.ax2.set_yscale(secondary_yscale)
         # Create initial series and any known secondary series so styles/legend are correct up-front
-        self._ensure_line(series_label)
+        initial_labels = series_labels if series_labels is not None else ([series_label] if series_label else [])
+        for lbl in initial_labels:
+            self._ensure_line(lbl)
         for sec in self.secondary_series:
             self._ensure_line(sec)
         self._update_legend()
@@ -515,7 +521,7 @@ class MainUI:
         line, = target_ax.plot(
             [], [],
             label=label,
-            marker=style.get("marker", "o"),
+            marker=style.get("marker", None),
             color=style.get("color", None),
             linestyle=style.get("linestyle", "-"),
             linewidth=style.get("linewidth", None)
