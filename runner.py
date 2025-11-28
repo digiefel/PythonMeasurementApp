@@ -152,7 +152,12 @@ class MeasurementRunner:
 
         proc = proc_class(settings, os.path.join(self.config.data['output_dir'], site.name, subsite.name, device.name))
         self.move_to_device(device)
+        # Ensure contact right before measurement
+        self.prober_contact()
+        # Run measurement procedure
         proc.run(device, self)
+        # Move out of contact after completion
+        self.prober_separation()
 
     def run_subsite(self, site, subsite, proc_class, settings, set_home_before_run=False):
         """
