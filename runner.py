@@ -17,6 +17,7 @@ class MeasurementRunner:
         self.plot_start_callback = None
         self.plot_point_callback = None
         self.plot_finalize_callback = None
+        self.plot_series_callback = None
         self.status_callback = None
         self._last_status_message = None
         self.prober = None
@@ -120,6 +121,11 @@ class MeasurementRunner:
         """Send a single data point to the UI plot."""
         if self.plot_point_callback:
             self.plot_point_callback(x, y, series_label)
+
+    def add_live_series(self, xs, ys, series_label: str = "Data"):
+        """Send a full series to the UI plot in one update."""
+        if self.plot_series_callback:
+            self.plot_series_callback(xs, ys, series_label)
 
     def finalize_plot(self, save_path=None):
         """Tell UI to persist the current plot image if requested."""

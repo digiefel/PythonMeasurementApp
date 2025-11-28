@@ -24,6 +24,7 @@ class MainUI:
         self.runner.log_callback = self._post_log
         self.runner.plot_start_callback = self._post_plot_start
         self.runner.plot_point_callback = self._post_plot_point
+        self.runner.plot_series_callback = self._post_plot_series
         self.runner.plot_finalize_callback = self._post_plot_finish
         self.runner.status_callback = self._post_status
         self._run_thread = None
@@ -505,6 +506,9 @@ class MainUI:
     def _post_plot_point(self, *args, **kwargs):
         self._post(self.add_plot_point, *args, **kwargs)
 
+    def _post_plot_series(self, *args, **kwargs):
+        self._post(self.add_plot_series, *args, **kwargs)
+
     def _post_plot_finish(self, *args, **kwargs):
         self._post(self.finish_plot, *args, **kwargs)
 
@@ -593,6 +597,9 @@ class MainUI:
 
     def add_plot_point(self, x, y, series_label="Data"):
         self.plot.add_point(x, y, series_label)
+
+    def add_plot_series(self, xs, ys, series_label="Data"):
+        self.plot.add_series(xs, ys, series_label)
 
     def finish_plot(self, save_path=None):
         self.plot.finish(save_path)

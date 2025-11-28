@@ -81,6 +81,23 @@ class PlotManager:
         self.canvas.draw_idle()
         self.root.update_idletasks()
 
+    def add_series(self, xs, ys, series_label: str):
+        """Set an entire series in one shot (avoids per-point redraw)."""
+        if series_label not in self.lines:
+            self._ensure_line(series_label)
+            self._update_legend()
+        series = self.lines[series_label]
+        series["x"] = list(xs)
+        series["y"] = list(ys)
+        series["line"].set_data(series["x"], series["y"])
+        self.ax.relim()
+        self.ax.autoscale_view()
+        if self.ax2:
+            self.ax2.relim()
+            self.ax2.autoscale_view()
+        self.canvas.draw_idle()
+        self.root.update_idletasks()
+
     def finish(self, save_path: Optional[str] = None):
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)

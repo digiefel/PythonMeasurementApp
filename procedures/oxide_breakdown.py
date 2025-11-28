@@ -232,12 +232,11 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
 
         if not self.stop_requested(runner):
-            # Add log-magnitude series once, at the end, on a log-scale secondary axis
+            # Add log-magnitude series once, at the end, in one shot
             floor = 1e-15
-            for idx in range(min(len(high_currents), max_points)):
-                v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
-                mag_i = max(abs(high_currents[idx]), floor)
-                runner.add_live_point(v_val, mag_i, 'log(I)')
+            xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
+            ys = [max(abs(high_currents[idx]), floor) for idx in range(min(len(high_currents), max_points))]
+            runner.add_live_series(xs, ys, 'log(I)')
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
