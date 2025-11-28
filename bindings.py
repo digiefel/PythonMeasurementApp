@@ -619,6 +619,53 @@ class B1500Session:
     # Constants
     INSTR_ERROR_DETECTED = -1074000633
     CH_ALL = 0
+    CH_NOCH = -1
+    DATA_TYPE_TEXT = {
+        -1: "Dummy",
+        1: "Current (measure)",
+        2: "Voltage (measure)",
+        3: "Current (source)",
+        4: "Voltage (source)",
+        5: "Timestamp",
+        6: "Impedance (R-X)",
+        7: "Admittance (G-B)",
+        8: "Capacitance",
+        9: "Dissipation factor",
+        10: "Quality factor",
+        11: "Inductance",
+        12: "Phase (rad)",
+        13: "Phase (deg)",
+        14: "Frequency",
+        15: "Sampling index",
+        16: "Invalid",
+    }
+    DATA_TYPE_SHORT = {
+        -1: "DMY",
+        1: "CM",
+        2: "VM",
+        3: "CS",
+        4: "VS",
+        5: "TS",
+        6: "ZM",
+        7: "YM",
+        8: "CAP",
+        9: "DF",
+        10: "QF",
+        11: "IND",
+        12: "PR",
+        13: "PD",
+        14: "FRQ",
+        15: "IDX",
+        16: "INV",
+    }
+    STATUS_BIT_TEXT = {
+        1: "A/D overflow",
+        2: "Oscillation / NULL loop unbalanced",
+        4: "Other channel compliance / IV amp saturation",
+        8: "This channel compliance",
+        16: "Search target not found / detection time too long",
+        32: "Search stopped / slew too slow",
+    }
     IM_MODE = 1  # Measure current
     VM_MODE = 2  # Measure voltage
 
@@ -808,25 +855,36 @@ class B1500Session:
 
     def read_data(self):
         """Read one measurement record from the streaming buffer.
+        
+        Returns (ret, eod, data_type, value, status, channel)
+        - ret: driver return (can be -1 while data are valid; do not treat as fatal mid-measurement)
+        - eod: End Of Data flag (1=data end, 0=data available)
+        - data_type codes:
+            1  Current measurement data
+            2  Voltage measurement data
+            3  Current output data
+            4  Voltage output data
+            5  Time stamp data
+            6  Impedance (R-X) measurement data
+            7  Admittance (G-B) measurement data
+            8  Capacitance measurement data
+            9  Dissipation factor measurement data
+            10 Quality factor measurement data
+            11 Inductance measurement data
+            12 Phase measurement data (radian)
+            13 Phase measurement data (degree)
+            14 Frequency data
+            15 Sampling index
+            16 Invalid data
+        - value: Measured data or source setup data.
+        - status: Measurement status bitstring (compliance/overflow/etc).
+        - channel: Channel number that generated this data (-1 means no channel).
 
-        1. Current measurement data
-        2. Voltage measurement data
-        3. Current output data
-        4. Voltage output data
-        5. Time stamp data
-        6. Impedance (R-X) measurement data
-        7. Admittance (G-B) measurement data
-        8. Capacitance measurement data
-        9. Dissipation factor measurement data
-        10. Quality factor measurement data
-        11. Inductance measurement data
-        12. Phase measurement data (radian)
-        13. Phase measurement data (degree)
-        14. Frequency data
-        15. Sampling index
-        16. Invalid data
-
-        -1. No channel related data
+        Notes on error handling (Keysight guidance):
+        * The driver issues *OPC? internally; when the instrument is still busy this can time out and return -1 even
+          though the data/status are valid. Do not abort on a lone -1.
+        * ret < 0 should be logged as a driver/GPIB issue, separate from measurement quality (status bits).
+        * Avoid calling error_query while streaming; it can hang the instrument.
         """
         eod = ViInt32()
         data_type = ViInt32()
@@ -834,8 +892,31 @@ class B1500Session:
         status = ViInt32()
         channel = ViInt32()
         ret = dll_b1500.agb1500_readData(self.session, ct.byref(eod), ct.byref(data_type), ct.byref(value), ct.byref(status), ct.byref(channel))
-        self._check_ret(ret, "Read data")
-        return eod.value, data_type.value, value.value, status.value, channel.value
+        # Do not call _check_ret here; caller decides how to handle transient negatives.
+        return ret, eod.value, data_type.value, value.value, status.value, channel.value
+
+    @classmethod
+    def describe_status_bits(cls, status: int) -> str:
+        """Return a human-readable description of status bitfields."""
+        if not status:
+            return "OK"
+        parts = []
+        for bit, text in cls.STATUS_BIT_TEXT.items():
+            if status & bit:
+                parts.append(text)
+        if not parts:
+            return f"0x{status:X} (unknown bits)"
+        return "; ".join(parts)
+
+    @classmethod
+    def describe_data_type(cls, data_type: int) -> str:
+        """Return human-readable description of data_type codes."""
+        return cls.DATA_TYPE_TEXT.get(data_type, f"Type {data_type}")
+
+    @classmethod
+    def describe_data_type_short(cls, data_type: int) -> str:
+        """Return short code for data_type."""
+        return cls.DATA_TYPE_SHORT.get(data_type, f"T{data_type}")
 
     def close(self):
         dll_b1500.agb1500_close(self.session)
