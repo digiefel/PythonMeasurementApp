@@ -45,7 +45,9 @@ class MeasurementProcedure(ABC):
 
     def format_filename(self, runner, procedure_tag: str, device_name: str):
         """Generate base filename chip_site_subsite_device_timestamp_procedure."""
-        chip = getattr(runner, "current_chip", "") or "chip"
+        chip = getattr(runner, "current_chip", "")
+        if not chip:
+            raise ValueError("Chip ID is required but not set in runner.")
         site = getattr(runner, "current_site", None)
         subsite = getattr(runner, "current_subsite", None)
         site_name = site.name if site else "site"

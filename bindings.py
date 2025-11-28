@@ -716,16 +716,16 @@ class B1500Session:
         ret = dll_b1500.agb1500_asuLed(self.session, channel, 1 if on else 0)
         self._check_ret(ret, "ASU LED")
 
-    def set_ic_sweep(self, channel, sweep_mode, range_, start, stop, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
+    def set_iv_sweep(self, channel, sweep_mode, range_, start, stop, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
         """
         Configure a source sweep on a single channel.
         For current sweeps use sweep_mode=SWP_IF_SGLLIN and range_ as the source current range.
         For voltage sweeps use sweep_mode=SWP_VF_SGLLIN and range_ as the source voltage range.
         """
         ret = dll_b1500.agb1500_setIv(self.session, channel, sweep_mode, range_, start, stop, points, hold, delay, second_delay, compliance, power_compliance)
-        self._check_ret(ret, "Set IC sweep")
+        self._check_ret(ret, "Set IV sweep")
 
-    def sweep_ic(self, channel, measurement_mode, measurement_range, expected_points):
+    def sweep_iv(self, channel, measurement_mode, measurement_range, expected_points):
         """Execute configured sweep on channel and return measurement data."""
         source = (ViReal64 * expected_points)()
         value = (ViReal64 * expected_points)()
@@ -733,7 +733,7 @@ class B1500Session:
         time_ = (ViReal64 * expected_points)()
         point_count = ViInt32(expected_points)
         ret = dll_b1500.agb1500_sweepIv(self.session, channel, measurement_mode, measurement_range, ct.byref(point_count), source, value, status, time_)
-        self._check_ret(ret, "Sweep IC")
+        self._check_ret(ret, "Sweep IV")
         return list(source)[:point_count.value], list(value)[:point_count.value], list(status)[:point_count.value], list(time_)[:point_count.value], point_count.value
 
     def sweep_miv(self, channels, modes, ranges, expected_points):
@@ -791,7 +791,27 @@ class B1500Session:
         self._check_ret(ret, "Start measure")
 
     def read_data(self):
-        """Read one measurement record from the streaming buffer."""
+        """Read one measurement record from the streaming buffer.
+
+        1. Current measurement data
+        2. Voltage measurement data
+        3. Current output data
+        4. Voltage output data
+        5. Time stamp data
+        6. Impedance (R-X) measurement data
+        7. Admittance (G-B) measurement data
+        8. Capacitance measurement data
+        9. Dissipation factor measurement data
+        10. Quality factor measurement data
+        11. Inductance measurement data
+        12. Phase measurement data (radian)
+        13. Phase measurement data (degree)
+        14. Frequency data
+        15. Sampling index
+        16. Invalid data
+
+        -1. No channel related data
+        """
         eod = ViInt32()
         data_type = ViInt32()
         value = ViReal64()

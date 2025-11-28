@@ -1,9 +1,11 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
     "output_dir": "Z:/_Users/Shared/dgfl/B1500",
-    "asu_channels": ["SMU2"],
+    "asu_channels": [
+        "SMU2"
+    ],
     "asu_path_mode": 1,
-    "asu_range_mode": 0,
+    "asu_range_mode": null,
     "procedures": {
         "RVSweep": {
             "rv_start": 0.1,
@@ -30,5 +32,14 @@
             "delay_time": 0.0,
             "second_delay": 0.0
         }
+    },
+    "last_selection": {
+        "chip_id": "",
+        "site": "",
+        "subsite": "",
+        "device": "",
+        "procedure": "",
+        "set_home_before_run": true,
+        "run_subsite": false
     }
 }

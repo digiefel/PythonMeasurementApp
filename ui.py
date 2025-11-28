@@ -2,6 +2,7 @@ import json
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog
+from tkinter import messagebox
 
 import matplotlib
 
@@ -14,6 +15,7 @@ from runner import MeasurementRunner
 from bindings import SMU_CHANNEL_MAP, B1500_VOLTAGE_RANGES, B1500_CURRENT_RANGES
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
+from procedures.oxide_breakdown import OxideBreakdownProcedure
 
 
 class MainUI:
@@ -78,6 +80,18 @@ class MainUI:
                 ('delay_time', 'Delay Time (s)', float),
                 ('second_delay', 'Second Delay (s)', float),
             ],
+            'OxideBreakdown': [
+                ('gpib_address', 'GPIB Address', str),
+                ('high_channel', 'High SMU', 'smu'),
+                ('low_channel', 'Low SMU', 'smu'),
+                ('v_max', 'Vmax (V)', float),
+                ('points', 'Points', int),
+                ('current_compliance', 'Current Compliance (A)', float),
+                ('current_range', 'Current Range (A)', 'current_range'),
+                ('hold_time', 'Hold Time (s)', float),
+                ('delay_time', 'Delay Time (s)', float),
+                ('second_delay', 'Second Delay (s)', float),
+            ],
         }
         self.procedure_defaults = {
             'RVSweep': {
@@ -102,6 +116,18 @@ class MainUI:
                 'power_compliance': 0.0,
                 'measurement_range': 0.0,
                 'current_compliance': 0.01,
+                'hold_time': 0.0,
+                'delay_time': 0.0,
+                'second_delay': 0.0,
+            },
+            'OxideBreakdown': {
+                'gpib_address': 'GPIB0::17::INSTR',
+                'high_channel': 4,
+                'low_channel': 3,
+                'v_max': 15.0,
+                'points': 75,
+                'current_compliance': 1e-3,
+                'current_range': 0.0,
                 'hold_time': 0.0,
                 'delay_time': 0.0,
                 'second_delay': 0.0,
@@ -366,7 +392,10 @@ class MainUI:
             self.log("Select a procedure before running.")
             return
         self.update_global_asu_from_ui()
-        chip_id = self.chip_var.get().strip() or "chip"
+        chip_id = self.chip_var.get().strip()
+        if not chip_id:
+            tk.messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
+            return
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
@@ -374,7 +403,11 @@ class MainUI:
             self.log("Select site, subsite, and device before running.")
             return
 
-        proc_class = {'RVSweep': RVSweepProcedure, 'FourTerminalIV': FourTerminalIVProcedure}[proc_name]
+        proc_class = {
+            'RVSweep': RVSweepProcedure,
+            'FourTerminalIV': FourTerminalIVProcedure,
+            'OxideBreakdown': OxideBreakdownProcedure,
+        }[proc_name]
         settings = self.collect_settings()
         # Persist the settings as part of the run so they are available next time
         self.config.set_procedure_settings(proc_name, settings)
@@ -430,7 +463,7 @@ class MainUI:
         self.log_text.see(tk.END)
 
     # Live plotting helpers wired via MeasurementRunner callbacks
-    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None):
+    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None):
         # Fully reset the figure/axes so subsequent runs always start clean
         self.fig.clf()
         self.ax = self.fig.add_subplot(111)
@@ -445,7 +478,7 @@ class MainUI:
         styles = styles or {}
         if self.secondary_series:
             self.ax2 = self.ax.twinx()
-            self.ax2.set_ylabel("Resistance (Ohm)")
+            self.ax2.set_ylabel(secondary_ylabel or "Resistance (Ohm)")
         # Create initial series and any known secondary series so styles/legend are correct up-front
         self._ensure_line(series_label)
         for sec in self.secondary_series:
@@ -483,7 +516,9 @@ class MainUI:
             [], [],
             label=label,
             marker=style.get("marker", "o"),
-            color=style.get("color", None)
+            color=style.get("color", None),
+            linestyle=style.get("linestyle", "-"),
+            linewidth=style.get("linewidth", None)
         )
         self.lines[label] = {"line": line, "x": [], "y": [], "ax": target_ax}
 

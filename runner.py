@@ -104,10 +104,10 @@ class MeasurementRunner:
             self.log_to_gui(f'Warning: Read position failed: {e}')
             return None
 
-    def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None):
+    def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None):
         """Notify UI to initialize/clear the live plot."""
         if self.plot_start_callback:
-            self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [])
+            self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [], secondary_ylabel)
 
     def add_live_point(self, x, y, series_label: str = "Data"):
         """Send a single data point to the UI plot."""
@@ -141,6 +141,8 @@ class MeasurementRunner:
         for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
             if key not in settings and key in self.config.data:
                 settings[key] = self.config.data.get(key)
+        if not chip_id:
+            raise ValueError("Chip ID is required to run a procedure.")
 
         # Log the ASU settings being applied so the operator can verify them in the GUI log
         if self.log_callback:
@@ -172,6 +174,8 @@ class MeasurementRunner:
         Run the given procedure for every device in the subsite, optionally
         capturing the current chuck position as the subsite origin first.
         """
+        if not chip_id:
+            raise ValueError("Chip ID is required to run a subsite.")
         if set_home_before_run:
             self.log_to_gui("Setting subsite origin at current chuck position...")
             self.set_subsite_origin()

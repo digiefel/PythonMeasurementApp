@@ -117,7 +117,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             current_points = [self.start_current + i * step for i in range(self.points)]
 
         # Program the sweep on the source channel
-        b1500.set_ic_sweep(
+        b1500.set_iv_sweep(
             source_channel,
             B1500Session.SWP_IF_SGLLIN,
             B1500Session.AUTO_RANGE,
