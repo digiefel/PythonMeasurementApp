@@ -11,6 +11,7 @@ from sentio_prober_control.Sentio.Enumerations import (
     SteppingContactMode,
     ChuckSite,
     ThermoChuckState,
+    ZReference,
 )
 from sentio_prober_control.Sentio.Response import Response
 
@@ -58,7 +59,7 @@ class MeasurementRunner:
             self.prober.set_stepping_contact_mode(SteppingContactMode.BackToContact)
         return self.prober
 
-    def set_subsite_origin(self):
+    def set_subsite_origin(self, x_offset: float, y_offset: float):
         """
         Capture the current chuck position and treat it as the new (0,0) for user-defined moves.
         Operator must have aligned to the reference device before this is called.
@@ -66,6 +67,7 @@ class MeasurementRunner:
         try:
             prober = self.get_prober()
             x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
+            x, y = (x - x_offset, y - y_offset)
             self.subsite_origin = (x, y)
             self.log(f'Subsite origin recorded at X={x:.1f}um, Y={y:.1f}um')
         except Exception as e:
@@ -84,10 +86,6 @@ class MeasurementRunner:
             self.log(f'Chuck moved to recorded origin X={x:.1f}um, Y={y:.1f}um')
         except Exception as e:
             self.log(f'Warning: Go home failed: {e}')
-
-    def prober_set_home(self):
-        """Alias for setting subsite/user origin at current position."""
-        self.set_subsite_origin()
 
     def prober_contact(self):
         try:
@@ -118,6 +116,15 @@ class MeasurementRunner:
             return x, y
         except Exception as e:
             self.log(f'Warning: Read position failed: {e}')
+            return None
+
+    def get_chuck_height(self) -> Optional[float]:
+        try:
+            prober = self.get_prober()
+            height = prober.get_chuck_z(ZReference.Contact)
+            return height
+        except Exception as e:
+            self.log(f"Warning: Get chuck height failed: {e}")
             return None
     
     def get_temp_setpoint(self) -> Optional[float]:

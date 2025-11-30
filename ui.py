@@ -31,10 +31,6 @@ class MainUI:
         self.runner.plot_finalize_callback = self._post_plot_finish
         self.runner.status_callback = self._post_status
         self._run_thread = None
-        # Styles for Run/Stop
-        style = ttk.Style()
-        style.configure("Run.TButton", foreground="green")
-        style.configure("Stop.TButton", foreground="red")
 
         self.root.title("Python Measurement App")
         self.root.geometry("1400x900")
@@ -174,6 +170,17 @@ class MainUI:
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
         self.load_global_asu()
+        self._init_contact_state()
+
+    def _init_contact_state(self):
+        """Query prober for actual contact status and update button accordingly."""
+        try:
+            height = self.runner.get_chuck_height()
+            if height is not None:
+                has_contact = height >= -1.0 # contact if Z <= 1um (inverted)
+                self._set_contact_state(has_contact)
+        except Exception as e:
+            self.log(f"Could not read initial contact state: {e}")
 
     def build_layout(self):
         # Selection section
@@ -234,7 +241,7 @@ class MainUI:
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        self.run_button = ttk.Button(self.selection_frame, text="Run", command=self.run, style="Run.TButton")
+        self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
         self.run_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Temperature controls (separate section below Selection)
@@ -301,13 +308,12 @@ class MainUI:
         prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         for c in range(2):
             prober_frame.grid_columnconfigure(c, weight=1)
-        ttk.Button(prober_frame, text="Go Home", command=self.prober_go_home).grid(row=0, column=0, sticky="ew", padx=4, pady=2)
-        ttk.Button(prober_frame, text="Set Home", command=self.prober_set_home).grid(row=0, column=1, sticky="ew", padx=4, pady=2)
-        ttk.Button(prober_frame, text="Go To Device", command=self.prober_go_to_device).grid(row=1, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
-        self.contact_button = ttk.Button(prober_frame, text="Contact", command=self.toggle_contact)
-        self.contact_button.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
-        ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=3, column=0, sticky="ew", padx=4, pady=2)
-        ttk.Label(prober_frame, textvariable=self.position_var).grid(row=3, column=1, sticky="w", padx=4, pady=2)
+        self.contact_button = tk.Button(prober_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
+        self.contact_button.grid(row=0, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        ttk.Button(prober_frame, text="Go To Device", command=self.prober_go_to_device).grid(row=1, column=0, sticky="ew", padx=4, pady=2)
+        ttk.Button(prober_frame, text="Set Reference to Device", command=self.prober_set_reference).grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=2, column=0, sticky="ew", padx=4, pady=2)
+        ttk.Label(prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
 
         # Log section (bottom right)
         log_frame = ttk.LabelFrame(self.root, text="Log")
@@ -574,33 +580,43 @@ class MainUI:
         threading.Thread(target=self.runner.safe_stop, daemon=True).start()
 
     # --- Prober control handlers ---
-    def prober_go_home(self):
-        self.runner.prober_go_home()
-
-    def prober_set_home(self):
-        self.runner.prober_set_home()
+    def prober_set_reference(self):
+        # get current device position as dx, dy
+        # set home position to -dx, -dy
+        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
+        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        if not device:
+            self.log("Select site, subsite, and device before setting reference.")
+            return
+        self.log(f"Setting prober reference to device '{device.name}' at ({device.x}um, {device.y}um).")
+        self.runner.set_subsite_origin(device.x, device.y)
 
     def prober_go_to_device(self):
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
-        if not all([site, subsite, device]):
+        if not device:
             self.log("Select site, subsite, and device before moving.")
             return
         self.runner.move_to_device(device)
 
     def toggle_contact(self):
-        target_contact = not self.prober_contact_state.get()
-        ok = self.runner.prober_contact() if target_contact else self.runner.prober_separation()
+        in_contact = self.prober_contact_state.get()
+        if in_contact:
+            self.prober_separation()
+        else:
+            self.prober_contact()
+
+    def prober_contact(self):
+        ok = self.runner.prober_contact()
         if ok:
-            self.prober_contact_state.set(target_contact)
-            self.contact_button.config(text="Separation" if target_contact else "Contact")
+            self._set_contact_state(True)
 
     def prober_separation(self):
         ok = self.runner.prober_separation()
         if ok:
-            self.prober_contact_state.set(False)
-            self.contact_button.config(text="Contact")
+            self._set_contact_state(False)
 
     def read_position(self):
         pos = self.runner.prober_read_position()
@@ -642,9 +658,17 @@ class MainUI:
     def _set_running_state(self, running: bool):
         """Toggle Run/Stop button appearance and command."""
         if running:
-            self.run_button.config(text="Stop", command=self.stop_run, style="Stop.TButton")
+            self.run_button.config(text="STOP", command=self.stop_run, bg="red", fg="white")
         else:
-            self.run_button.config(text="Run", command=self.run, style="Run.TButton")
+            self.run_button.config(text="RUN", command=self.run, bg="green", fg="white")
+
+    def _set_contact_state(self, in_contact: bool):
+        """Update contact button appearance based on contact state."""
+        self.prober_contact_state.set(in_contact)
+        if in_contact:
+            self.contact_button.config(text="CONTACT", bg="green yellow")
+        else:
+            self.contact_button.config(text="SEPARATION", bg="yellow")
 
     def _render_status_ok(self):
         for lbl in self.status_frame.grid_slaves():
