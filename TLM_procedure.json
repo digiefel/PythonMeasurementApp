@@ -56,8 +56,8 @@
         "chip": "test",
         "temperature_enabled": true,
         "temperature_mode": "Setpoint",
-        "temperature_setpoint_c": "25",
-        "temperature_sweep_c": "",
-        "temperature_wait_after_s": "0.0"
+        "temperature_setpoint_c": "50",
+        "temperature_sweep_c": "25, 50, 75",
+        "temperature_wait_after_s": "30"
     }
 }
