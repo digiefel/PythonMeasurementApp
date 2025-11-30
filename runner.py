@@ -1,5 +1,6 @@
 import os.path
 import time
+import atexit
 from typing import Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementProcedure
@@ -31,6 +32,7 @@ class MeasurementRunner:
         self.current_temp_c: Optional[float] = None
         self.stop_event = threading.Event()
         self.abort_handler: Optional[Callable[[], None]] = None
+        atexit.register(self._send_local)
     
     def log(self, msg):
         if self.log_callback:
@@ -148,6 +150,17 @@ class MeasurementRunner:
             return self.prober.status.get_chuck_temp_setpoint()
         except Exception:
             return None
+    
+    def _send_local(self):
+        """Return prober to local control if possible."""
+        if getattr(self, "prober", None) and hasattr(self.prober, "comm"):
+            try:
+                self.prober.comm.send("*LOCAL")
+            except Exception:
+                pass
+
+    def shutdown(self):
+        self._send_local()
 
     def get_thermo_state(self) -> Optional[str]:
         if not self._ensure_prober():
@@ -230,12 +243,12 @@ class MeasurementRunner:
     def request_stop(self):
         """Request cooperative stop and invoke any registered abort handler."""
         self.stop_event.set()
-        if self.abort_handler:
-            try:
-                self.abort_handler()
-            except Exception:
+        try:
+            self.log("Stop requested; attempting to abort measurement...")
+            self.abort_handler()
+        except Exception:
                 # Swallow errors from abort to avoid masking stop
-                pass
+            pass
 
     def clear_stop(self):
         self.stop_event.clear()

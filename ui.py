@@ -42,6 +42,7 @@ class MainUI:
             self.root.grid_columnconfigure(col, weight=weight)
         self.root.grid_rowconfigure(0, weight=3)
         self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_rowconfigure(2, weight=1)
         self.root.grid_columnconfigure(2, weight=2)
 
         # GUI state
@@ -162,6 +163,7 @@ class MainUI:
         # React to sweep entry edits to refresh the tiny profile
         self.temp_sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())
         self._update_sweep_plot()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
         default_proc = next(iter(self.procedure_fields.keys()))
@@ -875,6 +877,17 @@ class MainUI:
         # if val < 0.0:
         #     val = 1.0
         return 1.0
+
+    def _on_close(self):
+        self._stop_temp_polling()
+        self.runner.request_stop()
+        if self._run_thread and self._run_thread.is_alive():
+            self._run_thread.join(timeout=2)
+        try:
+            self.runner.shutdown()
+        except Exception:
+            pass
+        self.root.destroy()
 
     def apply_last_selection(self, last_sel):
         if last_sel.get('procedure'):
