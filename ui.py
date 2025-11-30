@@ -66,7 +66,7 @@ class MainUI:
         self.temp_sweep_var = tk.StringVar()
         self.temp_wait_var = tk.StringVar(value="0")
         self.temp_value_var = tk.StringVar(value="--")
-        self.temp_setpoint_display_var = tk.StringVar(value="Setpoint: --")
+        self.temp_setpoint_display_var = tk.StringVar(value="--")
         self._temp_poll_job = None
 
         # Procedure field definitions (label, type)
@@ -234,12 +234,12 @@ class MainUI:
         self.temp_mode_cb = ttk.Combobox(temp_frame, textvariable=self.temp_mode_var, values=["Setpoint", "Sweep"], state="readonly")
         self.temp_mode_cb.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.temp_mode_cb.bind('<<ComboboxSelected>>', lambda e=None: self._toggle_temp_controls())
-        self.temp_setpoint_label = ttk.Label(temp_frame, text="Setpoint (C)")
-        self.temp_setpoint_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
+        self.temp_setpoint_entry_label = ttk.Label(temp_frame, text="Setpoint (C)")
+        self.temp_setpoint_entry_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
         self.temp_setpoint_entry = ttk.Entry(temp_frame, textvariable=self.temp_setpoint_var)
         self.temp_setpoint_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        self.temp_sweep_label = ttk.Label(temp_frame, text="Sweep list (C)")
-        self.temp_sweep_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
+        self.temp_sweep_entry_label = ttk.Label(temp_frame, text="Sweep list (C)")
+        self.temp_sweep_entry_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
         self.temp_sweep_entry = ttk.Entry(temp_frame, textvariable=self.temp_sweep_var)
         self.temp_sweep_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
         ttk.Label(temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
@@ -255,8 +255,8 @@ class MainUI:
         self.temp_value_label = ttk.Label(temp_row, textvariable=self.temp_value_var)
         self.temp_value_label.grid(row=0, column=1, sticky="w", padx=2)
         ttk.Label(temp_row, text="Setpoint:").grid(row=0, column=2, sticky="e", padx=2)
-        self.temp_setpoint_label = ttk.Label(temp_row, textvariable=self.temp_setpoint_display_var)
-        self.temp_setpoint_label.grid(row=0, column=3, sticky="e", padx=2)
+        self.temp_setpoint_display_label = ttk.Label(temp_row, textvariable=self.temp_setpoint_display_var)
+        self.temp_setpoint_display_label.grid(row=0, column=3, sticky="e", padx=2)
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -740,17 +740,17 @@ class MainUI:
         entry_state = "normal" if enabled else "disabled"
         self.temp_mode_cb.configure(state=mode_state)
         if mode == "Setpoint":
-            self.temp_setpoint_label.grid()
+            self.temp_setpoint_entry_label.grid()
             self.temp_setpoint_entry.grid()
-            self.temp_sweep_label.grid_remove()
+            self.temp_sweep_entry_label.grid_remove()
             self.temp_sweep_entry.grid_remove()
             self.temp_setpoint_entry.configure(state=entry_state)
             self.temp_sweep_entry.configure(state="disabled")
         else:
-            self.temp_sweep_label.grid()
+            self.temp_sweep_entry_label.grid()
             self.temp_sweep_entry.grid()
             self.temp_sweep_entry.configure(state=entry_state)
-            self.temp_setpoint_label.grid_remove()
+            self.temp_setpoint_entry_label.grid_remove()
             self.temp_setpoint_entry.grid_remove()
             self.temp_setpoint_entry.configure(state="disabled")
         self.temp_wait_entry.configure(state=entry_state)
