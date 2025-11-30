@@ -570,7 +570,8 @@ class MainUI:
     def stop_run(self):
         """Triggered by Stop button to abort measurement safely."""
         self.log("Stop button pressed; stopping run...")
-        self.runner.safe_stop()
+        # Run safe_stop in a separate thread to avoid blocking the UI
+        threading.Thread(target=self.runner.safe_stop, daemon=True).start()
 
     # --- Prober control handlers ---
     def prober_go_home(self):
@@ -824,7 +825,7 @@ class MainUI:
         except Exception as exc:
             tk.messagebox.showerror("Temperature", f"Invalid temperature value: {exc}")
             return
-        self.runner.set_point(target)
+        self.runner.prober_set_temp(target)
         self.log(f"Temperature set to {target:.1f} C")
         if self.temp_enabled_var.get():
             poll = self._safe_poll_interval()
@@ -836,18 +837,9 @@ class MainUI:
         self._stop_temp_polling()
         interval_ms = max(int(poll_interval_s * 1000), 250)
         def poll():
-            try:
-                temp = self.runner.read_temp()
-            except Exception:
-                temp = None
-            try:
-                state = self.runner.get_thermo_state()
-            except Exception:
-                state = None
-            try:
-                setpoint = self.runner.get_temp_setpoint()
-            except Exception:
-                setpoint = None
+            temp = self.runner.prober_get_temp()
+            state = self.runner.get_thermo_state()
+            setpoint = self.runner.get_temp_setpoint()
             if temp is None:
                 self.temp_value_var.set("N/A")
                 color = "red"
