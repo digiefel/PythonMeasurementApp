@@ -258,7 +258,7 @@ class MainUI:
         ttk.Label(temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
         self.temp_wait_entry = ttk.Entry(temp_frame, textvariable=self.temp_wait_var)
         self.temp_wait_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        self.temp_set_button = ttk.Button(temp_frame, text="Set temperature", command=self._set_temperature_now)
+        self.temp_set_button = ttk.Button(temp_frame, text="Set Temperature", command=self._set_temperature_now)
         self.temp_set_button.grid(row=5, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
         temp_row = ttk.Frame(temp_frame)
         temp_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 0))
@@ -872,10 +872,11 @@ class MainUI:
         return 1.0
 
     def _on_close(self):
+        self.root.withdraw()
         self._stop_temp_polling()
         self.runner.safe_stop()
         if self._run_thread and self._run_thread.is_alive():
-            self._run_thread.join(timeout=2)
+            self._run_thread.join(timeout=10)
         self.root.destroy()
 
     def apply_last_selection(self, last_sel):
