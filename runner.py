@@ -8,6 +8,7 @@ from sentio_prober_control.Sentio.Enumerations import (
     XyReference,
     SteppingContactMode,
     ChuckSite,
+    ThermoChuckState,
 )
 from sentio_prober_control.Sentio.Response import Response
 
@@ -139,6 +140,32 @@ class MeasurementRunner:
         except Exception as e:
             self.log(f"Warning: Get chuck temperature failed: {e}")
             return None
+
+    def get_temp_setpoint(self) -> Optional[float]:
+        if not self._ensure_prober():
+            return None
+        try:
+            return self.prober.status.get_chuck_temp_setpoint()
+        except Exception:
+            return None
+
+    def get_thermo_state(self) -> Optional[str]:
+        if not self._ensure_prober():
+            return None
+        state = self.prober.status.get_chuck_thermo_state()
+        match state:
+            case ThermoChuckState.Heating:
+                return "heating"
+            case ThermoChuckState.Cooling:
+                return "cooling"
+            case ThermoChuckState.Controlling:
+                return "controlling"
+            case ThermoChuckState.Error:
+                return "error"
+            case ThermoChuckState.Soaking:
+                return "soaking"
+            case _:
+                return "idle"
 
     # --- Temperature control ---
     def set_point(self, temp_c: float):
