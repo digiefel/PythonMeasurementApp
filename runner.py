@@ -1,5 +1,5 @@
 import os.path
-import subprocess
+from datetime import datetime
 from typing import Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementProcedure
@@ -30,7 +30,10 @@ class MeasurementRunner:
         self.stop_event = threading.Event()
         self.abort_handler: Optional[Callable[[], None]] = None
     
-    def log_to_gui(self, msg):
+    def log(self, msg):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        log_msg = f'[{timestamp}] {msg}'
+        print(log_msg)
         if self.log_callback:
             self.log_callback(msg)
 
@@ -43,7 +46,7 @@ class MeasurementRunner:
             self.prober.set_stepping_contact_mode(SteppingContactMode.BackToContact)
             return True
         except Exception as e:
-            self.log_to_gui(f'Warning: SENTIO init failed (GPIB0::28::INSTR): {e}')
+            self.log(f'Warning: SENTIO init failed (GPIB0::28::INSTR): {e}')
             raise e
 
     def set_subsite_origin(self):
@@ -56,9 +59,9 @@ class MeasurementRunner:
         try:
             x, y = self.prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
             self.subsite_origin = (x, y)
-            self.log_to_gui(f'Subsite origin recorded at X={x:.1f}um, Y={y:.1f}um')
+            self.log(f'Subsite origin recorded at X={x:.1f}um, Y={y:.1f}um')
         except Exception as e:
-            self.log_to_gui(f'Warning: Failed to set subsite origin: {e}')
+            self.log(f'Warning: Failed to set subsite origin: {e}')
 
     # --- Semi-manual prober controls ---
     def prober_go_home(self):
@@ -66,14 +69,14 @@ class MeasurementRunner:
             return
         try:
             if not self.subsite_origin:
-                self.log_to_gui('No subsite origin recorded. Use "Set Home" first.')
+                self.log('No subsite origin recorded. Use "Set Home" first.')
                 return
             x0, y0 = self.subsite_origin
             x, y = self.prober.move_chuck_xy(XyReference.Home, x0, y0)
             self.prober.wait_all()
-            self.log_to_gui(f'Chuck moved to recorded origin X={x:.1f}um, Y={y:.1f}um')
+            self.log(f'Chuck moved to recorded origin X={x:.1f}um, Y={y:.1f}um')
         except Exception as e:
-            self.log_to_gui(f'Warning: Go home failed: {e}')
+            self.log(f'Warning: Go home failed: {e}')
 
     def prober_set_home(self):
         """Alias for setting subsite/user origin at current position."""
@@ -85,10 +88,10 @@ class MeasurementRunner:
         try:
             self.prober.move_chuck_contact()
             self.prober.wait_all()
-            self.log_to_gui('Chuck moved to contact')
+            self.log('Chuck moved to contact')
             return True
         except Exception as e:
-            self.log_to_gui(f'Warning: Contact failed: {e}')
+            self.log(f'Warning: Contact failed: {e}')
             return False
 
     def prober_separation(self):
@@ -97,10 +100,10 @@ class MeasurementRunner:
         try:
             self.prober.move_chuck_separation()
             self.prober.wait_all()
-            self.log_to_gui('Chuck moved to separation')
+            self.log('Chuck moved to separation')
             return True
         except Exception as e:
-            self.log_to_gui(f'Warning: Separation failed: {e}')
+            self.log(f'Warning: Separation failed: {e}')
             return False
 
     def prober_read_position(self):
@@ -110,7 +113,7 @@ class MeasurementRunner:
             x, y = self.prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
             return x, y
         except Exception as e:
-            self.log_to_gui(f'Warning: Read position failed: {e}')
+            self.log(f'Warning: Read position failed: {e}')
             return None
     
     def prober_set_temp(self, temperature_c: float):
@@ -121,10 +124,10 @@ class MeasurementRunner:
             # so we just send the command directly
             self.prober.status.comm.send(f"status:set_chuck_temp {temperature_c:.2f}")
             Response.check_resp(self.prober.status.comm.read_line())
-            self.log_to_gui(f'Chuck temperature setpoint set to {temperature_c:.2f}°C (lift_chuck={lift_chuck})')
+            self.log(f'Chuck temperature setpoint set to {temperature_c:.2f}°C (lift_chuck={lift_chuck})')
             return True
         except Exception as e:
-            self.log_to_gui(f'Warning: Set chuck temperature failed: {e}')
+            self.log(f'Warning: Set chuck temperature failed: {e}')
             return False
         
     def prober_get_temp(self) -> Optional[float]:
@@ -134,7 +137,7 @@ class MeasurementRunner:
             temp = self.prober.status.get_chuck_temp()
             return temp
         except Exception as e:
-            self.log_to_gui(f'Warning: Get chuck temperature failed: {e}')
+            self.log(f'Warning: Get chuck temperature failed: {e}')
             return None
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
@@ -190,7 +193,7 @@ class MeasurementRunner:
         self.abort_handler = handler
     
     def move_to_device(self, device):
-        self.log_to_gui(f'Moving to {device.name} at X={device.x}, Y={device.y}')
+        self.log(f'Moving to {device.name} at X={device.x}, Y={device.y}')
         if not self._ensure_prober():
             return
         try:
@@ -199,12 +202,12 @@ class MeasurementRunner:
             target_y = origin_y + device.y
             x, y = self.prober.move_chuck_xy(XyReference.Home, target_x, target_y)
             self.prober.wait_all()
-            self.log_to_gui(
+            self.log(
                 f'Chuck moved to X={x:.1f}um, Y={y:.1f}um '
                 f'(origin {"set" if self.subsite_origin else "unset"})'
             )
         except Exception as e:
-            self.log_to_gui(f'Warning: SENTIO move failed: {e}')
+            self.log(f'Warning: SENTIO move failed: {e}')
     
     def run_procedure(self, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False):
         # Apply global ASU overrides if present
@@ -215,7 +218,7 @@ class MeasurementRunner:
             raise ValueError("Chip ID is required to run a procedure.")
 
         if set_home_before_run:
-            self.log_to_gui("Setting subsite origin at current chuck position...")
+            self.log("Setting subsite origin at current chuck position...")
             self.set_subsite_origin()
 
         # Update context for use by procedures
@@ -247,7 +250,7 @@ class MeasurementRunner:
         if not chip_id:
             raise ValueError("Chip ID is required to run a subsite.")
         if set_home_before_run:
-            self.log_to_gui("Setting subsite origin at current chuck position...")
+            self.log("Setting subsite origin at current chuck position...")
             self.set_subsite_origin()
         for device in subsite.devices:
             # Copy settings per device to avoid accidental mutation

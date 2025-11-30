@@ -15,10 +15,7 @@ class MeasurementProcedure(ABC):
         pass
     
     def log(self, message: str):
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        log_msg = f'[{timestamp}] {message}'
-        print(log_msg)
-        self.runner.log_to_gui(log_msg)
+        self.runner.log_to_gui(message)
 
     # --- Cooperative stop helpers ---
     def stop_requested(self) -> bool:
