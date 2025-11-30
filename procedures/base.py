@@ -15,7 +15,7 @@ class MeasurementProcedure(ABC):
         pass
     
     def log(self, message: str):
-        self.runner.log_to_gui(message)
+        self.runner.log(message)
 
     # --- Cooperative stop helpers ---
     def stop_requested(self) -> bool:
@@ -74,4 +74,10 @@ class MeasurementProcedure(ABC):
         site_name = site.name
         subsite_name = subsite.name
         timestamp = self.get_run_timestamp()
-        return f"{chip}_{site_name}_{subsite_name}_{device_name}_{timestamp}_{procedure_tag}"
+        temp_k = None
+        if self.runner.current_temp_c is not None:
+            temp_k = self.runner.current_temp_c + 273.15
+        base = f"{chip}_{site_name}_{subsite_name}_{device_name}_{timestamp}"
+        if temp_k is not None:
+            base = f"{base}_{temp_k:.0f}K"
+        return f"{base}_{procedure_tag}"

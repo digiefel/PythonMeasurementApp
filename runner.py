@@ -1,5 +1,5 @@
 import os.path
-from datetime import datetime
+import time
 from typing import Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementProcedure
@@ -27,15 +27,15 @@ class MeasurementRunner:
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
+        self.current_temp_c: Optional[float] = None
         self.stop_event = threading.Event()
         self.abort_handler: Optional[Callable[[], None]] = None
     
     def log(self, msg):
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        log_msg = f'[{timestamp}] {msg}'
-        print(log_msg)
         if self.log_callback:
             self.log_callback(msg)
+        else:
+            print("Warning: No log callback registered. Message:", msg)
 
     def _ensure_prober(self):
         """Lazily create the SENTIO prober session over GPIB (visa address)."""
@@ -124,12 +124,12 @@ class MeasurementRunner:
             # so we just send the command directly
             self.prober.status.comm.send(f"status:set_chuck_temp {temperature_c:.2f}")
             Response.check_resp(self.prober.status.comm.read_line())
-            self.log(f'Chuck temperature setpoint set to {temperature_c:.2f}°C (lift_chuck={lift_chuck})')
+            self.log(f"Chuck temperature setpoint set to {temperature_c:.2f} C")
             return True
         except Exception as e:
-            self.log(f'Warning: Set chuck temperature failed: {e}')
+            self.log(f"Warning: Set chuck temperature failed: {e}")
             return False
-        
+
     def prober_get_temp(self) -> Optional[float]:
         if not self._ensure_prober():
             return None
@@ -137,12 +137,37 @@ class MeasurementRunner:
             temp = self.prober.status.get_chuck_temp()
             return temp
         except Exception as e:
-            self.log(f'Warning: Get chuck temperature failed: {e}')
+            self.log(f"Warning: Get chuck temperature failed: {e}")
             return None
+
+    # --- Temperature control ---
+    def set_point(self, temp_c: float):
+        self.current_temp_c = temp_c
+        return self.prober_set_temp(temp_c)
+
+    def read_temp(self) -> Optional[float]:
+        temp = self.prober_get_temp()
+        if temp is not None:
+            self.current_temp_c = temp
+        return temp
+
+    def wait_until_stable(self, target_c: float, tol_c: float = 0.5, poll_s: float = 2.0, timeout_s: float = 900.0) -> bool:
+        start = time.time()
+        while True:
+            if self.should_stop():
+                return False
+            temp = self.read_temp()
+            if temp is not None and abs(temp - target_c) <= tol_c:
+                return True
+            if timeout_s and (time.time() - start) > timeout_s:
+                return False
+            time.sleep(max(poll_s, 0.25))
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
         """Notify UI to initialize/clear the live plot."""
         if self.plot_start_callback:
+            if self.current_temp_c is not None:
+                title = f"{title} ({self.current_temp_c + 273.15:.0f}K)"
             labels = series_labels if series_labels is not None else ([series_label] if series_label else [])
             self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [], secondary_ylabel, secondary_yscale, labels)
 
@@ -208,6 +233,32 @@ class MeasurementRunner:
             )
         except Exception as e:
             self.log(f'Warning: SENTIO move failed: {e}')
+    
+    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False, run_subsite=False, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
+        """Set each target temperature, wait for stability, then run the procedure(s)."""
+        first = True
+        try:
+            for target in temp_list_c:
+                if self.should_stop():
+                    self.log("Stop requested; aborting temperature sweep.")
+                    break
+                self.log(f"Setting temperature setpoint to {target:.1f} C")
+                self.set_point(target)
+                if poll_interval_s > 0:
+                    self.log(f"Waiting for chuck to stabilize at {target:.1f} C (+/-{tolerance_c:.1f} C)")
+                    self.wait_until_stable(target, tolerance_c, poll_interval_s)
+                if wait_after_stable_s > 0:
+                    time.sleep(wait_after_stable_s)
+                self.current_temp_c = target
+                run_settings = dict(settings)
+                run_settings['temperature_c'] = target
+                if run_subsite:
+                    self.run_subsite(chip_id, site, subsite, proc_class, run_settings, set_home_before_run if first else False)
+                else:
+                    self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings, set_home_before_run if first else False)
+                first = False
+        finally:
+            self.current_temp_c = None
     
     def run_procedure(self, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False):
         # Apply global ASU overrides if present

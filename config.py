@@ -18,6 +18,12 @@ DEFAULT_CONFIG = {
         'procedure': '',
         'set_home_before_run': True,
         'run_subsite': False,
+        'temperature_enabled': False,
+        'temperature_mode': 'Setpoint',
+        'temperature_setpoint_c': '',
+        'temperature_sweep_c': '',
+        'temperature_wait_after_s': 0.0,
+        'temperature_poll_interval_s': 5.0,
     },
 }
 
@@ -39,6 +45,11 @@ class Config:
                     data[k] = v
             if 'last_selection' not in data:
                 data['last_selection'] = DEFAULT_CONFIG['last_selection'].copy()
+            else:
+                for k, v in DEFAULT_CONFIG['last_selection'].items():
+                    data['last_selection'].setdefault(k, v)
+                if data['last_selection'].get('temperature_mode') not in ('Setpoint', 'Sweep'):
+                    data['last_selection']['temperature_mode'] = 'Setpoint'
             return data
         return DEFAULT_CONFIG.copy()
     

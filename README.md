@@ -88,6 +88,45 @@ Install: `pip install -r requirements.txt`
 - `WGFMUSession`: Wrapper for WGFMU using ctypes to WGFMU.dll
 - Functions to initialize, configure, measure, etc.
 
+## Planned Temperature Control Design
+### Modes and UI
+- Top-level toggle to enable/disable the Temperature panel; when off, the panel is disabled/gray and the app behaves exactly as today.
+- Mode selector inside the panel: Off / Setpoint / Sweep.
+  - Off: identical to current app; no temperature actions.
+  - Setpoint: single temperature value (°C).
+  - Sweep: comma-separated list of temperatures (°C).
+- Shared fields: “Wait after stabilization” time (seconds) slept after stability is reached; optional poll interval for stability/live reads.
+- Tiny visualization in the panel:
+  - Always shows the target temperature profile (index or cumulative time vs. target temp) for Setpoint/Sweep.
+  - If easy to wire, overlay live measured temperature vs. elapsed time via periodic reads; if not, just show the target profile.
+
+### Runner orchestration
+- Add a temperature controller handle on the runner with `set_point(temp_c)`, `wait_until_stable(target_c, tol, poll)`, and `read_temp()`.
+- Track `runner.current_temp_c` while a temperature is active; clear it when not.
+- New method `run_temperature_sweep(temp_list_c, wait_after_stable_s, settings, proc_class, selection...)`:
+  - For each target `t` in `temp_list_c`: check stop; set setpoint; wait until stable; sleep `wait_after_stable_s`; then invoke existing run path (subsite or single device) with the same settings (optionally include `temperature_c` in settings for logging/CSV headers).
+  - No extra edge-handling; a stop just stops.
+
+### File and plot naming
+- Keep the same output directory structure (no per-temperature subfolders).
+- Filenames gain a Kelvin suffix when temperature is active: `_{temp_k:.0f}K` inserted before the procedure tag in the base filename (`chip_site_subsite_device_timestamp_298K_proc`). Timestamps remain, so no overwrites.
+- Plot titles include the same Kelvin tag when temperature is active.
+
+### Persistence
+- Store the temperature toggle state, mode (Off/Setpoint/Sweep), temperatures, wait-after-stabilization time, and poll interval in config/last selection alongside existing settings.
+
+### Procedure impact
+- Procedures remain temperature-agnostic. They may read `settings.get("temperature_c")` or `runner.current_temp_c` for logging/CSV headers, but no changes are required when temperature is off.
+- `MeasurementProcedure.format_filename` should append the Kelvin suffix when a temperature is present (integer Kelvin, formatted with `.0f`).
+
+### Live temperature (optional but simple)
+- If implemented: a UI `after` timer reads `read_temp()` every poll interval during a temperature run and updates the tiny plot; stop the timer when the run ends to avoid collisions.
+
+### Non-goals
+- Swallowing errors
+- Beyond-reasonable robustness when erroring
+- Hacky solutions
+
 ## Config Files
 - **devices.csv**: Flat CSV for devices. Columns: Site, Subsite, Device, X, Y. Edit manually.
 - **global_config.json**: Stores GPIB address, output dir, procedure settings. Auto-loaded/saved.
