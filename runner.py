@@ -268,10 +268,11 @@ class MeasurementRunner:
             target_x = origin_x + device.x
             target_y = origin_y + device.y
             prober = self.get_prober()
-            x, y = prober.move_chuck_xy(XyReference.Home, target_x, target_y)
+            prober.move_chuck_xy(XyReference.Home, target_x, target_y)
             prober.wait_all()
+            x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
             self.log(
-                f'Chuck (absolute) at X={x:.1f}um, Y={y:.1f}um'
+                f'Chuck successfully moved to X={x:.1f}um, Y={y:.1f}um'
             )
         except Exception as e:
             self.log(f'Warning: SENTIO move failed: {e}')
