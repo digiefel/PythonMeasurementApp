@@ -9,6 +9,8 @@ from sentio_prober_control.Sentio.Enumerations import (
     SteppingContactMode,
     ChuckSite,
 )
+from sentio_prober_control.Sentio.Response import Response
+
 
 class MeasurementRunner:
     def __init__(self, config):
@@ -109,6 +111,30 @@ class MeasurementRunner:
             return x, y
         except Exception as e:
             self.log_to_gui(f'Warning: Read position failed: {e}')
+            return None
+    
+    def prober_set_temp(self, temperature_c: float):
+        if not self._ensure_prober():
+            return False
+        try:
+            # the set_chuck_temp method is broken, our prober is too old
+            # so we just send the command directly
+            self.prober.status.comm.send(f"status:set_chuck_temp {temperature_c:.2f}")
+            Response.check_resp(self.prober.status.comm.read_line())
+            self.log_to_gui(f'Chuck temperature setpoint set to {temperature_c:.2f}°C (lift_chuck={lift_chuck})')
+            return True
+        except Exception as e:
+            self.log_to_gui(f'Warning: Set chuck temperature failed: {e}')
+            return False
+        
+    def prober_get_temp(self) -> Optional[float]:
+        if not self._ensure_prober():
+            return None
+        try:
+            temp = self.prober.status.get_chuck_temp()
+            return temp
+        except Exception as e:
+            self.log_to_gui(f'Warning: Get chuck temperature failed: {e}')
             return None
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
