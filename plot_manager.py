@@ -29,6 +29,7 @@ class PlotManager:
     def __init__(self, root: tk.Tk, use_blit: bool = True):
         self.root = root
         self.fig = Figure(figsize=(5, 4), dpi=100, layout='compressed')
+        self.fig.patch.set_alpha(0)
         self.ax = self.fig.add_subplot(111)
         self.ax2 = None
         self.lines = {}

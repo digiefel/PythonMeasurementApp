@@ -271,6 +271,10 @@ class MainUI:
         self.temp_profile_canvas = FigureCanvasTkAgg(self.temp_profile_fig, master=temp_frame)
         self.temp_profile_widget = self.temp_profile_canvas.get_tk_widget()
         self.temp_profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
+        # Make background transparent to blend with Tk
+        self.temp_profile_fig.patch.set_alpha(0)
+        self.temp_profile_ax.set_facecolor("none")
+        self.temp_profile_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -282,6 +286,7 @@ class MainUI:
         self.plot = PlotManager(self.root)
         self.canvas_widget = self.plot.canvas_widget
         self.canvas_widget.grid(row=0, column=2, rowspan=1, padx=8, pady=8, sticky="nsew")
+        self.canvas_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
 
         # Prober controls (bottom left)
         prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
