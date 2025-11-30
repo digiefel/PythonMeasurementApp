@@ -175,8 +175,14 @@ class MainUI:
 
     def build_layout(self):
         # Selection section
-        self.selection_frame = ttk.LabelFrame(self.root, text="Selection")
-        self.selection_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        self.selection_temp_frame = ttk.Frame(self.root)
+        self.selection_temp_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        self.selection_temp_frame.grid_rowconfigure(0, weight=3)
+        self.selection_temp_frame.grid_rowconfigure(1, weight=1)
+        self.selection_temp_frame.grid_columnconfigure(0, weight=1)
+
+        self.selection_frame = ttk.LabelFrame(self.selection_temp_frame, text="Selection")
+        self.selection_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
         for col in range(2):
             self.selection_frame.grid_columnconfigure(col, weight=1)
 
@@ -229,10 +235,10 @@ class MainUI:
         self.run_button = ttk.Button(self.selection_frame, text="Run", command=self.run, style="Run.TButton")
         self.run_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
-        # Temperature controls (checkbox in title)
-        self.temp_enable_cb = ttk.Checkbutton(self.selection_frame, text="Temperature", variable=self.temp_enabled_var, command=self._toggle_temp_controls)
-        temp_frame = ttk.LabelFrame(self.selection_frame, labelwidget=self.temp_enable_cb)
-        temp_frame.grid(row=12, column=0, columnspan=2, sticky="nsew", padx=0, pady=6)
+        # Temperature controls (separate section below Selection)
+        self.temp_enable_cb = ttk.Checkbutton(self.selection_temp_frame, text="Temperature", variable=self.temp_enabled_var, command=self._toggle_temp_controls)
+        temp_frame = ttk.LabelFrame(self.selection_temp_frame, labelwidget=self.temp_enable_cb)
+        temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
         temp_frame.grid_columnconfigure(0, weight=1)
         temp_frame.grid_columnconfigure(1, weight=1)
         ttk.Label(temp_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=2, pady=2)
