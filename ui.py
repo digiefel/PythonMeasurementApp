@@ -745,6 +745,9 @@ class MainUI:
         self.temp_setpoint_display_var.set(display)
 
     def _update_sweep_plot(self):
+        if not self.temp_enabled_var.get():
+            self.temp_profile_widget.grid_remove()
+            return
         mode = self.temp_mode_var.get()
         try:
             vals = [float(tok.strip()) for tok in self.temp_sweep_var.get().split(",") if tok.strip()]
@@ -789,8 +792,6 @@ class MainUI:
         self.temp_set_button.configure(state="normal" if enabled else "disabled")
         # Keep polling regardless of toggle so the readout stays populated
         self._start_temp_polling(self._safe_poll_interval())
-        self._update_setpoint_display()
-        self._update_sweep_plot()
         self._update_sweep_plot()
 
     def _set_temperature_now(self):
@@ -834,7 +835,7 @@ class MainUI:
             except Exception:
                 setpoint = None
             if temp is None:
-                self.temp_value_var.set("unavailable")
+                self.temp_value_var.set("N/A")
                 color = "red"
             else:
                 self.temp_value_var.set(f"{temp:.1f} C")
