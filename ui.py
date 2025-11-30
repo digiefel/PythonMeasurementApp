@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
 from typing import Optional
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from config import Config
 from runner import MeasurementRunner
@@ -157,6 +159,9 @@ class MainUI:
         self._toggle_temp_controls()
         # Start background temperature polling immediately so the readout is populated
         self._start_temp_polling(self._safe_poll_interval())
+        # React to sweep entry edits to refresh the tiny profile
+        self.temp_sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())
+        self._update_sweep_plot()
         self.populate_sites()
         # Default to first procedure in list
         default_proc = next(iter(self.procedure_fields.keys()))
@@ -257,6 +262,15 @@ class MainUI:
         ttk.Label(temp_row, text="Setpoint:").grid(row=0, column=2, sticky="e", padx=2)
         self.temp_setpoint_display_label = ttk.Label(temp_row, textvariable=self.temp_setpoint_display_var)
         self.temp_setpoint_display_label.grid(row=0, column=3, sticky="e", padx=2)
+        # Tiny sweep profile plot (shown only in Sweep mode)
+        self.temp_profile_fig = Figure(figsize=(2.0, 0.8), dpi=100, layout='compressed')
+        self.temp_profile_ax = self.temp_profile_fig.add_subplot(111)
+        self.temp_profile_ax.tick_params(axis='both', labelsize=7)
+        self.temp_profile_ax.spines["top"].set_visible(False)
+        self.temp_profile_ax.spines["right"].set_visible(False)
+        self.temp_profile_canvas = FigureCanvasTkAgg(self.temp_profile_fig, master=temp_frame)
+        self.temp_profile_widget = self.temp_profile_canvas.get_tk_widget()
+        self.temp_profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -730,6 +744,24 @@ class MainUI:
         display = "--" if setpoint_c is None else f"{setpoint_c:.1f} C"
         self.temp_setpoint_display_var.set(display)
 
+    def _update_sweep_plot(self):
+        mode = self.temp_mode_var.get()
+        try:
+            vals = [float(tok.strip()) for tok in self.temp_sweep_var.get().split(",") if tok.strip()]
+            vals.append(vals[-1])  # extend last step for visual clarity
+        except Exception:
+            vals = []
+        if mode != "Sweep" or not vals:
+            self.temp_profile_widget.grid_remove()
+            return
+        self.temp_profile_ax.clear()
+        xs = list(range(1,len(vals)+1))
+        self.temp_profile_ax.set_xticks(xs[:-1])
+        self.temp_profile_ax.set_yticks(list(set(vals)))
+        self.temp_profile_ax.step(xs, vals, linewidth=1, color='k', where='post')
+        self.temp_profile_canvas.draw_idle()
+        self.temp_profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
+
     def _toggle_temp_controls(self):
         enabled = self.temp_enabled_var.get()
         mode = self.temp_mode_var.get()
@@ -758,6 +790,8 @@ class MainUI:
         # Keep polling regardless of toggle so the readout stays populated
         self._start_temp_polling(self._safe_poll_interval())
         self._update_setpoint_display()
+        self._update_sweep_plot()
+        self._update_sweep_plot()
 
     def _set_temperature_now(self):
         mode = self.temp_mode_var.get()
