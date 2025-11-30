@@ -48,16 +48,19 @@ try:
     subsite = site.subsites[0]
     device = subsite.devices[0]
     print(f"Testing with device: {device.name} at ({device.x}, {device.y})")
+    runner.current_chip = c.data.get("last_chip_id", "TEST")
+    runner.current_site = site
+    runner.current_subsite = subsite
     
     # Test procedure creation and execution
     settings = c.get_procedure_settings('RVSweep')
     settings['mock_mode'] = True  # Enable mock mode for testing
-    proc = RVSweepProcedure(settings, 'test_output')
+    proc = RVSweepProcedure(settings, 'test_output', runner)
     print("Procedure created successfully")
     
     # Actually run the procedure
     print("Running RV sweep procedure...")
-    proc.run(device, runner)
+    proc.run(device)
     print("Procedure completed!")
     
 except Exception as e:

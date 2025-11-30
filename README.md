@@ -61,14 +61,14 @@ Install: `pip install -r requirements.txt`
 - `set_procedure_settings(proc_name, settings)`: Saves settings.
 
 ### procedures/base.py
-- `MeasurementProcedure(settings, output_dir)`: Abstract base.
-- `run(device, runner)`: Abstract method for execution.
-- `log(message, runner)`: Logs with timestamp.
+- `MeasurementProcedure(settings, output_dir, runner)`: Abstract base with runner provided at construction.
+- `run(device)`: Abstract method for execution.
+- `log(message)`: Logs with timestamp.
 - `save_data(data, filename, headers)`: Saves CSV.
 
 ### procedures/rv_sweep.py (Example)
 - `RVSweepProcedure`: Inherits from base.
-- `run(device, runner)`: Implements measurement logic using bindings to B1500/WGFMU.
+- `run(device)`: Implements measurement logic using bindings to B1500/WGFMU.
 
 ### runner.py
 - `MeasurementRunner(config)`: Handles execution.

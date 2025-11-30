@@ -228,13 +228,14 @@ class MeasurementRunner:
 
         proc = proc_class(
             settings,
-            os.path.join(self.config.data['output_dir'], chip_id, site.name, subsite.name, device.name)
+            os.path.join(self.config.data['output_dir'], chip_id, site.name, subsite.name, device.name),
+            self
         )
         self.move_to_device(device)
         # Ensure contact right before measurement
         self.prober_contact()
         # Run measurement procedure
-        proc.run(device, self)
+        proc.run(device)
         # Move out of contact after completion
         self.prober_separation()
 

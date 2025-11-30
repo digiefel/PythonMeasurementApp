@@ -8,8 +8,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
     Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
     measuring the sourced voltage and current at each step.
     """
-    def __init__(self, settings, output_dir):
-        super().__init__(settings, output_dir)
+    def __init__(self, settings, output_dir, runner):
+        super().__init__(settings, output_dir, runner)
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 
         self.high_channel = SMU_CHANNEL_MAP.get(str(settings.get('high_channel', 4)), settings.get('high_channel', 4))
@@ -37,8 +37,9 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         # Normalize ASU channel labels to numeric indices
         self.asu_channels = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels]
 
-    def run(self, device, runner):
-        self.log(f'Starting Oxide Breakdown sweep on {device.name}', runner)
+    def run(self, device):
+        runner = self.runner
+        self.log(f'Starting Oxide Breakdown sweep on {device.name}')
         try:
             b1500 = B1500Session(self.gpib_address)
             b1500.reset()
@@ -46,34 +47,34 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             b1500.enable_error_detect(True)
             # Do not abort the sweep on compliance; hold final level at end.
             b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_START)
-            self.log(f'Connected to B1500 at {self.gpib_address}', runner)
+            self.log(f'Connected to B1500 at {self.gpib_address}')
 
-            results = self.perform_breakdown_sweep(b1500, device, runner)
+            results = self.perform_breakdown_sweep(b1500, device)
 
-            base = self.format_filename(runner, "OxideBreakdown", device.name)
+            base = self.format_filename("OxideBreakdown", device.name)
             filename = f'{base}.csv'
             self.save_data(
                 results,
                 filename,
                 ['Voltage_V', 'Current_High_A', 'Current_Low_A', 'Time_sec', 'Status'],
-                runner,
                 add_timestamp=False
             )
             plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
             runner.finalize_plot(plot_path)
-            self.log(f'Oxide breakdown sweep completed for {device.name}', runner)
+            self.log(f'Oxide breakdown sweep completed for {device.name}')
         except Exception as e:
-            self.log(f'Error during oxide breakdown sweep: {str(e)}', runner)
+            self.log(f'Error during oxide breakdown sweep: {str(e)}')
             raise
         finally:
             try:
                 b1500.close()
             except Exception:
-                self.log('Warning: Failed to close B1500 session', runner)
+                self.log('Warning: Failed to close B1500 session')
                 pass
 
-    def perform_breakdown_sweep(self, b1500: B1500Session, device, runner):
+    def perform_breakdown_sweep(self, b1500: B1500Session, device):
         """Run a voltage sweep on the high SMU and record voltage/current pairs."""
+        runner = self.runner
         high = self.high_channel
         low = self.low_channel
         sense_high = self.sense_high
@@ -158,7 +159,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             timestamp=1
         )
         # Allow stop button to abort safely
-        self.register_abort_handler(runner, lambda: self.abort_b1500(b1500))
+        self.register_abort_handler(lambda: self.abort_b1500(b1500))
 
         high_currents, i_high_status = [], []
         low_currents, i_low_status = [], []
@@ -171,14 +172,14 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         nonzero_statuses = set()
 
         while True:
-            if self.stop_requested(runner):
-                self.log("Stop requested; aborting measurement", runner)
+            if self.stop_requested():
+                self.log("Stop requested; aborting measurement")
                 self.abort_b1500(b1500)
                 break
             try:
                 _ret, eod, data_type, value, status, channel = b1500.read_data()
             except Exception as exc:
-                self.log(f'B1500 read_data error', runner)
+                self.log(f'B1500 read_data error')
                 raise
             if status:
                 key = (channel, data_type, status)
@@ -222,7 +223,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             if eod or plotted >= max_points:
                 break
 
-        if not self.stop_requested(runner):
+        if not self.stop_requested():
             # Ensure any remaining points are pushed to the plot
             for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
                 v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
@@ -231,7 +232,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 runner.add_live_point(v_val, ip_val, '$I_+(V)$')
                 runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
 
-        if not self.stop_requested(runner):
+        if not self.stop_requested():
             # Add log-magnitude series once, at the end, in one shot
             floor = 1e-15
             xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
@@ -257,7 +258,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         # Return instrument to safe state
         self.abort_b1500(b1500)
 
-        self.log(f'Collected {len(results)} oxide breakdown points', runner)
+        self.log(f'Collected {len(results)} oxide breakdown points')
         return results
 
     def _build_voltage_vector(self):

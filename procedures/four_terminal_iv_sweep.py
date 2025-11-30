@@ -1,10 +1,9 @@
-import os
 from procedures.base import MeasurementProcedure
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
 class FourTerminalIVProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_dir):
-        super().__init__(settings, output_dir)
+    def __init__(self, settings, output_dir, runner):
+        super().__init__(settings, output_dir, runner)
         # Default settings for 4-terminal I-V sweep
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 
@@ -39,11 +38,11 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
         self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
 
-    def run(self, device, runner):
-        self.log(f'Starting 4-Terminal I-V Sweep on {device.name}', runner)
+    def run(self, device):
+        runner = self.runner
+        self.log(f'Starting 4-Terminal I-V Sweep on {device.name}')
         self.log(
-            f'ASU config -> channels: {self.asu_channels}, path: {self.asu_path_mode}, range: {self.asu_range_mode}',
-            runner
+            f'ASU config -> channels: {self.asu_channels}, path: {self.asu_path_mode}, range: {self.asu_range_mode}'
         )
 
         try:
@@ -52,23 +51,23 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             b1500.reset()
             b1500.set_timeout(10000)  # 10 second timeout
             b1500.enable_error_detect(True)
-            self.log(f'Connected to B1500 at {self.gpib_address}', runner)
+            self.log(f'Connected to B1500 at {self.gpib_address}')
 
             # Perform the I-V sweep
-            results = self.perform_iv_sweep(b1500, device, runner)
+            results = self.perform_iv_sweep(b1500, device)
 
             # Save results
-            base = self.format_filename(runner, "FourTerminalIV", device.name)
+            base = self.format_filename("FourTerminalIV", device.name)
             filename = f'{base}.csv'
             self.save_data(results, filename,
                           ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
-                          runner, add_timestamp=False)
+                          add_timestamp=False)
             plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
             runner.finalize_plot(plot_path)
-            self.log(f'4-Terminal I-V sweep completed for {device.name}', runner)
+            self.log(f'4-Terminal I-V sweep completed for {device.name}')
 
         except Exception as e:
-            self.log(f'Error during 4-terminal I-V sweep: {str(e)}', runner)
+            self.log(f'Error during 4-terminal I-V sweep: {str(e)}')
             raise
         finally:
             try:
@@ -76,12 +75,13 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             except:
                 pass
 
-    def perform_iv_sweep(self, b1500: B1500Session, device, runner):
+    def perform_iv_sweep(self, b1500: B1500Session, device):
         """
         Perform the 4-terminal I-V sweep measurement.
         Forces current through force terminals, holds a return SMU at 0 V, and measures voltage on two sense SMUs.
         Returns list of [Current, VoltageDiff, Time, Status] tuples.
         """
+        runner = self.runner
         source_channel = self.force_high_channel
         return_channel = self.force_low_channel
         sense_high = self.sense_high_channel
@@ -148,7 +148,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Start streaming for live plot updates and full capture
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
-        self.register_abort_handler(runner, lambda: self.abort_b1500(b1500))
+        self.register_abort_handler(lambda: self.abort_b1500(b1500))
         data_by_ch = {ch: [] for ch in channels}
         status_by_ch = {ch: [] for ch in channels}
         timestamps = []
@@ -158,8 +158,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         max_points = len(current_points)
         nonzero_statuses = set()
         while True:
-            if self.stop_requested(runner):
-                self.log("Stop requested; aborting measurement", runner)
+            if self.stop_requested():
+                self.log("Stop requested; aborting measurement")
                 self.abort_b1500(b1500)
                 break
             _ret, eod, data_type, value, status, channel = b1500.read_data()
@@ -201,7 +201,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         results = []
         point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
-        if not self.stop_requested(runner):
+        if not self.stop_requested():
             # Compute a simple linear regression V = R*I + b for the differential voltage
             if point_count >= 2:
                 currents = data_by_ch[source_channel][:point_count]
@@ -244,5 +244,5 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         # Zero outputs and disable switches
         self.abort_b1500(b1500)
 
-        self.log(f'Collected {len(results)} 4-terminal I-V sweep points', runner)
+        self.log(f'Collected {len(results)} 4-terminal I-V sweep points')
         return results

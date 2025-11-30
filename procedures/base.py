@@ -4,35 +4,31 @@ from datetime import datetime
 
 
 class MeasurementProcedure(ABC):
-    def __init__(self, settings: dict, output_dir: str):
+    def __init__(self, settings: dict, output_dir: str, runner):
         self.settings = settings
         self.output_dir = output_dir
+        self.runner = runner
         self._run_timestamp = None
-    
+
     @abstractmethod
-    def run(self, device, runner):
+    def run(self, device):
         pass
     
-    def log(self, message: str, runner):
+    def log(self, message: str):
         timestamp = datetime.now().strftime('%H:%M:%S')
         log_msg = f'[{timestamp}] {message}'
         print(log_msg)
-        runner.log_to_gui(log_msg)
+        self.runner.log_to_gui(log_msg)
 
     # --- Cooperative stop helpers ---
-    def stop_requested(self, runner) -> bool:
-        """Check whether a stop has been requested (runner may not support it)."""
-        return hasattr(runner, "should_stop") and runner.should_stop()
+    def stop_requested(self) -> bool:
+        return self.runner.should_stop()
 
-    def register_abort_handler(self, runner, handler):
-        """Register a callable to abort instrument actions when stop is requested."""
-        if hasattr(runner, "set_abort_handler"):
-            runner.set_abort_handler(handler)
+    def register_abort_handler(self, handler):
+        self.runner.set_abort_handler(handler)
 
-    def clear_abort_handler(self, runner):
-        """Clear any abort handler on the runner."""
-        if hasattr(runner, "set_abort_handler"):
-            runner.set_abort_handler(None)
+    def clear_abort_handler(self):
+        self.runner.set_abort_handler(None)
 
     def abort_b1500(self, b1500):
         """Abort measurement and reset outputs/switches safely for B1500."""
@@ -64,23 +60,21 @@ class MeasurementProcedure(ABC):
         stamped = self._add_timestamp(filename) if add_timestamp else filename
         return os.path.join(self.output_dir, stamped)
     
-    def save_data(self, data: list, filename: str, headers: list, runner=None, add_timestamp: bool = True):
+    def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True):
         os.makedirs(self.output_dir, exist_ok=True)
         path = self.make_output_path(filename, add_timestamp=add_timestamp)
         with open(path, 'w') as f:
             f.write(','.join(headers) + '\n')
             for row in data:
                 f.write(','.join(map(str, row)) + '\n')
-        self.log(f'Saved data to {path}', runner)
+        self.log(f'Saved data to {path}')
 
-    def format_filename(self, runner, procedure_tag: str, device_name: str):
+    def format_filename(self, procedure_tag: str, device_name: str):
         """Generate base filename chip_site_subsite_device_timestamp_procedure."""
-        chip = getattr(runner, "current_chip", "")
-        if not chip:
-            raise ValueError("Chip ID is required but not set in runner.")
-        site = getattr(runner, "current_site", None)
-        subsite = getattr(runner, "current_subsite", None)
-        site_name = site.name if site else "site"
-        subsite_name = subsite.name if subsite else "subsite"
+        chip = self.runner.current_chip
+        site = self.runner.current_site
+        subsite = self.runner.current_subsite
+        site_name = site.name
+        subsite_name = subsite.name
         timestamp = self.get_run_timestamp()
         return f"{chip}_{site_name}_{subsite_name}_{device_name}_{timestamp}_{procedure_tag}"

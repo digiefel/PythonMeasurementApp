@@ -1,4 +1,3 @@
-import os
 import time
 
 import numpy as np
@@ -6,8 +5,8 @@ import pyvisa
 from procedures.base import MeasurementProcedure
 
 class RVSweepProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_dir):
-        super().__init__(settings, output_dir)
+    def __init__(self, settings, output_dir, runner):
+        super().__init__(settings, output_dir, runner)
         # Default settings for RV sweep
         self.rv_start = settings.get('rv_start', 0.1)
         self.rv_stop = settings.get('rv_stop', 2.0)
@@ -17,22 +16,23 @@ class RVSweepProcedure(MeasurementProcedure):
         self.set_amplitude = settings.get('set_amplitude', -1.8)
         self.mock_mode = settings.get('mock_mode', True)  # Enable mock mode by default
 
-    def run(self, device, runner):
-        self.log(f'Starting RV Sweep on {device.name}', runner)
+    def run(self, device):
+        runner = self.runner
+        self.log(f'Starting RV Sweep on {device.name}')
 
         try:
             if self.mock_mode:
-                self.log('Running in MOCK mode - no hardware connection', runner)
+                self.log('Running in MOCK mode - no hardware connection')
                 instr = None
             else:
                 # Open instrument connection
                 rm = pyvisa.ResourceManager()
                 instr = rm.open_resource(runner.config.data['gpib_address'])
-                self.log(f'Connected to instrument at {runner.config.data["gpib_address"]}', runner)
+                self.log(f'Connected to instrument at {runner.config.data["gpib_address"]}')
 
             # Build RV vector (similar to C# implementation)
             rv_vector = self.build_rv_vector()
-            self.log(f'RV sweep will test {len(rv_vector)} voltage levels', runner)
+            self.log(f'RV sweep will test {len(rv_vector)} voltage levels')
 
             # Initialize results storage
             results = []
@@ -47,7 +47,7 @@ class RVSweepProcedure(MeasurementProcedure):
 
             # Perform measurements for each voltage level
             for i, voltage in enumerate(rv_vector):
-                self.log(f'Pulse {i+1}/{len(rv_vector)}: {voltage:.3f} V', runner)
+                self.log(f'Pulse {i+1}/{len(rv_vector)}: {voltage:.3f} V')
 
                 # Perform the measurement
                 current = self.perform_measurement(instr, voltage)
@@ -58,14 +58,14 @@ class RVSweepProcedure(MeasurementProcedure):
                 time.sleep(0.01)
 
             # Save results
-            base = self.format_filename(runner, "RVSweep", device.name)
-            self.save_data(results, f'{base}.csv', ['Voltage_V', 'Current_A'], runner, add_timestamp=False)
+            base = self.format_filename("RVSweep", device.name)
+            self.save_data(results, f'{base}.csv', ['Voltage_V', 'Current_A'], add_timestamp=False)
             plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
             runner.finalize_plot(plot_path)
-            self.log(f'RV sweep completed for {device.name}', runner)
+            self.log(f'RV sweep completed for {device.name}')
 
         except Exception as e:
-            self.log(f'Error during RV sweep: {str(e)}', runner)
+            self.log(f'Error during RV sweep: {str(e)}')
             raise
         finally:
             if not self.mock_mode and 'instr' in locals():
@@ -133,5 +133,5 @@ class RVSweepProcedure(MeasurementProcedure):
                 return current
 
             except Exception as e:
-                self.log(f'Measurement error at {voltage}V: {str(e)}', None)
+                self.log(f'Measurement error at {voltage}V: {str(e)}')
                 return 0.0  # Return 0 on error
