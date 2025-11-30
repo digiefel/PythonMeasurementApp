@@ -2,6 +2,9 @@ from abc import ABC, abstractmethod
 import os
 from datetime import datetime
 
+class MeasurementAbortRequested(Exception):
+    """Custom exception to indicate measurement abortion."""
+    pass
 
 class MeasurementProcedure(ABC):
     def __init__(self, settings: dict, output_dir: str, runner):
@@ -11,36 +14,14 @@ class MeasurementProcedure(ABC):
         self._run_timestamp = None
 
     @abstractmethod
-    def run(self, device):
+    def run(self, b1500, device):
         pass
     
     def log(self, message: str):
         self.runner.log(message)
 
-    # --- Cooperative stop helpers ---
     def stop_requested(self) -> bool:
         return self.runner.should_stop()
-
-    def register_abort_handler(self, handler):
-        self.runner.set_abort_handler(handler)
-
-    def clear_abort_handler(self):
-        self.runner.set_abort_handler(None)
-
-    def abort_b1500(self, b1500):
-        """Abort measurement and reset outputs/switches safely for B1500."""
-        try:
-            b1500.abort_measure()
-        except Exception:
-            pass
-        try:
-            b1500.zero_output(b1500.CH_ALL)
-        except Exception:
-            pass
-        try:
-            b1500.set_switch(b1500.CH_ALL, False)
-        except Exception:
-            pass
 
     def get_run_timestamp(self):
         if self._run_timestamp is None:

@@ -47,6 +47,9 @@ class RVSweepProcedure(MeasurementProcedure):
 
             # Perform measurements for each voltage level
             for i, voltage in enumerate(rv_vector):
+                if runner.should_stop():
+                    self.log("Stop requested; aborting RV sweep.")
+                    break
                 self.log(f'Pulse {i+1}/{len(rv_vector)}: {voltage:.3f} V')
 
                 # Perform the measurement

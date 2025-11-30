@@ -1,4 +1,4 @@
-from procedures.base import MeasurementProcedure
+from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
 class FourTerminalIVProcedure(MeasurementProcedure):
@@ -38,7 +38,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
         self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
 
-    def run(self, device):
+    def run(self, b1500: B1500Session, device):
         runner = self.runner
         self.log(f'Starting 4-Terminal I-V Sweep on {device.name}')
         self.log(
@@ -47,11 +47,9 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         try:
             # Initialize B1500 session
-            b1500 = B1500Session(self.gpib_address)
             b1500.reset()
             b1500.set_timeout(10000)  # 10 second timeout
             b1500.enable_error_detect(True)
-            self.log(f'Connected to B1500 at {self.gpib_address}')
 
             # Perform the I-V sweep
             results = self.perform_iv_sweep(b1500, device)
@@ -69,11 +67,6 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         except Exception as e:
             self.log(f'Error during 4-terminal I-V sweep: {str(e)}')
             raise
-        finally:
-            try:
-                b1500.close()
-            except:
-                pass
 
     def perform_iv_sweep(self, b1500: B1500Session, device):
         """
@@ -148,7 +141,6 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Start streaming for live plot updates and full capture
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
-        self.register_abort_handler(lambda: self.abort_b1500(b1500))
         data_by_ch = {ch: [] for ch in channels}
         status_by_ch = {ch: [] for ch in channels}
         timestamps = []
@@ -159,9 +151,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         nonzero_statuses = set()
         while True:
             if self.stop_requested():
-                self.log("Stop requested; aborting measurement")
-                self.abort_b1500(b1500)
-                break
+                raise MeasurementAbortRequested("Measurement aborted by user")
             _ret, eod, data_type, value, status, channel = b1500.read_data()
             if status:
                 key = (channel, data_type, status)
@@ -201,48 +191,44 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         results = []
         point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
-        if not self.stop_requested():
-            # Compute a simple linear regression V = R*I + b for the differential voltage
-            if point_count >= 2:
-                currents = data_by_ch[source_channel][:point_count]
-                voltages = [data_by_ch[sense_high][i] - data_by_ch[sense_low][i] for i in range(point_count)]
-                mean_i = sum(currents) / point_count
-                mean_v = sum(voltages) / point_count
-                num = sum((currents[i] - mean_i) * (voltages[i] - mean_v) for i in range(point_count))
-                den = sum((currents[i] - mean_i) ** 2 for i in range(point_count))
-                slope = num / den if den != 0 else None
-                intercept = mean_v - (slope * mean_i) if slope is not None else None
-                if slope is not None:
-                    x_min, x_max = min(currents), max(currents)
-                    y_min = slope * x_min + (intercept or 0.0)
-                    y_max = slope * x_max + (intercept or 0.0)
-                    label = f'R_fit={slope/1e3:.2f} kΩ'
-                    runner.add_live_point(x_min, y_min, label)
-                    runner.add_live_point(x_max, y_max, label)
-            for i in range(point_count):
-                current_set = data_by_ch[source_channel][i]
-                v_high = data_by_ch[sense_high][i]
-                v_low = data_by_ch[sense_low][i]
-                t_val = timestamps[i] if i < len(timestamps) else 0.0
-                status_combined = 0
-                if i < len(status_by_ch[sense_high]):
-                    status_combined |= status_by_ch[sense_high][i]
-                if i < len(status_by_ch[sense_low]):
-                    status_combined |= status_by_ch[sense_low][i]
-                if i < len(status_by_ch[source_channel]):
-                    status_combined |= status_by_ch[source_channel][i]
-                if i < len(source_status):
-                    status_combined |= source_status[i]
-                results.append([
-                    current_set,
-                    v_high,
-                    v_low,
-                    t_val,
-                    status_combined
-                ])
-
-        # Zero outputs and disable switches
-        self.abort_b1500(b1500)
+        # Compute a simple linear regression V = R*I + b for the differential voltage
+        if point_count >= 2:
+            currents = data_by_ch[source_channel][:point_count]
+            voltages = [data_by_ch[sense_high][i] - data_by_ch[sense_low][i] for i in range(point_count)]
+            mean_i = sum(currents) / point_count
+            mean_v = sum(voltages) / point_count
+            num = sum((currents[i] - mean_i) * (voltages[i] - mean_v) for i in range(point_count))
+            den = sum((currents[i] - mean_i) ** 2 for i in range(point_count))
+            slope = num / den if den != 0 else None
+            intercept = mean_v - (slope * mean_i) if slope is not None else None
+            if slope is not None:
+                x_min, x_max = min(currents), max(currents)
+                y_min = slope * x_min + (intercept or 0.0)
+                y_max = slope * x_max + (intercept or 0.0)
+                label = f'R_fit={slope/1e3:.2f} kΩ'
+                runner.add_live_point(x_min, y_min, label)
+                runner.add_live_point(x_max, y_max, label)
+        for i in range(point_count):
+            current_set = data_by_ch[source_channel][i]
+            v_high = data_by_ch[sense_high][i]
+            v_low = data_by_ch[sense_low][i]
+            t_val = timestamps[i] if i < len(timestamps) else 0.0
+            status_combined = 0
+            if i < len(status_by_ch[sense_high]):
+                status_combined |= status_by_ch[sense_high][i]
+            if i < len(status_by_ch[sense_low]):
+                status_combined |= status_by_ch[sense_low][i]
+            if i < len(status_by_ch[source_channel]):
+                status_combined |= status_by_ch[source_channel][i]
+            if i < len(source_status):
+                status_combined |= source_status[i]
+            results.append([
+                current_set,
+                v_high,
+                v_low,
+                t_val,
+                status_combined
+            ])
 
         self.log(f'Collected {len(results)} 4-terminal I-V sweep points')
         return results

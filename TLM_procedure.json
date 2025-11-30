@@ -53,6 +53,11 @@
         "procedure": "FourTerminalIV",
         "run_subsite": false,
         "set_home_before_run": true,
-        "chip": "test"
+        "chip": "test",
+        "temperature_enabled": true,
+        "temperature_mode": "Setpoint",
+        "temperature_setpoint_c": "25",
+        "temperature_sweep_c": "",
+        "temperature_wait_after_s": "0.0"
     }
 }

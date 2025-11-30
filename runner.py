@@ -3,7 +3,8 @@ import time
 import atexit
 from typing import Optional, Dict, Any, Callable
 import threading
-from procedures.base import MeasurementProcedure
+from procedures.base import MeasurementAbortRequested
+from bindings import B1500Session
 from sentio_prober_control.Sentio.ProberSentio import SentioProber
 from sentio_prober_control.Sentio.Enumerations import (
     XyReference,
@@ -24,15 +25,15 @@ class MeasurementRunner:
         self.plot_series_callback = None
         self.status_callback = None
         self._last_status_message = None
-        self.prober = None
+        self.b1500: B1500Session
+        self.prober: SentioProber
         self.subsite_origin = None
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
         self.current_temp_c: Optional[float] = None
         self.stop_event = threading.Event()
-        self.abort_handler: Optional[Callable[[], None]] = None
-        atexit.register(self._send_local)
+        atexit.register(self.safe_stop)
     
     def log(self, msg):
         if self.log_callback:
@@ -40,9 +41,23 @@ class MeasurementRunner:
         else:
             print("Warning: No log callback registered. Message:", msg)
 
+    def get_b1500(self, address: str) -> B1500Session:
+        """Get or create the B1500 session."""
+        if not getattr(self, 'b1500', None):
+            self.log(f'Opening B1500 session at {address}')
+            self.b1500 = B1500Session(address)
+        return self.b1500
+
+    
+    def get_prober(self) -> SentioProber:
+        """Get or create the SENTIO prober session."""
+        if getattr(self, 'prober', None) is None:
+            self._ensure_prober()
+        return self.prober
+
     def _ensure_prober(self):
         """Lazily create the SENTIO prober session over GPIB (visa address)."""
-        if self.prober:
+        if getattr(self, 'prober', None):
             return True
         try:
             self.prober = SentioProber.create_prober("visa", "GPIB0::28::INSTR")
@@ -150,17 +165,6 @@ class MeasurementRunner:
             return self.prober.status.get_chuck_temp_setpoint()
         except Exception:
             return None
-    
-    def _send_local(self):
-        """Return prober to local control if possible."""
-        if getattr(self, "prober", None) and hasattr(self.prober, "comm"):
-            try:
-                self.prober.comm.send("*LOCAL")
-            except Exception:
-                pass
-
-    def shutdown(self):
-        self._send_local()
 
     def get_thermo_state(self) -> Optional[str]:
         if not self._ensure_prober():
@@ -179,6 +183,44 @@ class MeasurementRunner:
                 return "soaking"
             case _:
                 return "idle"
+
+    def safe_stop(self):
+        """
+        Universal stop method.
+        1. Signals all loops to stop (stop_event).
+        2. Aborts and closes B1500 session.
+        3. Separates prober.
+        4. Returns prober to local.
+        """
+        self.stop_event.set()
+        self.log("Safe stop requested, closing B1500 session.")
+        
+        if getattr(self, 'b1500', None):
+            try:
+                self.b1500.abort_measure()
+                self.b1500.zero_output(B1500Session.CH_ALL)
+                self.b1500.set_switch(B1500Session.CH_ALL, False)
+                self.b1500.close()
+            except Exception as e:
+                self.log(f"Error cleaning up B1500: {e}")
+            finally:
+                self.b1500 = None
+        
+        try:
+            self.prober_separation()
+        except Exception:
+            pass
+            
+        # return prober to local control
+        if self.prober:
+            try:
+                self.prober.comm.send("*LOCAL")
+            except Exception:
+                pass
+
+    def should_stop(self) -> bool:
+        """Check if a stop has been requested."""
+        return self.stop_event.is_set()
 
     # --- Temperature control ---
     def set_point(self, temp_c: float):
@@ -225,7 +267,6 @@ class MeasurementRunner:
         """Tell UI to persist the current plot image if requested."""
         if self.plot_finalize_callback:
             self.plot_finalize_callback(save_path)
-
     def report_status(self, status_info: Optional[Dict[str, Any]]):
         """
         Surface measurement/driver status (non-zero codes) to the UI.
@@ -236,28 +277,9 @@ class MeasurementRunner:
         if self.status_callback:
             self.status_callback(status_info)
 
-    def should_stop(self) -> bool:
-        """Check if a stop has been requested."""
-        return self.stop_event.is_set()
-
-    def request_stop(self):
-        """Request cooperative stop and invoke any registered abort handler."""
-        self.stop_event.set()
-        try:
-            self.log("Stop requested; attempting to abort measurement...")
-            self.abort_handler()
-        except Exception:
-                # Swallow errors from abort to avoid masking stop
-            pass
-
-    def clear_stop(self):
-        self.stop_event.clear()
-
-    def set_abort_handler(self, handler: Optional[Callable[[], None]]):
-        """Register a callable that will be invoked when stop is requested."""
-        self.abort_handler = handler
-    
     def move_to_device(self, device):
+        if self.should_stop():
+            return
         self.log(f'Moving to {device.name} at X={device.x}, Y={device.y}')
         if not self._ensure_prober():
             return
@@ -317,8 +339,6 @@ class MeasurementRunner:
         self.current_site = site
         self.current_subsite = subsite
         self.report_status(None)
-        self.clear_stop()
-        self.set_abort_handler(None)
 
         proc = proc_class(
             settings,
@@ -329,7 +349,24 @@ class MeasurementRunner:
         # Ensure contact right before measurement
         self.prober_contact()
         # Run measurement procedure
-        proc.run(device)
+        try:
+            proc.run(self.get_b1500(settings['gpib_address']), device)
+        except MeasurementAbortRequested:
+            try:
+                self.b1500.zero_output(B1500Session.CH_ALL)
+                self.b1500.set_switch(B1500Session.CH_ALL, False)
+            except Exception:
+                pass
+            self.log("Procedure stopped by user.")
+        except Exception as e:
+            try:
+                self.b1500.zero_output(B1500Session.CH_ALL)
+                self.b1500.set_switch(B1500Session.CH_ALL, False)
+            except Exception:
+                pass
+            # if it wasn't an abort, log the error
+            self.log(f"Procedure error: {e}")
+            raise e
         # Move out of contact after completion
         self.prober_separation()
 

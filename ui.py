@@ -532,6 +532,7 @@ class MainUI:
         else:
             self._stop_temp_polling()
         def target():
+            self.runner.stop_event.clear()
             try:
                 if temp_enabled:
                     self.runner.run_temperature_sweep(
@@ -556,6 +557,7 @@ class MainUI:
                         self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings, set_home)
             except Exception as e:
                 self._post_log(f'Run error: {e}')
+                raise
             finally:
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
@@ -567,9 +569,8 @@ class MainUI:
 
     def stop_run(self):
         """Triggered by Stop button to abort measurement safely."""
-        self.runner.request_stop()
-        self.log("Stop requested.")
-        self._set_running_state(True)  # keep button as Stop until thread exits
+        self.log("Stop button pressed; stopping run...")
+        self.runner.safe_stop()
 
     # --- Prober control handlers ---
     def prober_go_home(self):
@@ -880,13 +881,9 @@ class MainUI:
 
     def _on_close(self):
         self._stop_temp_polling()
-        self.runner.request_stop()
+        self.runner.safe_stop()
         if self._run_thread and self._run_thread.is_alive():
             self._run_thread.join(timeout=2)
-        try:
-            self.runner.shutdown()
-        except Exception:
-            pass
         self.root.destroy()
 
     def apply_last_selection(self, last_sel):

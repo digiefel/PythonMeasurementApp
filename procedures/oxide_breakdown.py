@@ -1,4 +1,4 @@
-from procedures.base import MeasurementProcedure
+from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
 
@@ -37,11 +37,11 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         # Normalize ASU channel labels to numeric indices
         self.asu_channels = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels]
 
-    def run(self, device):
+    def run(self, b1500: B1500Session, device):
         runner = self.runner
         self.log(f'Starting Oxide Breakdown sweep on {device.name}')
         try:
-            b1500 = B1500Session(self.gpib_address)
+            # Initialize B1500 session
             b1500.reset()
             b1500.set_timeout(10000)
             b1500.enable_error_detect(True)
@@ -65,12 +65,6 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         except Exception as e:
             self.log(f'Error during oxide breakdown sweep: {str(e)}')
             raise
-        finally:
-            try:
-                b1500.close()
-            except Exception:
-                self.log('Warning: Failed to close B1500 session')
-                pass
 
     def perform_breakdown_sweep(self, b1500: B1500Session, device):
         """Run a voltage sweep on the high SMU and record voltage/current pairs."""
@@ -158,8 +152,6 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             source_output=1,
             timestamp=1
         )
-        # Allow stop button to abort safely
-        self.register_abort_handler(lambda: self.abort_b1500(b1500))
 
         high_currents, i_high_status = [], []
         low_currents, i_low_status = [], []
@@ -173,9 +165,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
         while True:
             if self.stop_requested():
-                self.log("Stop requested; aborting measurement")
-                self.abort_b1500(b1500)
-                break
+                raise MeasurementAbortRequested("Measurement aborted by user")
             try:
                 _ret, eod, data_type, value, status, channel = b1500.read_data()
             except Exception as exc:
@@ -223,21 +213,19 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             if eod or plotted >= max_points:
                 break
 
-        if not self.stop_requested():
-            # Ensure any remaining points are pushed to the plot
-            for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
-                v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
-                ip_val = high_currents[idx]
-                in_val = low_currents[idx]
-                runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-                runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
+        # Ensure any remaining points are pushed to the plot
+        for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
+            v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
+            ip_val = high_currents[idx]
+            in_val = low_currents[idx]
+            runner.add_live_point(v_val, ip_val, '$I_+(V)$')
+            runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
 
-        if not self.stop_requested():
-            # Add log-magnitude series once, at the end, in one shot
-            floor = 1e-15
-            xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
-            ys = [max(abs(high_currents[idx]), floor) for idx in range(min(len(high_currents), max_points))]
-            runner.add_live_series(xs, ys, 'log(I)')
+        # Add log-magnitude series once, at the end, in one shot
+        floor = 1e-15
+        xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
+        ys = [max(abs(high_currents[idx]), floor) for idx in range(min(len(high_currents), max_points))]
+        runner.add_live_series(xs, ys, 'log(I)')
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
@@ -254,9 +242,6 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             if i < len(v_source_status):
                 status_combined |= v_source_status[i]
             results.append([v_val, ip_val, in_val, t_val, status_combined])
-
-        # Return instrument to safe state
-        self.abort_b1500(b1500)
 
         self.log(f'Collected {len(results)} oxide breakdown points')
         return results
