@@ -26,13 +26,17 @@ class MeasurementRunner:
         self.plot_series_callback = None
         self.status_callback = None
         self._last_status_message = None
-        self.b1500: Optional[B1500Session] = None
-        self.prober: Optional[SentioProber] = None
+        self.temp_step_started_cb = None
+        self.temp_phase_cb = None
+        self.temp_sample_cb = None
+        self.b1500: B1500Session
+        self.prober: SentioProber
         self.subsite_origin = None
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
         self.current_temp_c: Optional[float] = None
+        self._current_temp_step: Optional[int] = None
         self.stop_event = threading.Event()
         atexit.register(self.safe_stop)
     
@@ -211,28 +215,49 @@ class MeasurementRunner:
             self.log(f"Warning: Set chuck temperature failed: {e}")
             return False
 
-    def prober_get_temp(self) -> Optional[float]:
+    def prober_get_temp(self) -> float:
         try:
             prober = self.get_prober()
             temp = prober.status.get_chuck_temp()
             self.current_temp_c = temp
+            if self.temp_sample_cb and self._current_temp_step is not None:
+                try:
+                    self.log(f"Temp sample step={self._current_temp_step} temp={temp}")
+                    self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
+                except Exception as e:
+                    self.log(f"Temp sample cb error: {e}")
             return temp
         except Exception as e:
             self.log(f"Warning: Get chuck temperature failed: {e}")
             return None
 
-    def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, poll_s: float = 2.0, timeout_s: float = 900.0) -> bool:
+    def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, wait_time_s: float = 0.0, poll_s: float = 1.0, timeout_s: float = 900.0) -> bool:
         self.log(f"Waiting for chuck to stabilize at {target_c:.1f} C (+/-{tol_c:.1f} C)")
         start = time.time()
+        reached = False
         while True:
             if self.should_stop():
-                return False
+                raise MeasurementAbortRequested()
             temp = self.prober_get_temp()
             if temp is not None and abs(temp - target_c) <= tol_c:
-                return True
+                if wait_time_s > 0:
+                    stable_start = time.time()
+                    while True:
+                        if self.should_stop():
+                            raise MeasurementAbortRequested()
+                        temp = self.prober_get_temp()
+                        if temp is not None and abs(temp - target_c) <= tol_c:
+                            if (time.time() - stable_start) >= wait_time_s:
+                                break
+                        else:
+                            stable_start = time.time()
+                        time.sleep(max(poll_s, 0.25))
+                reached = True
+                break
             if timeout_s and (time.time() - start) > timeout_s:
-                return False
+                break
             time.sleep(max(poll_s, 0.25))
+        return reached
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
         """Notify UI to initialize/clear the live plot."""
@@ -284,41 +309,65 @@ class MeasurementRunner:
         except Exception as e:
             self.log(f'Warning: SENTIO move failed: {e}')
     
-    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False, run_subsite=False, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
+    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, run_subsite=False, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
-        first = True
         try:
-            for target in temp_list_c:
-                if self.should_stop():
-                    self.log("Stop requested; aborting temperature sweep.")
-                    break
+            for idx, target in enumerate(temp_list_c):
+                self._current_temp_step = idx
+                if self.temp_step_started_cb:
+                    self.temp_step_started_cb(idx)
+                else:
+                    self.log("Warning: No temp step started callback registered.")
                 self.prober_set_temp(target)
                 if poll_interval_s > 0:
-                    self.prober_wait_until_temp(target, tolerance_c, poll_interval_s)
-                if wait_after_stable_s > 0:
-                    time.sleep(wait_after_stable_s)
+                    self.prober_wait_until_temp(target, tolerance_c, wait_after_stable_s, poll_interval_s)
                 self.current_temp_c = target
+                if self.temp_phase_cb:
+                    try:
+                        self.temp_phase_cb("measure_start", idx)
+                    except Exception as e:
+                        self.log(f"Temp phase start cb error: {e}")
                 run_settings = dict(settings)
                 run_settings['temperature_c'] = target
                 if run_subsite:
-                    self.run_subsite(chip_id, site, subsite, proc_class, run_settings, set_home_before_run if first else False)
+                    self.run_subsite(chip_id, site, subsite, proc_class, run_settings)
                 else:
-                    self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings, set_home_before_run if first else False)
-                first = False
-        finally:
-            self.current_temp_c = None
+                    self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings)
+                if self.temp_phase_cb:
+                    try:
+                        self.temp_phase_cb("measure_end", idx)
+                    except Exception as e:
+                        self.log(f"Temp phase end cb error: {e}")
+            self._current_temp_step = None
+        except MeasurementAbortRequested:
+            self.log("Measurement aborted during temperature sweep.")
+            raise # things will be cleaned up in safe_stop
+        # TODO restore to uncontrolled if ui checkbox says so
+
+    def run_subsite(self, chip_id, site, subsite, proc_class, settings):
+        """
+        Run the given procedure for every device in the subsite, optionally
+        capturing the current chuck position as the subsite origin first.
+        """
+        if not chip_id:
+            raise ValueError("Chip ID is required to run a subsite.")
+        try:
+            for device in subsite.devices:
+                # Copy settings per device to avoid accidental mutation
+                self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
+        except MeasurementAbortRequested:
+            # things will be cleaned up in safe_stop
+            self.log("Measurement aborted during subsite run.")
+            raise
+
     
-    def run_procedure(self, chip_id, site, subsite, device, proc_class, settings, set_home_before_run=False):
+    def run_procedure(self, chip_id, site, subsite, device, proc_class, settings):
         # Apply global ASU overrides if present
         for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
             if key not in settings and key in self.config.data:
                 settings[key] = self.config.data.get(key)
         if not chip_id:
             raise ValueError("Chip ID is required to run a procedure.")
-
-        if set_home_before_run:
-            self.log("Setting subsite origin at current chuck position...")
-            self.set_subsite_origin()
 
         # Update context for use by procedures
         self.current_chip = chip_id
@@ -338,36 +387,15 @@ class MeasurementRunner:
         try:
             proc.run(self.get_b1500(settings['gpib_address']), device)
         except MeasurementAbortRequested:
-            # try:
-            #     self.b1500.zero_output(B1500Session.CH_ALL)
-            #     self.b1500.set_switch(B1500Session.CH_ALL, False)
-            # except Exception:
-            #     pass
-            # self.log("Procedure stopped by user.")
-            # things will be cleaned up in safe_stop
-            return
+            self.log("Measurement aborted during procedure run.")
+            raise # things will be cleaned up in safe_stop
         except Exception as e:
             try:
                 self.b1500.zero_output(B1500Session.CH_ALL)
                 self.b1500.set_switch(B1500Session.CH_ALL, False)
             except Exception:
                 pass
-            # if it wasn't an abort, log the error
-            self.log(f"Procedure error: {e}")
-            raise e
+            self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
+            raise
         # Move out of contact after completion
         self.prober_separation()
-
-    def run_subsite(self, chip_id, site, subsite, proc_class, settings, set_home_before_run=False):
-        """
-        Run the given procedure for every device in the subsite, optionally
-        capturing the current chuck position as the subsite origin first.
-        """
-        if not chip_id:
-            raise ValueError("Chip ID is required to run a subsite.")
-        if set_home_before_run:
-            self.log("Setting subsite origin at current chuck position...")
-            self.set_subsite_origin()
-        for device in subsite.devices:
-            # Copy settings per device to avoid accidental mutation
-            self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
