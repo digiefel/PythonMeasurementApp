@@ -165,10 +165,7 @@ class ProberController:
                 return False
             temp = self.get_temp()
             if sample_cb and temp is not None:
-                try:
-                    sample_cb(time.time(), temp)
-                except Exception as e:
-                    self.log(f"Temp sample cb error: {e}")
+                sample_cb(time.time(), temp)
             if temp is not None and abs(temp - target_c) <= tol_c:
                 if wait_time_s > 0:
                     stable_start = time.time()
@@ -177,10 +174,7 @@ class ProberController:
                             return False
                         temp = self.get_temp()
                         if sample_cb and temp is not None:
-                            try:
-                                sample_cb(time.time(), temp)
-                            except Exception as e:
-                                self.log(f"Temp sample cb error: {e}")
+                            sample_cb(time.time(), temp)
                         if temp is not None and abs(temp - target_c) <= tol_c:
                             if (time.time() - stable_start) >= wait_time_s:
                                 break
@@ -202,12 +196,12 @@ class ProberController:
             self.prober.comm.send("*LOCAL")
         except Exception:
             pass
-        # try:
+        try:
             # Explicitly disconnect communicator so pyvisa ResourceManager does not rely on __del__.
-            # self.prober.comm.disconnect()
-            # rm = getattr(self.prober.comm, "_CommunicatorVisa__rm", None)
-            # if rm:
-            #     rm.close()
-        # except Exception:
-        #     pass
+            self.prober.comm.disconnect()
+            rm = getattr(self.prober.comm, "_CommunicatorVisa__rm", None)
+            if rm:
+                rm.close()
+        except Exception:
+            pass
         self.prober = None
