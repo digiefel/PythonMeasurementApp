@@ -73,7 +73,6 @@ class TempTracker:
             return None
         meta = self._ensure_step(step_idx)
         if meta.get("start_ts") is None:
-            self.log(f"Dropping temp sample; step {step_idx} not started.")
             return None
         is_meas = meta.get("measure_start_ts") is not None and ts >= meta["measure_start_ts"]
         if source == "setpoint":
@@ -93,6 +92,7 @@ class TempTracker:
         self.measure_per_device_est = (self.measure_per_device_est * self._measure_samples + per_device) / (self._measure_samples + 1)
         self._measure_samples += 1
         self.devices_done[step_idx] = completed_devices
+        self.log(f"[meas_obs_partial] idx={step_idx} elapsed={elapsed:.1f}s devices={completed_devices}/{total_devices} per_dev={per_device:.3f}s avg={self.measure_per_device_est:.3f} n={self._measure_samples}")
 
     def _update_warmup_estimate(self, idx: int):
         meta = self._ensure_step(idx)
@@ -100,7 +100,7 @@ class TempTracker:
         meas_start = meta.get("measure_start_ts")
         if start is None or meas_start is None:
             return
-        duration = max(meas_start - start, 0.0)
+        duration_total = max(meas_start - start, 0.0)
         target = self.planned_temps[idx] if idx < len(self.planned_temps) else None
         prev_target = None
         if idx > 0 and (idx - 1) < len(self.planned_temps):
@@ -110,7 +110,8 @@ class TempTracker:
         delta = abs((target or 0.0) - (prev_target if prev_target is not None else 0.0)) if target is not None else None
         if delta is None or delta < 0.25:
             delta = 1.0  # avoid divide by zero and tiny swings
-        per_deg = duration / max(delta, 1e-3)
+        ramp_only = max(duration_total - self.wait_after_s, 0.0)
+        per_deg = ramp_only / max(delta, 1e-3)
         self.warmup_per_deg_est = (self.warmup_per_deg_est * self._warmup_samples + per_deg) / (self._warmup_samples + 1)
         self._warmup_samples += 1
 
@@ -125,6 +126,7 @@ class TempTracker:
         per_device = total / max(int(device_count), 1)
         self.measure_per_device_est = (self.measure_per_device_est * self._measure_samples + per_device) / (self._measure_samples + 1)
         self._measure_samples += 1
+        self.log(f"[meas_obs] idx={idx} total={total:.1f}s per_dev={per_device:.3f}s avg={self.measure_per_device_est:.3f} n={self._measure_samples}")
 
     def _estimate_warmup(self, idx: int, prev_temp: Optional[float], target_temp: Optional[float], meta: dict) -> float:
         if meta.get("start_ts") is not None and meta.get("measure_start_ts") is not None:
@@ -136,9 +138,13 @@ class TempTracker:
                 base_prev = self.planned_temps[idx - 1]
             if base_prev is not None:
                 delta = abs(target_temp - base_prev)
-        warmup = self.warmup_per_deg_est * (delta if delta is not None else 1.0)
-        warmup = max(warmup, self.min_warmup_s)
-        return warmup + self.wait_after_s
+        delta = delta if delta is not None else 1.0
+        if self._warmup_samples == 0:
+            est_per_deg = (self.wait_after_s * 2.0) / max(delta, 1e-3)  # aim for warmup=2*wait when no history
+        else:
+            est_per_deg = self.warmup_per_deg_est
+        warmup_core = max(est_per_deg * delta, self.min_warmup_s)
+        return warmup_core + self.wait_after_s
 
     def _estimate_measure(self, meta: dict) -> float:
         if meta.get("measure_start_ts") is not None and meta.get("measure_end_ts") is not None:

@@ -348,7 +348,6 @@ class TemperatureUI:
             if seq:
                 max_x = max(max_x, max(seq))
         ax.set_xlim(left=0.0, right=max(max_x * 1.05, 1.0))
-        ax.set_xlabel("Time (min)", fontsize=7)
         ax.tick_params(axis='both', labelsize=7)
         self.profile_canvas.draw_idle()
         self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))

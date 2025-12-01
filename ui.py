@@ -500,7 +500,6 @@ class MainUI:
                 self._run_thread = None
                 self._post(self._set_running_state, False)
                 self._post(self.temp_ui.stop_run)
-        self.runner.stop_event.clear()
         self._set_running_state(True)
         self._run_thread = threading.Thread(target=target, daemon=True)
         self._run_thread.start()
