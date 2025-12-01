@@ -71,16 +71,19 @@ class MeasurementRunner:
                 self.b1500 = None
         
         # try to separate
-        try:
-            if self.prober_ctrl.separation() and self.contact_state_callback:
-                try:
-                    self.contact_state_callback(False)
-                except Exception as e:
-                    self.log(f"Contact state cb error: {e}")
-        except Exception:
-            pass
-        # return prober to local control
+        has_prober = getattr(self.prober_ctrl, "prober", None) is not None
+        if has_prober:
+            try:
+                if self.prober_ctrl.separation() and self.contact_state_callback:
+                    try:
+                        self.contact_state_callback(False)
+                    except Exception as e:
+                        self.log(f"Contact state cb error: {e}")
+            except Exception:
+                pass
+        # return prober to local control (no new session will be opened here)
         self.prober_ctrl.close()
+        self.stop_event.clear()
 
     def should_stop(self) -> bool:
         """Check if a stop has been requested."""
@@ -136,11 +139,7 @@ class MeasurementRunner:
         temp = self.prober_ctrl.get_temp()
         self.current_temp_c = temp
         if self.temp_sample_cb and self._current_temp_step is not None and temp is not None:
-            try:
-                self.log(f"Temp sample step={self._current_temp_step} temp={temp}")
-                self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
-            except Exception as e:
-                self.log(f"Temp sample cb error: {e}")
+            self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
         return temp
 
     def _record_temp_setpoint(self, temp_c: float):
