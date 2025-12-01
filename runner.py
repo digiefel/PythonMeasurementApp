@@ -17,6 +17,7 @@ class MeasurementRunner:
         self.plot_finalize_callback = None
         self.plot_series_callback = None
         self.status_callback = None
+        self.contact_state_callback = None
         self._last_status_message = None
         self.temp_step_started_cb = None
         self.temp_phase_cb = None
@@ -71,7 +72,11 @@ class MeasurementRunner:
         
         # try to separate
         try:
-            self.prober_ctrl.separation()
+            if self.prober_ctrl.separation() and self.contact_state_callback:
+                try:
+                    self.contact_state_callback(False)
+                except Exception as e:
+                    self.log(f"Contact state cb error: {e}")
         except Exception:
             pass
         # return prober to local control
@@ -90,10 +95,22 @@ class MeasurementRunner:
         self.prober_ctrl.go_home()
 
     def prober_contact(self):
-        return self.prober_ctrl.contact()
+        ok = self.prober_ctrl.contact()
+        if ok and self.contact_state_callback:
+            try:
+                self.contact_state_callback(True)
+            except Exception as e:
+                self.log(f"Contact state cb error: {e}")
+        return ok
 
     def prober_separation(self):
-        return self.prober_ctrl.separation()
+        ok = self.prober_ctrl.separation()
+        if ok and self.contact_state_callback:
+            try:
+                self.contact_state_callback(False)
+            except Exception as e:
+                self.log(f"Contact state cb error: {e}")
+        return ok
 
     def prober_read_position(self):
         return self.prober_ctrl.read_position()

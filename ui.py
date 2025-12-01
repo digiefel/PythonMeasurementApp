@@ -33,6 +33,7 @@ class MainUI:
         self.runner.plot_series_callback = self._post_plot_series
         self.runner.plot_finalize_callback = self._post_plot_finish
         self.runner.status_callback = self._post_status
+        self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self._run_thread = None
 
         self.root.title("Python Measurement App")
