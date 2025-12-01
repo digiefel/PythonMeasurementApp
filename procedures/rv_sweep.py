@@ -21,6 +21,7 @@ class RVSweepProcedure(MeasurementProcedure):
         self.log(f'Starting RV Sweep on {device.name}')
 
         try:
+            rm = None
             if self.mock_mode:
                 self.log('Running in MOCK mode - no hardware connection')
                 instr = None
@@ -75,6 +76,11 @@ class RVSweepProcedure(MeasurementProcedure):
                 try:
                     instr.close()
                 except:
+                    pass
+            if rm is not None:
+                try:
+                    rm.close()
+                except Exception:
                     pass
 
     def build_rv_vector(self):

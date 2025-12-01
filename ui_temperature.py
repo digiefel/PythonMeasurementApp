@@ -18,7 +18,8 @@ class TemperatureUI:
         # Runner callbacks
         self.runner.temp_step_started_cb = lambda idx: self._post(self._on_step_start, idx)
         self.runner.temp_phase_cb = lambda phase, idx: self._post(self._on_phase_change, phase, idx)
-        self.runner.temp_sample_cb = lambda ts, temp, step_idx, _: self._post(self._record_sample, ts, temp, step_idx)
+        self.runner.temp_sample_cb = lambda ts, temp, step_idx, source: self._post(self._record_sample, ts, temp, step_idx, source)
+        self.runner.temp_device_done_cb = lambda ts, step_idx, done, total: self._post(self._on_device_done, ts, step_idx, done, total)
 
         # UI state
         self.enabled_var = tk.BooleanVar(value=False)
@@ -127,9 +128,9 @@ class TemperatureUI:
                 return None
         return enabled, temps, wait_after, mode
 
-    def start_run(self):
+    def start_run(self, planned_temps, wait_after_s: float, device_count: int = 1):
         self._run_active = True
-        self.temp_tracker.reset_run()
+        self.temp_tracker.start_run(planned_temps, wait_after_s, device_count=device_count)
         self.log("Temp run active: polling + logging enabled.")
         self._start_polling(self._safe_poll_interval())
 
@@ -264,12 +265,16 @@ class TemperatureUI:
     def _on_phase_change(self, phase: str, idx: int):
         self.temp_tracker.phase_change(phase, idx)
 
-    def _record_sample(self, ts: float, temp: float, step_idx: int):
+    def _record_sample(self, ts: float, temp: float, step_idx: int, source: str):
         if not self._run_active:
             return
-        sample = self.temp_tracker.record_sample(ts, temp, step_idx)
-        if sample is None:
+        self.temp_tracker.record_sample(ts, temp, step_idx, source)
+        self._update_sweep_plot()
+
+    def _on_device_done(self, ts: float, step_idx: int, done: int, total: int):
+        if not self._run_active:
             return
+        self.temp_tracker.device_finished(ts, step_idx, done, total)
         self._update_sweep_plot()
 
     def _safe_poll_interval(self) -> float:
@@ -288,6 +293,13 @@ class TemperatureUI:
         if not self.enabled_var.get():
             self.profile_widget.grid_remove()
             return
+        if not self._run_active or self.temp_tracker.run_start_ts is None:
+            self._render_step_preview()
+            return
+        self._render_time_plot()
+
+    def _render_step_preview(self):
+        """Pre-run preview on step index for sweep mode."""
         mode = self.mode_var.get()
         try:
             vals = [float(tok.strip()) for tok in self.sweep_var.get().split(",") if tok.strip()]
@@ -304,20 +316,46 @@ class TemperatureUI:
         ax.set_yticks(list(set(vals)))
         ax.step(xs, vals, linewidth=1, color='k', where='post')
 
-        points = list(self.temp_tracker.iter_points())
-        if points:
-            reds_x, reds_y, greens_x, greens_y = [], [], [], []
-            for x, temp, is_meas, _, _ in points:
-                if is_meas:
-                    greens_x.append(x); greens_y.append(temp)
-                else:
-                    reds_x.append(x); reds_y.append(temp)
-            if reds_x:
-                ax.plot(reds_x, reds_y, color='red', linewidth=1, label="Temp (wait)")
-            if greens_x:
-                ax.plot(greens_x, greens_y, color='green', linewidth=1, label="Temp (meas)")
-            if reds_x or greens_x:
-                ax.legend(loc="upper left", fontsize=7)
+        self.profile_canvas.draw_idle()
+        self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
 
+    def _render_time_plot(self):
+        """During a run, plot against time with actuals, setpoints, and predicted schedule."""
+        ax = self.profile_ax
+        ax.clear()
+        ax.grid(True, linestyle="--", alpha=0.3)
+        (wait_x, wait_y), (meas_x, meas_y) = self.temp_tracker.actual_series()
+        sp_x, sp_y = self.temp_tracker.setpoint_series()
+        pred_x, pred_y = self.temp_tracker.predicted_schedule()
+
+        to_minutes = lambda arr: [x / 60.0 for x in arr]
+        wait_x = to_minutes(wait_x)
+        meas_x = to_minutes(meas_x)
+        sp_x = to_minutes(sp_x)
+        pred_x = to_minutes(pred_x)
+
+        has_legend = False
+        if pred_x and pred_y:
+            ax.step(pred_x, pred_y, where="post", color="gray", linestyle="--", linewidth=1, label="Estimate")
+            has_legend = True
+        if sp_x and sp_y:
+            ax.step(sp_x, sp_y, where="post", color="black", linewidth=1, label="Setpoint")
+            has_legend = True
+        if wait_x:
+            ax.plot(wait_x, wait_y, color="red", linewidth=1, label="Temp (wait)")
+            has_legend = True
+        if meas_x:
+            ax.plot(meas_x, meas_y, color="green", linewidth=1, label="Temp (meas)")
+            has_legend = True
+
+        max_x = 0.0
+        for seq in (pred_x, wait_x, meas_x, sp_x):
+            if seq:
+                max_x = max(max_x, max(seq))
+        ax.set_xlim(left=0.0, right=max(max_x * 1.05, 1.0))
+        ax.set_xlabel("Time (min)", fontsize=7)
+        ax.tick_params(axis='both', labelsize=7)
+        if has_legend:
+            ax.legend(loc="upper left", fontsize=7)
         self.profile_canvas.draw_idle()
         self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))

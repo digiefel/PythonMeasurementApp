@@ -21,6 +21,7 @@ class MeasurementRunner:
         self.temp_step_started_cb = None
         self.temp_phase_cb = None
         self.temp_sample_cb = None
+        self.temp_device_done_cb = None
         self.b1500: B1500Session
         self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
@@ -223,6 +224,11 @@ class MeasurementRunner:
                     self.run_subsite(chip_id, site, subsite, proc_class, run_settings)
                 else:
                     self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings)
+                    if self.temp_device_done_cb:
+                        try:
+                            self.temp_device_done_cb(time.time(), idx, 1, 1)
+                        except Exception as e:
+                            self.log(f"Temp device done cb error: {e}")
                 if self.temp_phase_cb:
                     try:
                         self.temp_phase_cb("measure_end", idx)
@@ -242,9 +248,14 @@ class MeasurementRunner:
         if not chip_id:
             raise ValueError("Chip ID is required to run a subsite.")
         try:
-            for device in subsite.devices:
+            for idx, device in enumerate(subsite.devices):
                 # Copy settings per device to avoid accidental mutation
                 self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
+                if self.temp_device_done_cb and self._current_temp_step is not None:
+                    try:
+                        self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, len(subsite.devices))
+                    except Exception as e:
+                        self.log(f"Temp device done cb error: {e}")
         except MeasurementAbortRequested:
             # things will be cleaned up in safe_stop
             self.log("Measurement aborted during subsite run.")

@@ -195,9 +195,19 @@ class ProberController:
         return reached
 
     def close(self):
-        if self.prober:
-            try:
-                self.prober.comm.send("*LOCAL")
-            except Exception:
-                pass
-            self.prober = None
+        """Return control to local and tear down VISA session cleanly."""
+        if not self.prober:
+            return
+        try:
+            self.prober.comm.send("*LOCAL")
+        except Exception:
+            pass
+        # try:
+            # Explicitly disconnect communicator so pyvisa ResourceManager does not rely on __del__.
+            # self.prober.comm.disconnect()
+            # rm = getattr(self.prober.comm, "_CommunicatorVisa__rm", None)
+            # if rm:
+            #     rm.close()
+        # except Exception:
+        #     pass
+        self.prober = None

@@ -455,13 +455,14 @@ class MainUI:
         self.config.data['last_selection'] = self.build_last_selection()
         run_all = self.run_subsite_var.get()
         set_home = self.set_home_var.get()
+        device_count = len(subsite.devices) if run_all and subsite else 1
         if self._run_thread and self._run_thread.is_alive():
             self.log("A run is already in progress.")
             return
         # Start live temperature polling if applicable
         poll_interval = 1.0
         if temp_enabled:
-            self.temp_ui.start_run()
+            self.temp_ui.start_run(temp_list, wait_after, device_count=device_count)
         else:
             self.temp_ui.stop_run()
         def target():
