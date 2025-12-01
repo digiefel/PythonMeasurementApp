@@ -334,19 +334,14 @@ class TemperatureUI:
         sp_x = to_minutes(sp_x)
         pred_x = to_minutes(pred_x)
 
-        has_legend = False
         if pred_x and pred_y:
-            ax.step(pred_x, pred_y, where="post", color="gray", linestyle="--", linewidth=1, label="Estimate")
-            has_legend = True
+            ax.step(pred_x, pred_y, where="post", color="gray", linestyle="--", linewidth=1)
         if sp_x and sp_y:
-            ax.step(sp_x, sp_y, where="post", color="black", linewidth=1, label="Setpoint")
-            has_legend = True
+            ax.step(sp_x, sp_y, where="post", color="black", linewidth=1)
         if wait_x:
-            ax.plot(wait_x, wait_y, color="red", linewidth=1, label="Temp (wait)")
-            has_legend = True
+            ax.plot(wait_x, wait_y, color="red", linewidth=1)
         if meas_x:
-            ax.plot(meas_x, meas_y, color="green", linewidth=1, label="Temp (meas)")
-            has_legend = True
+            ax.plot(meas_x, meas_y, color="green", linewidth=1)
 
         max_x = 0.0
         for seq in (pred_x, wait_x, meas_x, sp_x):
@@ -355,7 +350,5 @@ class TemperatureUI:
         ax.set_xlim(left=0.0, right=max(max_x * 1.05, 1.0))
         ax.set_xlabel("Time (min)", fontsize=7)
         ax.tick_params(axis='both', labelsize=7)
-        if has_legend:
-            ax.legend(loc="upper left", fontsize=7)
         self.profile_canvas.draw_idle()
         self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
