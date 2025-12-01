@@ -5,15 +5,7 @@ from typing import Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementAbortRequested
 from bindings import B1500Session
-from sentio_prober_control.Sentio.ProberSentio import SentioProber
-from sentio_prober_control.Sentio.Enumerations import (
-    XyReference,
-    SteppingContactMode,
-    ChuckSite,
-    ThermoChuckState,
-    ZReference,
-)
-from sentio_prober_control.Sentio.Response import Response
+from prober import ProberController
 
 
 class MeasurementRunner:
@@ -30,8 +22,7 @@ class MeasurementRunner:
         self.temp_phase_cb = None
         self.temp_sample_cb = None
         self.b1500: B1500Session
-        self.prober: SentioProber
-        self.subsite_origin = None
+        self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
@@ -54,112 +45,6 @@ class MeasurementRunner:
         return self.b1500
 
     
-    def get_prober(self) -> SentioProber:
-        """Get or create the SENTIO prober session."""
-        if getattr(self, 'prober', None) is None:
-            addr = "GPIB0::28::INSTR"
-            self.log(f'Opening SENTIO prober session at {addr}')
-            self.prober = SentioProber.create_prober("visa", addr)
-            self.prober.set_stepping_contact_mode(SteppingContactMode.BackToContact)
-        return self.prober
-
-    def set_subsite_origin(self, x_offset: float, y_offset: float):
-        """
-        Capture the current chuck position and treat it as the new (0,0) for user-defined moves.
-        Operator must have aligned to the reference device before this is called.
-        """
-        try:
-            prober = self.get_prober()
-            x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
-            x, y = (x - x_offset, y - y_offset)
-            self.subsite_origin = (x, y)
-            self.log(f'Subsite origin recorded at X={x:.1f}um, Y={y:.1f}um')
-        except Exception as e:
-            self.log(f'Warning: Failed to set subsite origin: {e}')
-
-    # --- Semi-manual prober controls ---
-    def prober_go_home(self):
-        try:
-            if not self.subsite_origin:
-                self.log('No subsite origin recorded. Use "Set Home" first.')
-                return
-            prober = self.get_prober()
-            x0, y0 = self.subsite_origin
-            x, y = prober.move_chuck_xy(XyReference.Home, x0, y0)
-            prober.wait_all()
-            self.log(f'Chuck moved to recorded origin X={x:.1f}um, Y={y:.1f}um')
-        except Exception as e:
-            self.log(f'Warning: Go home failed: {e}')
-
-    def prober_contact(self):
-        try:
-            prober = self.get_prober()
-            prober.move_chuck_contact()
-            prober.wait_all()
-            self.log('Chuck moved to contact')
-            return True
-        except Exception as e:
-            self.log(f'Warning: Contact failed: {e}')
-            return False
-
-    def prober_separation(self):
-        try:
-            prober = self.get_prober()
-            prober.move_chuck_separation()
-            prober.wait_all()
-            self.log('Chuck moved to separation')
-            return True
-        except Exception as e:
-            self.log(f'Warning: Separation failed: {e}')
-            return False
-
-    def prober_read_position(self):
-        try:
-            prober = self.get_prober()
-            x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
-            return x, y
-        except Exception as e:
-            self.log(f'Warning: Read position failed: {e}')
-            return None
-
-    def get_chuck_height(self) -> Optional[float]:
-        try:
-            prober = self.get_prober()
-            height = prober.get_chuck_z(ZReference.Contact)
-            return height
-        except Exception as e:
-            self.log(f"Warning: Get chuck height failed: {e}")
-            return None
-    
-    def get_temp_setpoint(self) -> Optional[float]:
-        try:
-            prober = self.get_prober()
-            return prober.status.get_chuck_temp_setpoint()
-        except Exception as e:
-            self.log(f"Warning: Get chuck temperature setpoint failed: {e}")
-            return None
-
-    def get_thermo_state(self) -> Optional[str]:
-        try:
-            prober = self.get_prober()
-            state = prober.status.get_chuck_thermo_state()
-            match state:
-                case ThermoChuckState.Heating:
-                    return "heating"
-                case ThermoChuckState.Cooling:
-                    return "cooling"
-                case ThermoChuckState.Controlling:
-                    return "controlling"
-                case ThermoChuckState.Error:
-                    return "error"
-                case ThermoChuckState.Soaking:
-                    return "soaking"
-                case _:
-                    return "idle"
-        except Exception as e:
-            self.log(f"Warning: Get thermo state failed: {e}")
-            return None
-
     def safe_stop(self):
         """
         Universal stop method.
@@ -185,78 +70,86 @@ class MeasurementRunner:
         
         # try to separate
         try:
-            self.prober_separation()
+            self.prober_ctrl.separation()
         except Exception:
             pass
-            
         # return prober to local control
-        if self.prober:
-            try:
-                self.prober.comm.send("*LOCAL")
-            except Exception:
-                pass
+        self.prober_ctrl.close()
 
     def should_stop(self) -> bool:
         """Check if a stop has been requested."""
         return self.stop_event.is_set()
 
+    # --- Prober wrappers ---
+    def set_subsite_origin(self, x_offset: float, y_offset: float):
+        self.prober_ctrl.set_subsite_origin(x_offset, y_offset)
+        self.subsite_origin = self.prober_ctrl.subsite_origin
+
+    def prober_go_home(self):
+        self.prober_ctrl.go_home()
+
+    def prober_contact(self):
+        return self.prober_ctrl.contact()
+
+    def prober_separation(self):
+        return self.prober_ctrl.separation()
+
+    def prober_read_position(self):
+        return self.prober_ctrl.read_position()
+
+    def get_chuck_height(self) -> Optional[float]:
+        return self.prober_ctrl.get_chuck_height()
+
+    def get_temp_setpoint(self) -> Optional[float]:
+        return self.prober_ctrl.get_temp_setpoint()
+
+    def get_thermo_state(self) -> Optional[str]:
+        return self.prober_ctrl.get_thermo_state()
+
     # --- Temperature control ---
     def prober_set_temp(self, temp_c: float):
-        self.log(f"Setting temperature setpoint to {temp_c:.2f} C")
-        # the set_chuck_temp method is broken, our prober is too old
-        # so we just send the command directly
-        try:
-            prober = self.get_prober()
-            prober.status.comm.send(f"status:set_chuck_temp {temp_c:.2f}")
-            Response.check_resp(prober.status.comm.read_line())
+        ok = self.prober_ctrl.set_temp(temp_c)
+        if ok:
             self.current_temp_c = temp_c
-            return True
-        except Exception as e:
-            self.log(f"Warning: Set chuck temperature failed: {e}")
-            return False
+            self._record_temp_setpoint(temp_c)
+        return ok
 
     def prober_get_temp(self) -> float:
-        try:
-            prober = self.get_prober()
-            temp = prober.status.get_chuck_temp()
-            self.current_temp_c = temp
-            if self.temp_sample_cb and self._current_temp_step is not None:
-                try:
-                    self.log(f"Temp sample step={self._current_temp_step} temp={temp}")
-                    self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
-                except Exception as e:
-                    self.log(f"Temp sample cb error: {e}")
-            return temp
-        except Exception as e:
-            self.log(f"Warning: Get chuck temperature failed: {e}")
-            return None
+        temp = self.prober_ctrl.get_temp()
+        self.current_temp_c = temp
+        if self.temp_sample_cb and self._current_temp_step is not None and temp is not None:
+            try:
+                self.log(f"Temp sample step={self._current_temp_step} temp={temp}")
+                self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
+            except Exception as e:
+                self.log(f"Temp sample cb error: {e}")
+        return temp
+
+    def _record_temp_setpoint(self, temp_c: float):
+        """Emit a setpoint event for tracking/plotting."""
+        if self.temp_sample_cb and self._current_temp_step is not None:
+            try:
+                self.temp_sample_cb(time.time(), temp_c, self._current_temp_step, "setpoint")
+            except Exception as e:
+                self.log(f"Temp setpoint cb error: {e}")
 
     def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, wait_time_s: float = 0.0, poll_s: float = 1.0, timeout_s: float = 900.0) -> bool:
-        self.log(f"Waiting for chuck to stabilize at {target_c:.1f} C (+/-{tol_c:.1f} C)")
-        start = time.time()
-        reached = False
-        while True:
-            if self.should_stop():
-                raise MeasurementAbortRequested()
-            temp = self.prober_get_temp()
-            if temp is not None and abs(temp - target_c) <= tol_c:
-                if wait_time_s > 0:
-                    stable_start = time.time()
-                    while True:
-                        if self.should_stop():
-                            raise MeasurementAbortRequested()
-                        temp = self.prober_get_temp()
-                        if temp is not None and abs(temp - target_c) <= tol_c:
-                            if (time.time() - stable_start) >= wait_time_s:
-                                break
-                        else:
-                            stable_start = time.time()
-                        time.sleep(max(poll_s, 0.25))
-                reached = True
-                break
-            if timeout_s and (time.time() - start) > timeout_s:
-                break
-            time.sleep(max(poll_s, 0.25))
+        if self.should_stop():
+            raise MeasurementAbortRequested()
+        sample_cb = None
+        if self.temp_sample_cb and self._current_temp_step is not None:
+            sample_cb = lambda ts, temp: self.temp_sample_cb(ts, temp, self._current_temp_step, "poll")
+        reached = self.prober_ctrl.wait_until_temp(
+            target_c,
+            tol_c,
+            wait_time_s,
+            poll_s,
+            timeout_s,
+            sample_cb=sample_cb,
+            stop_check=self.should_stop,
+        )
+        if not reached and self.should_stop():
+            raise MeasurementAbortRequested()
         return reached
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
@@ -296,13 +189,10 @@ class MeasurementRunner:
             return
         self.log(f'Chuck moving to target {device.name} at ΔX={device.x}, ΔY={device.y}')
         try:
-            origin_x, origin_y = self.subsite_origin if self.subsite_origin else (0.0, 0.0)
+            origin_x, origin_y = self.prober_ctrl.subsite_origin if self.prober_ctrl.subsite_origin else (0.0, 0.0)
             target_x = origin_x + device.x
             target_y = origin_y + device.y
-            prober = self.get_prober()
-            prober.move_chuck_xy(XyReference.Home, target_x, target_y)
-            prober.wait_all()
-            x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
+            x, y = self.prober_ctrl.move_xy_home(target_x, target_y)
             self.log(
                 f'Chuck successfully moved to X={x:.1f}um, Y={y:.1f}um'
             )

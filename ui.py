@@ -3,13 +3,13 @@ import os
 import threading
 from datetime import datetime
 import time
-import math
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
 from typing import Optional
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from ui_temperature import TemperatureUI
 
 from config import Config
 from runner import MeasurementRunner
@@ -33,9 +33,6 @@ class MainUI:
         self.runner.plot_series_callback = self._post_plot_series
         self.runner.plot_finalize_callback = self._post_plot_finish
         self.runner.status_callback = self._post_status
-        self.runner.temp_step_started_cb = lambda idx: self._post(self._on_temp_step_start, idx)
-        self.runner.temp_phase_cb = lambda phase, idx: self._post(self._on_temp_phase_change, phase, idx)
-        self.runner.temp_sample_cb = lambda ts, temp, step_idx, _: self._post(self._record_temp_sample, ts, temp, step_idx)
         self._run_thread = None
 
         self.root.title("Python Measurement App")
@@ -64,21 +61,8 @@ class MainUI:
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
         self.chip_var = tk.StringVar()
-        # Temperature state
-        self.temp_enabled_var = tk.BooleanVar(value=False)
-        self.temp_mode_var = tk.StringVar(value="Setpoint")
-        self.temp_setpoint_var = tk.StringVar()
-        self.temp_sweep_var = tk.StringVar()
-        self.temp_wait_var = tk.StringVar(value="0")
-        self.temp_value_var = tk.StringVar(value="--")
-        self.temp_setpoint_display_var = tk.StringVar(value="--")
-        self._temp_poll_job = None
-        self._temp_run_active = False
-        self._temp_step_starts = []
-        self._temp_points = []
-        self._last_step_duration = None
-        self._step_durations = []
-        self._step_measure_start = {}
+        # Temperature UI helper
+        self.temp_ui = TemperatureUI(self.root, self.runner, self.log)
 
         # Procedure field definitions (label, type)
         self.procedure_fields = {
@@ -165,10 +149,6 @@ class MainUI:
         }
 
         self.build_layout()
-        self._toggle_temp_controls()
-        # React to sweep entry edits to refresh the tiny profile
-        self.temp_sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())
-        self._update_sweep_plot()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
@@ -255,51 +235,7 @@ class MainUI:
         self.run_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Temperature controls (separate section below Selection)
-        self.temp_enable_cb = ttk.Checkbutton(self.selection_temp_frame, text="Temperature", variable=self.temp_enabled_var, command=self._toggle_temp_controls)
-        temp_frame = ttk.LabelFrame(self.selection_temp_frame, labelwidget=self.temp_enable_cb)
-        temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
-        temp_frame.grid_columnconfigure(0, weight=1)
-        temp_frame.grid_columnconfigure(1, weight=1)
-        ttk.Label(temp_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=2, pady=2)
-        self.temp_mode_cb = ttk.Combobox(temp_frame, textvariable=self.temp_mode_var, values=["Setpoint", "Sweep"], state="readonly")
-        self.temp_mode_cb.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        self.temp_mode_cb.bind('<<ComboboxSelected>>', lambda e=None: self._toggle_temp_controls())
-        self.temp_setpoint_entry_label = ttk.Label(temp_frame, text="Setpoint (C)")
-        self.temp_setpoint_entry_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
-        self.temp_setpoint_entry = ttk.Entry(temp_frame, textvariable=self.temp_setpoint_var)
-        self.temp_setpoint_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        self.temp_sweep_entry_label = ttk.Label(temp_frame, text="Sweep list (C)")
-        self.temp_sweep_entry_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
-        self.temp_sweep_entry = ttk.Entry(temp_frame, textvariable=self.temp_sweep_var)
-        self.temp_sweep_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        ttk.Label(temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
-        self.temp_wait_entry = ttk.Entry(temp_frame, textvariable=self.temp_wait_var)
-        self.temp_wait_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        self.temp_set_button = ttk.Button(temp_frame, text="Set Temperature", command=self._set_temperature_now)
-        self.temp_set_button.grid(row=5, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
-        temp_row = ttk.Frame(temp_frame)
-        temp_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 0))
-        for c in range(4):
-            temp_row.grid_columnconfigure(c, weight=1)
-        ttk.Label(temp_row, text="Temp:").grid(row=0, column=0, sticky="w", padx=2)
-        self.temp_value_label = ttk.Label(temp_row, textvariable=self.temp_value_var)
-        self.temp_value_label.grid(row=0, column=1, sticky="w", padx=2)
-        ttk.Label(temp_row, text="Setpoint:").grid(row=0, column=2, sticky="e", padx=2)
-        self.temp_setpoint_display_label = ttk.Label(temp_row, textvariable=self.temp_setpoint_display_var)
-        self.temp_setpoint_display_label.grid(row=0, column=3, sticky="e", padx=2)
-        # Tiny sweep profile plot (shown only in Sweep mode)
-        self.temp_profile_fig = Figure(figsize=(2.0, 0.8), dpi=100, layout='compressed')
-        self.temp_profile_ax = self.temp_profile_fig.add_subplot(111)
-        self.temp_profile_ax.tick_params(axis='both', labelsize=7)
-        self.temp_profile_ax.spines["top"].set_visible(False)
-        self.temp_profile_ax.spines["right"].set_visible(False)
-        self.temp_profile_canvas = FigureCanvasTkAgg(self.temp_profile_fig, master=temp_frame)
-        self.temp_profile_widget = self.temp_profile_canvas.get_tk_widget()
-        self.temp_profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
-        # Make background transparent to blend with Tk
-        self.temp_profile_fig.patch.set_alpha(0)
-        self.temp_profile_ax.set_facecolor("none")
-        self.temp_profile_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
+        self.temp_ui.build_panel(self.selection_temp_frame)
 
         # Procedure settings section
         self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
@@ -503,29 +439,10 @@ class MainUI:
         if not all([site, subsite, device]):
             self.log("Select site, subsite, and device before running.")
             return
-        temp_enabled = self.temp_enabled_var.get()
-        temp_mode = self.temp_mode_var.get()
-        if temp_mode not in ("Setpoint", "Sweep"):
-            temp_mode = "Setpoint"
-            self.temp_mode_var.set(temp_mode)
-        try:
-            wait_after = float(self.temp_wait_var.get() or 0.0)
-        except ValueError:
-            tk.messagebox.showerror("Invalid temperature wait", "Wait after stabilization must be a number.")
+        temp_info = self.temp_ui.collect_run_inputs()
+        if temp_info is None:
             return
-        temp_list = []
-        if temp_enabled:
-            try:
-                if temp_mode == "Setpoint":
-                    temp_list = [float(self.temp_setpoint_var.get())]
-                else:
-                    raw = self.temp_sweep_var.get()
-                    temp_list = [float(tok.strip()) for tok in raw.split(',') if tok.strip() != ""]
-                if not temp_list:
-                    raise ValueError("No temperatures provided")
-            except Exception:
-                tk.messagebox.showerror("Invalid temperature values", "Provide numeric temperature values in °C.")
-                return
+        temp_enabled, temp_list, wait_after, temp_mode = temp_info
 
         proc_class = {
             'RVSweep': RVSweepProcedure,
@@ -542,20 +459,11 @@ class MainUI:
             self.log("A run is already in progress.")
             return
         # Start live temperature polling if applicable
-        poll_interval = self._safe_poll_interval()
+        poll_interval = 1.0
         if temp_enabled:
-            self._temp_run_active = True
-            self._temp_step_starts = []
-            self._temp_points = []
-            self._last_step_duration = None
-            self._step_durations = []
-            self._step_measure_start = {}
-            self._step_sample_counts = {}
-            self.log("Temp run active: polling + logging enabled.")
-            self._start_temp_polling(poll_interval)
+            self.temp_ui.start_run()
         else:
-            self._temp_run_active = False
-            self._stop_temp_polling()
+            self.temp_ui.stop_run()
         def target():
             if set_home:
                 self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
@@ -589,8 +497,7 @@ class MainUI:
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
                 self._post(self._set_running_state, False)
-                self._post(self._stop_temp_polling)
-                self._temp_run_active = False
+                self._post(self.temp_ui.stop_run)
         self.runner.stop_event.clear()
         self._set_running_state(True)
         self._run_thread = threading.Thread(target=target, daemon=True)
@@ -802,212 +709,10 @@ class MainUI:
                 return val
         return options[0][0] if options else 0.0
 
-    def _update_sweep_plot(self):
-        if not self.temp_enabled_var.get():
-            self.temp_profile_widget.grid_remove()
-            return
-        mode = self.temp_mode_var.get()
-        try:
-            vals = [float(tok.strip()) for tok in self.temp_sweep_var.get().split(",") if tok.strip()]
-            vals.append(vals[-1])  # extend last step for visual clarity
-        except Exception:
-            vals = []
-        if mode != "Sweep" or not vals:
-            self.temp_profile_widget.grid_remove()
-            return
-        self.temp_profile_ax.clear()
-        xs = list(range(1,len(vals)+1))
-        self.temp_profile_ax.set_xticks(xs[:-1])
-        self.temp_profile_ax.set_yticks(list(set(vals)))
-        self.temp_profile_ax.step(xs, vals, linewidth=1, color='k', where='post')
-        if self._temp_points:
-            pts = []
-            for t_abs, temp, step_idx in self._temp_points:
-                if step_idx >= len(self._temp_step_starts):
-                    continue
-                x_norm = self._norm_temp_x(t_abs, step_idx)
-                pts.append((x_norm, temp, t_abs, step_idx))
-            if pts:
-                reds_x, reds_y, greens_x, greens_y = [], [], [], []
-                for x, y, t_abs, s_idx in pts:
-                    start_time = self._step_measure_start.get(s_idx)
-                    if start_time is None or t_abs < start_time:
-                        reds_x.append(x); reds_y.append(y)
-                    else:
-                        greens_x.append(x); greens_y.append(y)
-                if reds_x:
-                    self.temp_profile_ax.plot(reds_x, reds_y, color='red', linewidth=1, label="Temp (wait)")
-                if greens_x:
-                    self.temp_profile_ax.plot(greens_x, greens_y, color='green', linewidth=1, label="Temp (meas)")
-                self.temp_profile_ax.legend(loc="upper left", fontsize=7)
-        self.temp_profile_canvas.draw_idle()
-        self.temp_profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
-
-    def _toggle_temp_controls(self):
-        enabled = self.temp_enabled_var.get()
-        mode = self.temp_mode_var.get()
-        if mode not in ("Setpoint", "Sweep"):
-            mode = "Setpoint"
-            self.temp_mode_var.set(mode)
-        mode_state = "readonly" if enabled else "disabled"
-        entry_state = "normal" if enabled else "disabled"
-        self.temp_mode_cb.configure(state=mode_state)
-        if mode == "Setpoint":
-            self.temp_setpoint_entry_label.grid()
-            self.temp_setpoint_entry.grid()
-            self.temp_sweep_entry_label.grid_remove()
-            self.temp_sweep_entry.grid_remove()
-            self.temp_setpoint_entry.configure(state=entry_state)
-            self.temp_sweep_entry.configure(state="disabled")
-        else:
-            self.temp_sweep_entry_label.grid()
-            self.temp_sweep_entry.grid()
-            self.temp_sweep_entry.configure(state=entry_state)
-            self.temp_setpoint_entry_label.grid_remove()
-            self.temp_setpoint_entry.grid_remove()
-            self.temp_setpoint_entry.configure(state="disabled")
-        self.temp_wait_entry.configure(state=entry_state)
-        self.temp_set_button.configure(state="normal" if enabled else "disabled")
-        # Keep polling regardless of toggle so the readout stays populated
-        if enabled:
-            self._start_temp_polling(self._safe_poll_interval())
-            self._update_sweep_plot()
-        else:
-            self._stop_temp_polling()
-
-    def _set_temperature_now(self):
-        mode = self.temp_mode_var.get()
-        if mode not in ("Setpoint", "Sweep"):
-            mode = "Setpoint"
-            self.temp_mode_var.set(mode)
-        try:
-            if mode == "Setpoint":
-                target = float(self.temp_setpoint_var.get())
-            else:
-                sweep_vals = [float(tok.strip()) for tok in self.temp_sweep_var.get().split(',') if tok.strip() != ""]
-                if not sweep_vals:
-                    raise ValueError("No sweep temperatures")
-                target = sweep_vals[0]
-        except Exception as exc:
-            tk.messagebox.showerror("Temperature", f"Invalid temperature value: {exc}")
-            return
-        self.runner.prober_set_temp(target)
-        self.log(f"Temperature set to {target:.1f} C")
-        if self.temp_enabled_var.get():
-            poll = self._safe_poll_interval()
-            if poll > 0:
-                self._start_temp_polling(poll)
-        self.temp_setpoint_display_var.set("--")
-
-    def _start_temp_polling(self, poll_interval_s: float):
-        self._stop_temp_polling()
-        interval_ms = max(int(poll_interval_s * 1000), 250)
-        def poll():
-            temp = self.runner.prober_get_temp()
-            state = self.runner.get_thermo_state()
-            setpoint = self.runner.get_temp_setpoint()
-            if temp is None:
-                self.temp_value_var.set("N/A")
-                color = "red"
-            else:
-                self.temp_value_var.set(f"{temp:.1f} C")
-                if state == "heating":
-                    color = "orange"
-                elif state == "cooling":
-                    color = "blue"
-                elif state == "controlling":
-                    color = "green"
-                elif state == "error" or state == "uncontrolled":
-                    color = "red"
-                else:
-                    color = "black"
-            self.temp_value_label.configure(foreground=color)
-            self.temp_setpoint_display_var.set(f"{setpoint:.1f} C")
-            if self._temp_run_active and temp is not None:
-                if not self._temp_step_starts:
-                    self.log("Temp poll has no active step; waiting for step start signal.")
-                else:
-                    step_idx = len(self._temp_step_starts) - 1
-                    self._temp_points.append((time.time(), temp, step_idx))
-                    if len(self._temp_points) > 5000:
-                        self._temp_points = self._temp_points[-2500:]
-                    self._update_sweep_plot()
-            self._temp_poll_job = self.root.after(interval_ms, poll)
-        poll()
-
-    def _stop_temp_polling(self):
-        if self._temp_poll_job:
-            self.root.after_cancel(self._temp_poll_job)
-            self._temp_poll_job = None
-
-        self.temp_value_var.set("--")
-        self.temp_setpoint_display_var.set("--")
-
-    def _on_temp_step_start(self, idx: int):
-        now = time.time()
-        self.log(f"Temp step started idx={idx}")
-        if self._temp_step_starts:
-            self._last_step_duration = now - self._temp_step_starts[-1]
-            self._step_durations.append(self._last_step_duration)
-        self._temp_step_starts.append(now)
-        # reset measurement flag for this step until phase callback arrives
-        self._step_measure_start.pop(idx, None)
-
-    def _on_temp_phase_change(self, phase: str, idx: int):
-        self.log(f"Temp phase {phase} idx={idx}")
-        if phase == "measure_start":
-            self._step_measure_start[idx] = time.time()
-        elif phase == "measure_end" and idx < len(self._temp_step_starts):
-            now = time.time()
-            dur = now - self._temp_step_starts[idx]
-            self._last_step_duration = dur
-            # ensure list length matches steps
-            while len(self._step_durations) < idx:
-                self._step_durations.append(self._last_step_duration or 1.0)
-            if len(self._step_durations) == idx:
-                self._step_durations.append(dur)
-
-    def _norm_temp_x(self, ts: float, step_idx: int) -> float:
-        """Map absolute timestamp + step to normalized preview x."""
-        if step_idx >= len(self._temp_step_starts):
-            return float(step_idx + 1)
-        preds = self._step_durations if self._step_durations else []
-        if step_idx < len(preds):
-            dur = preds[step_idx]
-        elif preds:
-            dur = sum(preds) / len(preds)
-        else:
-            dur = self._last_step_duration or max(ts - self._temp_step_starts[step_idx], 1.0)
-        if dur <= 0:
-            dur = 1.0
-        elapsed = ts - self._temp_step_starts[step_idx]
-        frac = min(max(elapsed / dur, 0.0), 0.99)
-        return 1 + step_idx + frac
-
-    def _record_temp_sample(self, ts: float, temp: float, step_idx: int):
-        if not self._temp_run_active:
-            return
-        if step_idx >= len(self._temp_step_starts):
-            self.log(f"Dropping temp sample; step {step_idx} not started.")
-            return
-        self._temp_points.append((ts, temp, step_idx))
-        count = self._step_sample_counts.get(step_idx, 0)
-        self._step_sample_counts[step_idx] = count + 1
-        x_val = (1 + step_idx + 0.001) if count == 0 else self._norm_temp_x(ts, step_idx)
-        self.log(f"Temp sample mapped x={x_val:.3f} step={step_idx} n={count+1} temp={temp}")
-        if len(self._temp_points) > 5000:
-            self._temp_points = self._temp_points[-2500:]
-        self._update_sweep_plot()
-
-    def _safe_poll_interval(self) -> float:
-        # val = float(self.temp_poll_var.get() or 1.0)
-        # if val < 0.0:
-        #     val = 1.0
-        return 1.0
-
+    # Temperature UI logic is encapsulated in TemperatureUI (ui_temperature.py)
     def _on_close(self):
         self.root.withdraw()
-        self._stop_temp_polling()
+        self.temp_ui.stop_run()
         self.runner.safe_stop()
         if self._run_thread and self._run_thread.is_alive():
             self._run_thread.join(timeout=10)
@@ -1032,24 +737,11 @@ class MainUI:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
-        if 'temperature_enabled' in last_sel:
-            self.temp_enabled_var.set(bool(last_sel.get('temperature_enabled')))
-        if 'temperature_mode' in last_sel:
-            mode_val = last_sel.get('temperature_mode', 'Setpoint')
-            if mode_val not in ("Setpoint", "Sweep"):
-                mode_val = "Setpoint"
-            self.temp_mode_var.set(mode_val)
-        if 'temperature_setpoint_c' in last_sel:
-            self.temp_setpoint_var.set(str(last_sel.get('temperature_setpoint_c', '')))
-        if 'temperature_sweep_c' in last_sel:
-            self.temp_sweep_var.set(str(last_sel.get('temperature_sweep_c', '')))
-        if 'temperature_wait_after_s' in last_sel:
-            self.temp_wait_var.set(str(last_sel.get('temperature_wait_after_s', 0.0)))
-        self._toggle_temp_controls()
+        self.temp_ui.apply_last_selection(last_sel)
 
     def build_last_selection(self):
         """Capture current UI selections; new fields are automatically persisted."""
-        return {
+        data = {
             'site': self.site_var.get(),
             'subsite': self.subsite_var.get(),
             'device': self.device_var.get(),
@@ -1057,12 +749,9 @@ class MainUI:
             'run_subsite': self.run_subsite_var.get(),
             'set_home_before_run': self.set_home_var.get(),
             'chip': self.chip_var.get(),
-            'temperature_enabled': self.temp_enabled_var.get(),
-            'temperature_mode': self.temp_mode_var.get(),
-            'temperature_setpoint_c': self.temp_setpoint_var.get(),
-            'temperature_sweep_c': self.temp_sweep_var.get(),
-            'temperature_wait_after_s': self.temp_wait_var.get(),
         }
+        data.update(self.temp_ui.build_last_selection_fragment())
+        return data
 
     def load_global_asu(self):
         asu_ch = self.config.data.get('asu_channels', [])
