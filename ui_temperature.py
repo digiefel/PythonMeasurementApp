@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 from typing import Optional, Callable
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.ticker import FuncFormatter
 
 from temp_tracker import TempTracker
 
@@ -331,6 +332,8 @@ class TemperatureUI:
         to_minutes = lambda arr: [x / 60.0 for x in arr]
         sp_x = to_minutes(sp_x)
         pred_x = to_minutes(pred_x)
+        fmt = lambda x, _: (f"{int(x)}m" if x>=1 else "") + (f"{60*(x%1):.0f}s" if (x%1)>0 else "")
+        ax.xaxis.set_major_formatter(FuncFormatter(fmt))
 
         # Build continuous red/green lines with NaN breaks when state switches
         red_x, red_y, green_x, green_y = [], [], [], []
@@ -357,6 +360,5 @@ class TemperatureUI:
             if seq:
                 max_x = max(max_x, max(seq))
         ax.set_xlim(left=0.0, right=max(max_x * 1.05, 1.0))
-        ax.tick_params(axis='both', labelsize=7)
         self.profile_canvas.draw_idle()
         self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
