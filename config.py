@@ -23,6 +23,9 @@ DEFAULT_CONFIG = {
         'temperature_setpoint_c': '',
         'temperature_sweep_c': '',
         'temperature_wait_after_s': 0.0,
+        'temp_comp_x_um_per_c': 0.0,
+        'temp_comp_y_um_per_c': 0.0,
+        'temp_comp_z_um_per_c': 0.0,
     },
 }
 

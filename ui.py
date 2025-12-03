@@ -62,6 +62,10 @@ class MainUI:
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
         self.chip_var = tk.StringVar()
+        # Temperature compensation coefficients (um / C)
+        self.temp_comp_x_var = tk.StringVar(value="0.0")
+        self.temp_comp_y_var = tk.StringVar(value="0.0")
+        self.temp_comp_z_var = tk.StringVar(value="0.0")
         # Temperature UI helper
         self.temp_ui = TemperatureUI(self.root, self.runner, self.log)
 
@@ -261,6 +265,16 @@ class MainUI:
         ttk.Button(prober_frame, text="Set Reference to Device", command=self.prober_set_reference).grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=2, column=0, sticky="ew", padx=4, pady=2)
         ttk.Label(prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+        comp_frame = ttk.Frame(prober_frame)
+        comp_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(8, 2))
+        for c in range(3):
+            comp_frame.grid_columnconfigure(c, weight=1)
+        ttk.Label(comp_frame, text="CompX (um / C)").grid(row=0, column=0, sticky="w", padx=2, pady=(0, 2))
+        ttk.Label(comp_frame, text="CompY (um / C)").grid(row=0, column=1, sticky="w", padx=2, pady=(0, 2))
+        ttk.Label(comp_frame, text="CompZ (um / C)").grid(row=0, column=2, sticky="w", padx=2, pady=(0, 2))
+        ttk.Entry(comp_frame, textvariable=self.temp_comp_x_var, width=10).grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 2))
+        ttk.Entry(comp_frame, textvariable=self.temp_comp_y_var, width=10).grid(row=1, column=1, sticky="ew", padx=2, pady=(0, 2))
+        ttk.Entry(comp_frame, textvariable=self.temp_comp_z_var, width=10).grid(row=1, column=2, sticky="ew", padx=2, pady=(0, 2))
 
         # Log section (bottom right)
         log_frame = ttk.LabelFrame(self.root, text="Log")
@@ -738,6 +752,12 @@ class MainUI:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
+        if 'temp_comp_x_um_per_c' in last_sel:
+            self.temp_comp_x_var.set(str(last_sel.get('temp_comp_x_um_per_c', '0.0')))
+        if 'temp_comp_y_um_per_c' in last_sel:
+            self.temp_comp_y_var.set(str(last_sel.get('temp_comp_y_um_per_c', '0.0')))
+        if 'temp_comp_z_um_per_c' in last_sel:
+            self.temp_comp_z_var.set(str(last_sel.get('temp_comp_z_um_per_c', '0.0')))
         self.temp_ui.apply_last_selection(last_sel)
 
     def build_last_selection(self):
@@ -751,6 +771,9 @@ class MainUI:
             'set_home_before_run': self.set_home_var.get(),
             'chip': self.chip_var.get(),
         }
+        data['temp_comp_x_um_per_c'] = self.temp_comp_x_var.get()
+        data['temp_comp_y_um_per_c'] = self.temp_comp_y_var.get()
+        data['temp_comp_z_um_per_c'] = self.temp_comp_z_var.get()
         data.update(self.temp_ui.build_last_selection_fragment())
         return data
 
