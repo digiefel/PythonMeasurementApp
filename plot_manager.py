@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 import tkinter as tk
@@ -26,6 +27,9 @@ class PlotSpec:
 class PlotManager:
     """Encapsulates matplotlib <-> Tk embedding and simple live plotting."""
 
+    # Minimum interval between full redraws (ms)
+    REDRAW_THROTTLE_MS = 33  # ~30 FPS max
+
     def __init__(self, root: tk.Tk, use_blit: bool = True):
         self.root = root
         self.fig = Figure(figsize=(5, 4), dpi=100, layout='compressed')
@@ -40,6 +44,8 @@ class PlotManager:
         self.use_blit = use_blit
         self._background = None
         self._last_limits = None
+        self._last_redraw_time = 0
+        self._pending_redraw = None
 
     def start(self, spec: PlotSpec):
         """Reset plot with a new specification."""
@@ -135,24 +141,45 @@ class PlotManager:
 
     def _redraw_full(self):
         """Full draw and capture background for blitting."""
-        self.canvas.draw()
+        self._last_redraw_time = time.time() * 1000
+        self._pending_redraw = None
+        self.canvas.draw_idle()  # Use draw_idle for non-blocking render
+        self.canvas.flush_events()  # Process pending draw
         if self.use_blit:
-            self._background = self.canvas.copy_from_bbox(self.fig.bbox)
+            # Schedule background capture after draw completes
+            self.root.after(10, self._capture_background)
         else:
             self._background = None
         self._last_limits = self._capture_limits()
-        self.root.update_idletasks()
+
+    def _capture_background(self):
+        """Capture background for blitting after draw completes."""
+        try:
+            self._background = self.canvas.copy_from_bbox(self.fig.bbox)
+        except Exception:
+            self._background = None
+
+    def _schedule_redraw(self):
+        """Schedule a throttled full redraw."""
+        if self._pending_redraw is not None:
+            return  # Already scheduled
+        now = time.time() * 1000
+        elapsed = now - self._last_redraw_time
+        if elapsed >= self.REDRAW_THROTTLE_MS:
+            self._redraw_full()
+        else:
+            delay = int(self.REDRAW_THROTTLE_MS - elapsed)
+            self._pending_redraw = self.root.after(delay, self._redraw_full)
 
     def _maybe_redraw(self):
         """Redraw if limits changed; otherwise blit."""
         if not self.use_blit:
             self.canvas.draw_idle()
-            self.root.update_idletasks()
             self._last_limits = self._capture_limits()
             return
         limits = self._capture_limits()
         if self._background is None or self._limits_changed(limits):
-            self._redraw_full()
+            self._schedule_redraw()
         else:
             self._blit_draw()
             self._last_limits = limits

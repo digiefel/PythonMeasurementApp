@@ -278,7 +278,7 @@ class TemperatureUI:
         self._update_sweep_plot()
 
     def _safe_poll_interval(self) -> float:
-        return 1.0
+        return 2.0
 
     def _planned_temps(self):
         try:
@@ -306,7 +306,7 @@ class TemperatureUI:
             vals.append(vals[-1])
         except Exception:
             vals = []
-        if mode != "Sweep" or not vals:
+        if mode != "Sweep":
             self.profile_widget.grid_remove()
             return
         ax = self.profile_ax
@@ -324,27 +324,36 @@ class TemperatureUI:
         ax = self.profile_ax
         ax.clear()
         ax.grid(True, linestyle="--", alpha=0.3)
-        (wait_x, wait_y), (meas_x, meas_y) = self.temp_tracker.actual_series()
+        points = self.temp_tracker.ordered_points()
         sp_x, sp_y = self.temp_tracker.setpoint_series()
         pred_x, pred_y = self.temp_tracker.predicted_schedule()
 
         to_minutes = lambda arr: [x / 60.0 for x in arr]
-        wait_x = to_minutes(wait_x)
-        meas_x = to_minutes(meas_x)
         sp_x = to_minutes(sp_x)
         pred_x = to_minutes(pred_x)
+
+        # Build continuous red/green lines with NaN breaks when state switches
+        red_x, red_y, green_x, green_y = [], [], [], []
+        for t_rel, temp, is_meas in points:
+            t_min = t_rel / 60.0
+            if is_meas:
+                red_x.append(float('nan')); red_y.append(float('nan'))
+                green_x.append(t_min); green_y.append(temp)
+            else:
+                green_x.append(float('nan')); green_y.append(float('nan'))
+                red_x.append(t_min); red_y.append(temp)
 
         if pred_x and pred_y:
             ax.step(pred_x, pred_y, where="post", color="gray", linestyle="--", linewidth=1)
         if sp_x and sp_y:
             ax.step(sp_x, sp_y, where="post", color="black", linewidth=1)
-        if wait_x:
-            ax.plot(wait_x, wait_y, color="red", linewidth=1)
-        if meas_x:
-            ax.plot(meas_x, meas_y, color="green", linewidth=1)
+        if red_x:
+            ax.plot(red_x, red_y, color="red", linewidth=1)
+        if green_x:
+            ax.plot(green_x, green_y, color="green", linewidth=1)
 
         max_x = 0.0
-        for seq in (pred_x, wait_x, meas_x, sp_x):
+        for seq in (pred_x, red_x, green_x, sp_x):
             if seq:
                 max_x = max(max_x, max(seq))
         ax.set_xlim(left=0.0, right=max(max_x * 1.05, 1.0))

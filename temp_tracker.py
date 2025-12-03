@@ -191,6 +191,16 @@ class TempTracker:
         ys.append(last_temp)
         return xs, ys
 
+    def ordered_points(self) -> List[Tuple[float, float, bool]]:
+        """Return [(t_rel, temp, is_meas)] sorted by time."""
+        if self.run_start_ts is None:
+            return []
+        pts: List[Tuple[float, float, bool]] = []
+        for ts, temp, _, is_meas in self.samples:
+            pts.append((ts - self.run_start_ts, temp, is_meas))
+        pts.sort(key=lambda p: p[0])
+        return pts
+
     def predicted_schedule(self) -> Tuple[List[float], List[float]]:
         """Return a step-function prediction for the full temperature plan."""
         if self.run_start_ts is None or not self.planned_temps:
