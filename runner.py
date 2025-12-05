@@ -91,9 +91,11 @@ class MeasurementRunner:
         self.prober_ctrl.close()
         self.stop_event.clear()
 
-    def should_stop(self) -> bool:
-        """Check if a stop has been requested."""
-        return self.stop_event.is_set()
+    def check_stop(self, context: str = ""):
+        """Raise an abort if a stop is active."""
+        if self.stop_event.is_set():
+            self.log(f"Stop request: {context}")
+            raise MeasurementAbortRequested(context or "Stop requested")
 
     # --- Prober wrappers ---
     def set_subsite_origin(self, x_offset: float, y_offset: float):
@@ -104,6 +106,7 @@ class MeasurementRunner:
         self.prober_ctrl.go_home()
 
     def prober_contact(self):
+        self.check_stop("Stop requested before prober contact")
         ok = self.prober_ctrl.contact()
         if ok and self.contact_state_callback:
             try:
@@ -201,8 +204,7 @@ class MeasurementRunner:
                 self.log(f"Temp setpoint cb error: {e}")
 
     def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, wait_time_s: float = 0.0, poll_s: float = 1.0, timeout_s: float = 900.0) -> bool:
-        if self.should_stop():
-            raise MeasurementAbortRequested()
+        self.check_stop("Stop requested before temperature wait")
         sample_cb = None
         if self.temp_sample_cb and self._current_temp_step is not None:
             sample_cb = lambda ts, temp: self.temp_sample_cb(ts, temp, self._current_temp_step, "poll")
@@ -213,10 +215,8 @@ class MeasurementRunner:
             poll_s,
             timeout_s,
             sample_cb=sample_cb,
-            stop_check=self.should_stop,
+            stop_check=self.check_stop,
         )
-        if not reached and self.should_stop():
-            raise MeasurementAbortRequested()
         if reached:
             try:
                 self._apply_z_compensation(target_c)
@@ -257,8 +257,7 @@ class MeasurementRunner:
             self.status_callback(status_info)
 
     def move_to_device(self, device):
-        if self.should_stop():
-            return
+        self.check_stop("Stop requested before move")
         temp = self.prober_get_temp()
         comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
         if self.temp_ref_c is None:
@@ -364,12 +363,16 @@ class MeasurementRunner:
             os.path.join(self.config.data['output_dir'], chip_id, site.name, subsite.name, device.name),
             self
         )
+        self.check_stop("Stop requested before device move")
         self.move_to_device(device)
         # Ensure contact right before measurement
         self.prober_contact()
+        self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:
-            proc.run(self.get_b1500(settings['gpib_address']), device)
+            b1500 = self.get_b1500(settings['gpib_address'])
+            self.log(f'Connected to B1500 at {settings["gpib_address"]}')
+            proc.run(b1500, device)
         except MeasurementAbortRequested:
             self.log("Measurement aborted during procedure run.")
             raise # things will be cleaned up in safe_stop

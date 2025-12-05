@@ -180,8 +180,8 @@ class ProberController:
         start = time.time()
         reached = False
         while True:
-            if stop_check and stop_check():
-                return False
+            if stop_check:
+                stop_check("Stop requested during temperature wait")
             temp = self.get_temp()
             if sample_cb and temp is not None:
                 sample_cb(time.time(), temp)
@@ -189,8 +189,8 @@ class ProberController:
                 if wait_time_s > 0:
                     stable_start = time.time()
                     while True:
-                        if stop_check and stop_check():
-                            return False
+                        if stop_check:
+                            stop_check("Stop requested during temperature wait")
                         temp = self.get_temp()
                         if sample_cb and temp is not None:
                             sample_cb(time.time(), temp)

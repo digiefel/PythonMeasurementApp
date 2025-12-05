@@ -40,6 +40,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
     def run(self, b1500: B1500Session, device):
         runner = self.runner
+        self.check_stop(b1500)
+
         self.log(f'Starting 4-Terminal I-V Sweep on {device.name}')
         self.log(
             f'ASU config -> channels: {self.asu_channels}, path: {self.asu_path_mode}, range: {self.asu_range_mode}'
@@ -79,6 +81,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         return_channel = self.force_low_channel
         sense_high = self.sense_high_channel
         sense_low = self.sense_low_channel
+        
+        self.check_stop(b1500)
 
         # Enable all four SMUs
         b1500.set_switch(source_channel, True)
@@ -94,6 +98,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             if self.asu_range_mode is not None:
                 b1500.asu_range(ch, self.asu_range_mode)
 
+        self.check_stop(b1500)
+
         # Reset timestamp
         b1500.reset_timestamp()
 
@@ -108,6 +114,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         else:
             step = (self.stop_current - self.start_current) / (self.points - 1)
             current_points = [self.start_current + i * step for i in range(self.points)]
+
+        self.check_stop(b1500)
 
         # Program the sweep on the source channel
         b1500.set_iv_sweep(
@@ -128,6 +136,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         channels = [source_channel, sense_high, return_channel, sense_low]
         modes = [B1500Session.IM_MODE, B1500Session.VM_MODE, B1500Session.IM_MODE, B1500Session.VM_MODE]
         ranges = [B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE]
+
+        self.check_stop(b1500)
 
         # Initialize live plot
         runner.start_live_plot(
@@ -150,8 +160,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         max_points = len(current_points)
         nonzero_statuses = set()
         while True:
-            if self.stop_requested():
-                raise MeasurementAbortRequested("Measurement aborted by user")
+            self.check_stop(b1500)
             _ret, eod, data_type, value, status, channel = b1500.read_data()
             if status:
                 key = (channel, data_type, status)

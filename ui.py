@@ -710,9 +710,24 @@ class MainUI:
         self.plot.add_series(xs, ys, series_label)
 
     def finish_plot(self, save_path=None):
-        self.plot.finish(save_path)
-        if save_path:
+        if not save_path:
+            self.plot.finish(None)
+            return
+        try:
+            self.plot.finish(save_path)
             self.log(f'Plot saved to {save_path}')
+        except Exception as e:
+            fallback_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_output'))
+            fallback_path = os.path.join(fallback_dir, os.path.basename(save_path))
+            try:
+                os.makedirs(fallback_dir, exist_ok=True)
+                self.log(f"Warning: plot save failed ({e}); retrying at {fallback_path}")
+                self.plot.finish(fallback_path)
+                self.log(f'Plot saved to fallback {fallback_path}')
+            except Exception as e2:
+                self.log(f"Plot fallback save failed: {e2}")
+                self.runner.safe_stop()
+                raise
 
     # Helpers
     def lookup_smu_label(self, value):

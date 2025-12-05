@@ -1,3 +1,5 @@
+import os
+
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
@@ -42,24 +44,25 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         self.log(f'Starting Oxide Breakdown sweep on {device.name}')
         try:
             # Initialize B1500 session
+            self.check_stop(b1500)
             b1500.reset()
             b1500.set_timeout(10000)
             b1500.enable_error_detect(True)
             # Do not abort the sweep on compliance; hold final level at end.
             b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_START)
-            self.log(f'Connected to B1500 at {self.gpib_address}')
 
             results = self.perform_breakdown_sweep(b1500, device)
 
             base = self.format_filename("OxideBreakdown", device.name)
             filename = f'{base}.csv'
-            self.save_data(
+            csv_path = self.save_data(
                 results,
                 filename,
                 ['Voltage_V', 'Current_High_A', 'Current_Low_A', 'Time_sec', 'Status'],
                 add_timestamp=False
             )
-            plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
+            plot_dir = os.path.dirname(csv_path) or self.output_dir
+            plot_path = os.path.join(plot_dir, f'{base}_plot.png')
             runner.finalize_plot(plot_path)
             self.log(f'Oxide breakdown sweep completed for {device.name}')
         except Exception as e:
@@ -74,6 +77,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         sense_high = self.sense_high
         sense_low = self.sense_low
 
+        self.check_stop(b1500)
+
         # Enable SMUs
         b1500.set_switch(high, True)
         b1500.set_switch(low, True)
@@ -86,6 +91,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             b1500.force_current(sense_low, 0.0, B1500Session.AUTO_RANGE)
 
         # Apply ASU config if present
+        self.check_stop(b1500)
         for ch in self.asu_channels:
             if self.asu_path_mode is not None:
                 b1500.asu_path(ch, self.asu_path_mode)
@@ -116,6 +122,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             power_compliance=0.0
         )
 
+        self.check_stop(b1500)
+
         runner.start_live_plot(
             title=f'Oxide Breakdown - {device.name}',
             xlabel='Voltage (V)',
@@ -145,6 +153,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             modes.append(B1500Session.VM_MODE)
             ranges.append(B1500Session.AUTO_RANGE)
 
+        self.check_stop(b1500)
+
         b1500.start_measure(
             channels,
             modes,
@@ -164,12 +174,13 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         nonzero_statuses = set()
 
         while True:
-            if self.stop_requested():
-                raise MeasurementAbortRequested("Measurement aborted by user")
             try:
+                self.check_stop(b1500)
                 _ret, eod, data_type, value, status, channel = b1500.read_data()
+            except MeasurementAbortRequested:
+                raise
             except Exception as exc:
-                self.log(f'B1500 read_data error')
+                self.log(f'B1500 read_data error: {exc}')
                 raise
             if status:
                 key = (channel, data_type, status)

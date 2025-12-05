@@ -7,6 +7,7 @@ class MeasurementAbortRequested(Exception):
     pass
 
 class MeasurementProcedure(ABC):
+    SAFE_FALLBACK_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'test_output'))
     def __init__(self, settings: dict, output_dir: str, runner):
         self.settings = settings
         self.output_dir = output_dir
@@ -20,8 +21,15 @@ class MeasurementProcedure(ABC):
     def log(self, message: str):
         self.runner.log(message)
 
-    def stop_requested(self) -> bool:
-        return self.runner.should_stop()
+    def check_stop(self, b1500):
+        """Raise an abort if a stop request is active."""
+        if not self.runner.stop_event.is_set():
+            return
+        try:
+            b1500.abort_measure()
+        except Exception:
+            pass
+        raise MeasurementAbortRequested("Measurement aborted by user")
 
     def get_run_timestamp(self):
         if self._run_timestamp is None:
@@ -38,14 +46,36 @@ class MeasurementProcedure(ABC):
         stamped = self._add_timestamp(filename) if add_timestamp else filename
         return os.path.join(self.output_dir, stamped)
     
-    def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True):
-        os.makedirs(self.output_dir, exist_ok=True)
-        path = self.make_output_path(filename, add_timestamp=add_timestamp)
+    def _write_csv(self, path: str, headers: list, data: list):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             f.write(','.join(headers) + '\n')
             for row in data:
                 f.write(','.join(map(str, row)) + '\n')
-        self.log(f'Saved data to {path}')
+
+    def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True):
+        """Persist data to disk with fallback to a safe local directory."""
+        primary_path = self.make_output_path(filename, add_timestamp=add_timestamp)
+        try:
+            self._write_csv(primary_path, headers, data)
+            self.log(f'Saved data to {primary_path}')
+            return primary_path
+        except Exception as e:
+            self.log(f"Warning: primary save path failed ({e}); retrying in fallback directory.")
+            fallback_path = os.path.join(self.SAFE_FALLBACK_DIR, os.path.basename(primary_path))
+            try:
+                self._write_csv(fallback_path, headers, data)
+                # Stick to the fallback directory for subsequent artifacts
+                self.output_dir = self.SAFE_FALLBACK_DIR
+                self.log(f"Saved data to fallback path {fallback_path}")
+                return fallback_path
+            except Exception as e2:
+                self.log(f"Error saving to fallback directory: {e2}")
+                # Ensure hardware is shut down safely before propagating
+                try:
+                    self.runner.safe_stop()
+                finally:
+                    raise
 
     def format_filename(self, procedure_tag: str, device_name: str):
         """Generate base filename chip_site_subsite_device_timestamp_procedure."""
