@@ -5,8 +5,8 @@ import pyvisa
 from procedures.base import MeasurementProcedure
 
 class RVSweepProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_dir, runner):
-        super().__init__(settings, output_dir, runner)
+    def __init__(self, settings, output_root, output_relative, runner):
+        super().__init__(settings, output_root, output_relative, runner)
         # Default settings for RV sweep
         self.rv_start = settings.get('rv_start', 0.1)
         self.rv_stop = settings.get('rv_stop', 2.0)
@@ -64,8 +64,8 @@ class RVSweepProcedure(MeasurementProcedure):
             # Save results
             base = self.format_filename("RVSweep", device.name)
             self.save_data(results, f'{base}.csv', ['Voltage_V', 'Current_A'], add_timestamp=False)
-            plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
-            runner.finalize_plot(plot_path)
+            plot_filename = f'{base}_plot.png'
+            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'RV sweep completed for {device.name}')
 
         except Exception as e:

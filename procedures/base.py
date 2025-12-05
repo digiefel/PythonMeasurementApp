@@ -8,9 +8,17 @@ class MeasurementAbortRequested(Exception):
 
 class MeasurementProcedure(ABC):
     SAFE_FALLBACK_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'test_output'))
-    def __init__(self, settings: dict, output_dir: str, runner):
+
+    def __init__(self, settings: dict, output_root: str, output_relative: str, runner, fallback_root: str | None = None):
+        """
+        output_root: base directory for primary saves
+        output_relative: chip/site/subsite/device relative path
+        fallback_root: base directory for fallback saves
+        """
         self.settings = settings
-        self.output_dir = output_dir
+        self.output_root = output_root
+        self.output_relative = output_relative
+        self.fallback_root = fallback_root or self.SAFE_FALLBACK_DIR
         self.runner = runner
         self._run_timestamp = None
 
@@ -44,7 +52,7 @@ class MeasurementProcedure(ABC):
 
     def make_output_path(self, filename: str, add_timestamp: bool = True):
         stamped = self._add_timestamp(filename) if add_timestamp else filename
-        return os.path.join(self.output_dir, stamped)
+        return os.path.join(self.output_root, self.output_relative, stamped)
     
     def _write_csv(self, path: str, headers: list, data: list):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -52,6 +60,11 @@ class MeasurementProcedure(ABC):
             f.write(','.join(headers) + '\n')
             for row in data:
                 f.write(','.join(map(str, row)) + '\n')
+
+    def _make_fallback_path(self, primary_path: str) -> str:
+        """Build a fallback path preserving hierarchy under SAFE_FALLBACK_DIR."""
+        fallback_dir = os.path.join(self.fallback_root, self.output_relative)
+        return os.path.join(fallback_dir, os.path.basename(primary_path))
 
     def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True):
         """Persist data to disk with fallback to a safe local directory."""
@@ -62,11 +75,11 @@ class MeasurementProcedure(ABC):
             return primary_path
         except Exception as e:
             self.log(f"Warning: primary save path failed ({e}); retrying in fallback directory.")
-            fallback_path = os.path.join(self.SAFE_FALLBACK_DIR, os.path.basename(primary_path))
+            fallback_path = self._make_fallback_path(primary_path)
             try:
                 self._write_csv(fallback_path, headers, data)
                 # Stick to the fallback directory for subsequent artifacts
-                self.output_dir = self.SAFE_FALLBACK_DIR
+                self.output_root = self.fallback_root
                 self.log(f"Saved data to fallback path {fallback_path}")
                 return fallback_path
             except Exception as e2:

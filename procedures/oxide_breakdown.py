@@ -10,8 +10,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
     Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
     measuring the sourced voltage and current at each step.
     """
-    def __init__(self, settings, output_dir, runner):
-        super().__init__(settings, output_dir, runner)
+    def __init__(self, settings, output_root, output_relative, runner):
+        super().__init__(settings, output_root, output_relative, runner)
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 
         self.high_channel = SMU_CHANNEL_MAP.get(str(settings.get('high_channel', 4)), settings.get('high_channel', 4))
@@ -61,9 +61,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 ['Voltage_V', 'Current_High_A', 'Current_Low_A', 'Time_sec', 'Status'],
                 add_timestamp=False
             )
-            plot_dir = os.path.dirname(csv_path) or self.output_dir
-            plot_path = os.path.join(plot_dir, f'{base}_plot.png')
-            runner.finalize_plot(plot_path)
+            plot_filename = f'{base}_plot.png'
+            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'Oxide breakdown sweep completed for {device.name}')
         except Exception as e:
             self.log(f'Error during oxide breakdown sweep: {str(e)}')

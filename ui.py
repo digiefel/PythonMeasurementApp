@@ -709,18 +709,19 @@ class MainUI:
     def add_plot_series(self, xs, ys, series_label="Data"):
         self.plot.add_series(xs, ys, series_label)
 
-    def finish_plot(self, save_path=None):
-        if not save_path:
+    def finish_plot(self, filename: str | None, output_root: str, output_relative: str, fallback_root: str):
+        if not filename:
             self.plot.finish(None)
             return
+        primary_path = os.path.join(output_root, output_relative, filename)
         try:
-            self.plot.finish(save_path)
-            self.log(f'Plot saved to {save_path}')
+            os.makedirs(os.path.dirname(primary_path), exist_ok=True)
+            self.plot.finish(primary_path)
+            self.log(f'Plot saved to {primary_path}')
         except Exception as e:
-            fallback_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_output'))
-            fallback_path = os.path.join(fallback_dir, os.path.basename(save_path))
+            fallback_path = os.path.join(fallback_root, output_relative, filename)
             try:
-                os.makedirs(fallback_dir, exist_ok=True)
+                os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
                 self.log(f"Warning: plot save failed ({e}); retrying at {fallback_path}")
                 self.plot.finish(fallback_path)
                 self.log(f'Plot saved to fallback {fallback_path}')

@@ -2,8 +2,8 @@ from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
 class FourTerminalIVProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_dir, runner):
-        super().__init__(settings, output_dir, runner)
+    def __init__(self, settings, output_root, output_relative, runner):
+        super().__init__(settings, output_root, output_relative, runner)
         # Default settings for 4-terminal I-V sweep
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 
@@ -62,8 +62,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             self.save_data(results, filename,
                           ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
                           add_timestamp=False)
-            plot_path = self.make_output_path(f'{base}_plot.png', add_timestamp=False)
-            runner.finalize_plot(plot_path)
+            plot_filename = f'{base}_plot.png'
+            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'4-Terminal I-V sweep completed for {device.name}')
 
         except Exception as e:

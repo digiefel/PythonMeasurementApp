@@ -242,10 +242,10 @@ class MeasurementRunner:
         if self.plot_series_callback:
             self.plot_series_callback(xs, ys, series_label)
 
-    def finalize_plot(self, save_path=None):
-        """Tell UI to persist the current plot image if requested."""
+    def finalize_plot(self, filename: str | None, output_root: str, output_relative: str, fallback_root: str):
+        """Tell UI to persist the current plot image using root+relative with fallback root."""
         if self.plot_finalize_callback:
-            self.plot_finalize_callback(save_path)
+            self.plot_finalize_callback(filename, output_root, output_relative, fallback_root)
     def report_status(self, status_info: Optional[Dict[str, Any]]):
         """
         Surface measurement/driver status (non-zero codes) to the UI.
@@ -358,10 +358,15 @@ class MeasurementRunner:
         self.current_subsite = subsite
         self.report_status(None)
 
+        output_root = self.config.data['output_dir']
+        output_relative = os.path.join(chip_id, site.name, subsite.name, device.name)
+        fallback_root = self.config.data.get('fallback_output_dir', output_root)
         proc = proc_class(
             settings,
-            os.path.join(self.config.data['output_dir'], chip_id, site.name, subsite.name, device.name),
-            self
+            output_root,
+            output_relative,
+            self,
+            fallback_root
         )
         self.check_stop("Stop requested before device move")
         self.move_to_device(device)

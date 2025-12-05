@@ -1,0 +1,287 @@
+py\x5clauncher' '50892' '--' 'ui.py' ;93d91975-1057-49f9-938c-ea9b1c3fa115Initializing package sentio_prober_control
+Initializing package sentio_prober_control.Sentio
+Initializing package sentio_prober_control.Communication
+Initializing package sentio_prober_control.Sentio.CommandGroups
+[13:54:16] Opening SENTIO prober session at GPIB0::28::INSTR
+[13:54:22] Loaded settings from C:/Users/EMN Lab/Documents/Visual Studio 2022/Davide/PythonMeasurementApp/breakdown_procedure.json
+[13:54:38] applied temp compensation: -0.284, 1.435, 0.0
+[13:54:38] Setting subsite origin to device 'A1A2' at (0um, 0um).
+[13:54:38] Subsite origin recorded at X=-225.2um, Y=108.3um
+[13:54:38] [temp_comp] Reference temperature set to 25.20C (first read)
+[13:54:38] Chuck moving to A1A2: target=(-225.20um, 108.30um) base=(-225.20um, 108.30um) dev=(0.00um, 0.00um) comp=(-0.000um, 0.000um) at 25.20C (
+ref 25.20C, dT=0.00C)                                                                                                                             [13:54:38] Chuck successfully moved to X=-225.2um, Y=108.3um
+[13:54:40] Chuck moved to contact
+[13:54:40] Opening B1500 session at GPIB0::17::INSTR
+[13:54:43] Starting Oxide Breakdown sweep on A1A2
+[13:54:45] Connected to B1500 at GPIB0::17::INSTR
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 1967, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 861, in callit
+    func(*args)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\_backend_tk.py", lin
+e 271, in idle_draw                                                                                                                                   self.draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_tkagg.py", l
+ine 10, in draw                                                                                                                                       super().draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_agg.py", lin
+e 400, in draw                                                                                                                                        self.figure.draw(self.renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 95, in draw_
+wrapper                                                                                                                                               result = draw(artist, renderer, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\figure.py", line 3175, in dra
+w                                                                                                                                                     mimage._draw_list_compositing_images(
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\image.py", line 131, in _draw
+_list_compositing_images                                                                                                                              a.draw(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 3028, in
+ draw                                                                                                                                                 self._update_title_position(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 2972, in
+ _update_title_position                                                                                                                               ax.yaxis.get_tightbbox(renderer)  # update offsetText
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1337, in get_t
+ightbbox                                                                                                                                              self._update_label_position(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2614, in _upda
+te_label_position                                                                                                                                     bboxes, bboxes2 = self._get_tick_boxes_siblings(renderer=renderer)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2149, in _get_
+tick_boxes_siblings                                                                                                                                   tlb, tlb2 = axis._get_ticklabel_bboxes(ticks_to_draw, renderer)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1316, in _get_
+ticklabel_bboxes                                                                                                                                      return ([tick.label1.get_window_extent(renderer)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1316, in <list
+comp>                                                                                                                                                 return ([tick.label1.get_window_extent(renderer)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\text.py", line 961, in get_wi
+ndow_extent                                                                                                                                           x, y = self.get_transform().transform((x, y))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1498, in
+ transform                                                                                                                                            res = self.transform_affine(self.transform_non_affine(values))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2423, in
+ transform_affine                                                                                                                                     return self.get_affine().transform(points)
+           ^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2450, in
+ get_affine                                                                                                                                           self._a.get_affine().get_matrix()))
+    ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2265, in
+ get_affine                                                                                                                                           if self._x == self._y:
+       ^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1782, in
+ __eq__                                                                                                                                               return np.all(self.get_matrix() == other.get_matrix())
+                                       ^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1578, in
+ get_matrix                                                                                                                                           return self.get_affine().get_matrix()
+           ^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2449, in
+ get_affine                                                                                                                                           return Affine2D(np.dot(self._b.get_affine().get_matrix(),
+                           ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2450, in
+ get_affine                                                                                                                                           self._a.get_affine().get_matrix()))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2662, in
+ get_matrix                                                                                                                                           inl, inb, inw, inh = self._boxin.bounds
+                         ^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 382, in 
+bounds
+    (x0, y0), (x1, y1) = self.get_points()
+                         ^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1116, in
+ get_points                                                                                                                                           points = self._transform.transform(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1787, in
+ transform                                                                                                                                            return self.transform_affine(values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1852, in
+ transform_affine                                                                                                                                     mtx = self.get_matrix()
+          ^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2315, in
+ get_matrix                                                                                                                                           def get_matrix(self):
+
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2315, in
+ get_matrix                                                                                                                                           def get_matrix(self):
+
+RecursionError: maximum recursion depth exceeded
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 1967, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 861, in callit
+    func(*args)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\_backend_tk.py", lin
+e 271, in idle_draw                                                                                                                                   self.draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_tkagg.py", l
+ine 10, in draw                                                                                                                                       super().draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_agg.py", lin
+e 400, in draw                                                                                                                                        self.figure.draw(self.renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 95, in draw_
+wrapper                                                                                                                                               result = draw(artist, renderer, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\figure.py", line 3175, in dra
+w                                                                                                                                                     mimage._draw_list_compositing_images(
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\image.py", line 131, in _draw
+_list_compositing_images                                                                                                                              a.draw(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 3028, in
+ draw                                                                                                                                                 self._update_title_position(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 2972, in
+ _update_title_position                                                                                                                               ax.yaxis.get_tightbbox(renderer)  # update offsetText
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1335, in get_t
+ightbbox                                                                                                                                              ticks_to_draw = self._update_ticks()
+                    ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1274, in _upda
+te_ticks                                                                                                                                              major_locs = self.get_majorticklocs()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1496, in get_m
+ajorticklocs                                                                                                                                          return self.major.locator()
+           ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\ticker.py", line 2135, in __c
+all__                                                                                                                                                 vmin, vmax = self.axis.get_view_interval()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2255, in gette
+r                                                                                                                                                     return getattr(getattr(self.axes, lim_name), attr_name)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 857, in 
+viewLim
+    self._unstale_viewLim()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 844, in 
+_unstale_viewLim
+    need_scale = {
+                 ^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 846, in 
+<dictcomp>
+    for ax in self._shared_axes[name].get_siblings(self))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\cbook\__init__.py", line 892,
+ in get_siblings                                                                                                                                      self.clean()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\cbook\__init__.py", line 844,
+ in clean                                                                                                                                             to_drop = [key for key in mapping if key() is None]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RecursionError: maximum recursion depth exceeded
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 1967, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\tkinter\__init__.py", line 861, in callit
+    func(*args)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\_backend_tk.py", lin
+e 271, in idle_draw                                                                                                                                   self.draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_tkagg.py", l
+ine 10, in draw                                                                                                                                       super().draw()
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\backends\backend_agg.py", lin
+e 400, in draw                                                                                                                                        self.figure.draw(self.renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 95, in draw_
+wrapper                                                                                                                                               result = draw(artist, renderer, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\figure.py", line 3175, in dra
+w                                                                                                                                                     mimage._draw_list_compositing_images(
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\image.py", line 131, in _draw
+_list_compositing_images                                                                                                                              a.draw(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\artist.py", line 72, in draw_
+wrapper                                                                                                                                               return draw(artist, renderer)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 3028, in
+ draw                                                                                                                                                 self._update_title_position(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axes\_base.py", line 2972, in
+ _update_title_position                                                                                                                               ax.yaxis.get_tightbbox(renderer)  # update offsetText
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1337, in get_t
+ightbbox                                                                                                                                              self._update_label_position(renderer)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2614, in _upda
+te_label_position                                                                                                                                     bboxes, bboxes2 = self._get_tick_boxes_siblings(renderer=renderer)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2148, in _get_
+tick_boxes_siblings                                                                                                                                   ticks_to_draw = axis._update_ticks()
+                    ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1274, in _upda
+te_ticks                                                                                                                                              major_locs = self.get_majorticklocs()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 1496, in get_m
+ajorticklocs                                                                                                                                          return self.major.locator()
+           ^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\ticker.py", line 2136, in __c
+all__                                                                                                                                                 return self.tick_values(vmin, vmax)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\ticker.py", line 2144, in tic
+k_values                                                                                                                                              locs = self._raw_ticks(vmin, vmax)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\ticker.py", line 2083, in _ra
+w_ticks                                                                                                                                               nbins = np.clip(self.axis.get_tick_space(),
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\axis.py", line 2783, in get_t
+ick_space                                                                                                                                             ends = mtransforms.Bbox.unit().transformed(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 479, in 
+transformed
+    ll, ul, lr = transform.transform(np.array(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1498, in
+ transform                                                                                                                                            res = self.transform_affine(self.transform_non_affine(values))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2423, in
+ transform_affine                                                                                                                                     return self.get_affine().transform(points)
+           ^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 2449, in
+ get_affine                                                                                                                                           return Affine2D(np.dot(self._b.get_affine().get_matrix(),
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1899, in
+ __init__                                                                                                                                             super().__init__(**kwargs)
+  File "c:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\.venv\Lib\site-packages\matplotlib\transforms.py", line 1773, in
+ __init__                                                                                                                                             super().__init__(*args, **kwargs)
+RecursionError: maximum recursion depth exceeded
+[13:55:08] Collected 149 oxide breakdown points
+[13:55:10] Saved data to Z:/_Users/Shared/dgfl/B1500\A11\VI\FeCap_BD\A1A2\A11_VI_FeCap_BD_A1A2_20251205_135508_298K_OxideBreakdown.csv
+[13:55:10] Plot saved to Z:/_Users/Shared/dgfl/B1500\A11\VI\FeCap_BD\A1A2\A11_VI_FeCap_BD_A1A2_20251205_135508_298K_OxideBreakdown_plot.png
+[13:55:10] Oxide breakdown sweep completed for A1A2
+[13:55:11] Chuck moved to separation
+[13:55:11] Chuck moving to A3A4: target=(-545.20um, 108.30um) base=(-225.20um, 108.30um) dev=(-320.00um, 0.00um) comp=(-0.000um, 0.000um) at 25.20
+C (ref 25.20C, dT=0.00C)                                                                                                                          [13:55:11] Chuck successfully moved to X=-545.2um, Y=108.3um
+[13:55:13] Chuck moved to contact
+[13:55:13] Starting Oxide Breakdown sweep on A3A4
+[13:55:15] Stop button pressed; stopping run...
+[13:55:15] Safe stop requested, closing B1500 session.
+[13:55:48] Error cleaning up B1500: Zero output failed: -1073807360 (Unknown system error (miscellaneous error).)
+[13:55:49] Chuck moved to separation
+[13:55:49] Error during oxide breakdown sweep: Error query failed: -1074000633
+[13:55:49] Unexpected Procedure error: Error query failed: -1074000633
+[13:55:49] Run error: Error query failed: -1074000633
+Exception in thread Thread-6 (target):
+Traceback (most recent call last):
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\EMN Lab\AppData\Local\Python\pythoncore-3.11-32\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "ui.py", line 508, in target
+    self.runner.run_subsite(chip_id, site, subsite, proc_class, settings)
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\runner.py", line 336, in run_subsite
+    self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\runner.py", line 372, in run_procedure
+    proc.run(self.get_b1500(settings['gpib_address']), device)
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\procedures\oxide_breakdown.py", line 49, in run
+    b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_START)
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\bindings.py", line 755, in stop_mode
+    self._check_ret(ret, "Stop mode")
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\bindings.py", line 721, in _check_ret
+    errnum, errmsg = self.error_query()
+                     ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\EMN Lab\Documents\Visual Studio 2022\Davide\PythonMeasurementApp\bindings.py", line 706, in error_query
+    raise RuntimeError(f"Error query failed: {ret}")
+RuntimeError: Error query failed: -1074000633

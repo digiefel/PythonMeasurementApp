@@ -5,6 +5,7 @@ from models import load_devices_csv
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
     'output_dir': 'C:/Users/EMN Lab/Documents/DATA/Davide',
+    'fallback_output_dir': os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_output')),
     # Global ASU configuration (applies to procedures that support it)
     'asu_channels': ["SMU2"],
     'asu_path_mode': 1,
