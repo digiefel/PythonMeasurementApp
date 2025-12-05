@@ -2,8 +2,8 @@ from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import B1500Session, SMU_CHANNEL_MAP
 
 class FourTerminalIVProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_root, output_relative, runner):
-        super().__init__(settings, output_root, output_relative, runner)
+    def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
+        super().__init__(settings, output_root, output_relative, runner, fallback_root)
         # Default settings for 4-terminal I-V sweep
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 

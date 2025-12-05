@@ -10,8 +10,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
     Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
     measuring the sourced voltage and current at each step.
     """
-    def __init__(self, settings, output_root, output_relative, runner):
-        super().__init__(settings, output_root, output_relative, runner)
+    def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
+        super().__init__(settings, output_root, output_relative, runner, fallback_root)
         self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 
         self.high_channel = SMU_CHANNEL_MAP.get(str(settings.get('high_channel', 4)), settings.get('high_channel', 4))

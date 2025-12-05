@@ -5,8 +5,8 @@ import pyvisa
 from procedures.base import MeasurementProcedure
 
 class RVSweepProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_root, output_relative, runner):
-        super().__init__(settings, output_root, output_relative, runner)
+    def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
+        super().__init__(settings, output_root, output_relative, runner, fallback_root)
         # Default settings for RV sweep
         self.rv_start = settings.get('rv_start', 0.1)
         self.rv_stop = settings.get('rv_stop', 2.0)

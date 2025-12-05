@@ -360,7 +360,7 @@ class MeasurementRunner:
 
         output_root = self.config.data['output_dir']
         output_relative = os.path.join(chip_id, site.name, subsite.name, device.name)
-        fallback_root = self.config.data.get('fallback_output_dir', output_root)
+        fallback_root = self.config.data.get('fallback_output_dir')
         proc = proc_class(
             settings,
             output_root,
