@@ -443,6 +443,10 @@ class MainUI:
         if not proc_name:
             self.log("Select a procedure before running.")
             return
+        try:
+            self._apply_temp_comp()
+        except ValueError:
+            return
         self.update_global_asu_from_ui()
         chip_id = self.chip_var.get().strip()
         if not chip_id:
@@ -544,7 +548,15 @@ class MainUI:
         if not device:
             self.log("Select site, subsite, and device before moving.")
             return
-        self.runner.move_to_device(device)
+        try:
+            self._apply_temp_comp()
+        except ValueError:
+            return
+        try:
+            self.runner.move_to_device(device)
+        except Exception as e:
+            self.log(f"Prober move failed: {e}")
+            messagebox.showerror("Prober move", str(e))
 
     def toggle_contact(self):
         in_contact = self.prober_contact_state.get()
@@ -776,6 +788,17 @@ class MainUI:
         data['temp_comp_z_um_per_c'] = self.temp_comp_z_var.get()
         data.update(self.temp_ui.build_last_selection_fragment())
         return data
+
+    def _apply_temp_comp(self):
+        try:
+            cx = float(self.temp_comp_x_var.get())
+            cy = float(self.temp_comp_y_var.get())
+            cz = float(self.temp_comp_z_var.get())
+        except ValueError:
+            messagebox.showerror("Temperature compensation", "Compensation coefficients must be numeric.")
+            raise
+        self.log(f"applied temp compensation: {cx}, {cy}, {cz}")
+        self.runner.set_temp_compensation(cx, cy, cz)
 
     def load_global_asu(self):
         asu_ch = self.config.data.get('asu_channels', [])

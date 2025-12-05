@@ -125,6 +125,25 @@ class ProberController:
             self.log(f"Warning: Get chuck temperature setpoint failed: {e}")
             return None
 
+    def get_chuck_site_height(self, site: ChuckSite = ChuckSite.Wafer):
+        """Return (contact, separation, overtravel, hover) heights for the site."""
+        try:
+            prober = self._get()
+            return prober.get_chuck_site_height(site)
+        except Exception as e:
+            self.log(f"Warning: Get chuck site height failed: {e}")
+            return None
+
+    def set_chuck_site_height(self, contact: float, separation: float, overtravel_dist: float, hover_gap: float, site: ChuckSite = ChuckSite.Wafer):
+        """Set chuck Z positions for the site."""
+        try:
+            prober = self._get()
+            prober.set_chuck_site_height(site, contact, separation, overtravel_dist, hover_gap)
+            return True
+        except Exception as e:
+            self.log(f"Warning: Set chuck site height failed: {e}")
+            return False
+
     def get_thermo_state(self) -> Optional[str]:
         try:
             prober = self._get()

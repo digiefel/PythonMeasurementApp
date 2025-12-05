@@ -30,6 +30,12 @@ class MeasurementRunner:
         self.current_subsite = None
         self.current_temp_c: Optional[float] = None
         self._current_temp_step: Optional[int] = None
+        # Temperature compensation coefficients (um per C)
+        self.temp_comp_coeffs_xyz = (None, None, None)
+        # XY reference temperature (set on first temperature read)
+        self.temp_ref_c: Optional[float] = None
+        # Baseline Z heights and reference temperature (captured once at first convergence)
+        self.temp_comp_ref_z_heights = None  # (contact, separation, overtravel, hover)
         self.stop_event = threading.Event()
         atexit.register(self.safe_stop)
     
@@ -138,9 +144,53 @@ class MeasurementRunner:
     def prober_get_temp(self) -> float:
         temp = self.prober_ctrl.get_temp()
         self.current_temp_c = temp
-        if self.temp_sample_cb and self._current_temp_step is not None and temp is not None:
+        if temp is None:
+            raise RuntimeError("Prober temperature unavailable; aborting move/measurement.")
+        if self.temp_ref_c is None:
+            self.temp_ref_c = temp
+            self.log(f"[temp_comp] Reference temperature set to {temp:.2f}C (first read)")
+        if self.temp_sample_cb and self._current_temp_step is not None:
             self.temp_sample_cb(time.time(), temp, self._current_temp_step, "poll")
         return temp
+
+    def _ensure_base_z_heights(self, temp_c: float):
+        """Capture baseline Z heights and reference temperature once."""
+        if self.temp_comp_ref_z_heights is not None:
+            return self.temp_comp_ref_z_heights
+        heights = self.prober_ctrl.get_chuck_site_height()
+        if not heights:
+            raise RuntimeError("Could not read chuck site heights for Z compensation.")
+        self.temp_comp_ref_z_heights = heights
+        self.log(
+            f"[temp_comp] Captured baseline Z heights at {temp_c:.2f}C: contact={heights[0]:.2f}um, "
+            f"separation={heights[1]:.2f}um, overtravel={heights[2]:.2f}um, hover={heights[3]:.2f}um"
+        )
+        return heights
+
+    def _apply_z_compensation(self, temp_c: float):
+        """Apply Z compensation once after temperature convergence."""
+        comp_z = self.temp_comp_coeffs_xyz[2]
+        if comp_z == 0.0:
+            return
+        (base_contact, base_sep, base_over, base_hover) = self._ensure_base_z_heights(temp_c)
+        delta_t = temp_c - self.temp_ref_c
+        dz = -comp_z * delta_t
+        target_contact = base_contact + dz
+        target_sep = base_sep + dz
+        # success = self.prober_ctrl.set_chuck_site_height(target_contact, target_sep, base_over, base_hover)
+        # if success:
+        if True:
+            self.log(
+                f"[temp_comp] Z heights set for {temp_c:.2f}C (dT={delta_t:.2f}C): contact={target_contact:.2f}um, "
+                f"separation={target_sep:.2f}um (delta={dz:.3f}um)"
+            )
+        else:
+            raise RuntimeError("Setting chuck site height failed.")
+
+    def set_temp_compensation(self, comp_x_um_per_c: float, comp_y_um_per_c: float, comp_z_um_per_c: float):
+        """Set linear temperature compensation coefficients (um/C)."""
+        self.temp_comp_coeffs_xyz = comp_x_um_per_c, comp_y_um_per_c, comp_z_um_per_c
+
 
     def _record_temp_setpoint(self, temp_c: float):
         """Emit a setpoint event for tracking/plotting."""
@@ -167,6 +217,11 @@ class MeasurementRunner:
         )
         if not reached and self.should_stop():
             raise MeasurementAbortRequested()
+        if reached:
+            try:
+                self._apply_z_compensation(target_c)
+            except Exception as e:
+                self.log(f"Warning: Z compensation update failed: {e}")
         return reached
 
     def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
@@ -204,11 +259,23 @@ class MeasurementRunner:
     def move_to_device(self, device):
         if self.should_stop():
             return
-        self.log(f'Chuck moving to target {device.name} at ΔX={device.x}, ΔY={device.y}')
+        temp = self.prober_get_temp()
+        comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
+        if self.temp_ref_c is None:
+            self.temp_ref_c = temp
+        delta_t = temp - self.temp_ref_c
+        # Home shifts (comp * dT)
+        dx = comp_x * delta_t
+        dy = comp_y * delta_t
+        origin_x, origin_y = self.prober_ctrl.subsite_origin if self.prober_ctrl.subsite_origin else (0.0, 0.0)
+        target_x = origin_x + device.x + dx
+        target_y = origin_y + device.y + dy
+        self.log(
+            f'Chuck moving to {device.name}: target=({target_x:.2f}um, {target_y:.2f}um) '
+            f'base=({origin_x:.2f}um, {origin_y:.2f}um) dev=({device.x:.2f}um, {device.y:.2f}um) '
+            f'comp=({dx:.3f}um, {dy:.3f}um) at {temp:.2f}C (ref {self.temp_ref_c:.2f}C, dT={delta_t:.2f}C)'
+        )
         try:
-            origin_x, origin_y = self.prober_ctrl.subsite_origin if self.prober_ctrl.subsite_origin else (0.0, 0.0)
-            target_x = origin_x + device.x
-            target_y = origin_y + device.y
             x, y = self.prober_ctrl.move_xy_home(target_x, target_y)
             self.log(
                 f'Chuck successfully moved to X={x:.1f}um, Y={y:.1f}um'

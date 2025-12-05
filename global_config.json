@@ -13,7 +13,8 @@
             "rv_step": 0.1,
             "pulse_length": 0.0001,
             "read_bias": 0.3,
-            "set_amplitude": -1.8
+            "set_amplitude": -1.8,
+            "mock_mode": true
         },
         "FourTerminalIV": {
             "gpib_address": "GPIB0::17::INSTR",
@@ -31,15 +32,36 @@
             "hold_time": 0.0,
             "delay_time": 0.0,
             "second_delay": 0.0
+        },
+        "OxideBreakdown": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "high_channel": 4,
+            "low_channel": 3,
+            "v_max": 0.2,
+            "points": 20,
+            "double_sweep": false,
+            "current_compliance": 0.001,
+            "current_range": 0.0,
+            "hold_time": 0.0,
+            "delay_time": 0.0,
+            "second_delay": 0.0
         }
     },
     "last_selection": {
-        "chip_id": "",
-        "site": "",
-        "subsite": "",
-        "device": "",
-        "procedure": "",
+        "site": "I",
+        "subsite": "50um",
+        "device": "A1",
+        "procedure": "OxideBreakdown",
+        "run_subsite": false,
         "set_home_before_run": true,
-        "run_subsite": false
+        "chip": "",
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
+        "temperature_enabled": false,
+        "temperature_mode": "Sweep",
+        "temperature_setpoint_c": "",
+        "temperature_sweep_c": "25, 75",
+        "temperature_wait_after_s": "30"
     }
 }
