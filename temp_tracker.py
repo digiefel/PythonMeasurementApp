@@ -8,8 +8,8 @@ class TempTracker:
     def __init__(self, log: Callable[[str], None] | None = None):
         self.log = log or (lambda msg: None)
         # Defaults
-        self.default_warmup_per_deg = 2.0   # seconds per deg C guess
-        self.default_measure_per_dev = 10.0 # seconds per device guess
+        self.default_warmup_per_deg = 7.0   # seconds per deg C guess (~7s/C down)
+        self.default_measure_per_dev = 30.0 # seconds per device guess
         self.min_warmup_s = 5.0
         self.min_measure_s = 3.0
         self.reset_run()
