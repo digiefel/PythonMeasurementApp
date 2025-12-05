@@ -1,5 +1,4 @@
 import os
-import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 import tkinter as tk
@@ -27,8 +26,8 @@ class PlotSpec:
 class PlotManager:
     """Encapsulates matplotlib <-> Tk embedding and simple live plotting."""
 
-    # Minimum interval between full redraws (ms)
-    REDRAW_THROTTLE_MS = 33  # ~30 FPS max
+    # Relative change threshold before we treat limits as updated
+    LIMIT_CHANGE_RATIO = 0.01
 
     def __init__(self, root: tk.Tk, use_blit: bool = True):
         self.root = root
@@ -44,14 +43,14 @@ class PlotManager:
         self.use_blit = use_blit
         self._background = None
         self._last_limits = None
-        self._last_redraw_time = 0
-        self._pending_redraw = None
 
     def start(self, spec: PlotSpec):
         """Reset plot with a new specification."""
         self.fig.clf()
         self.ax = self.fig.add_subplot(111)
         self.ax2 = None
+        self._background = None
+        self._last_limits = None
         self.secondary_series = set(spec.secondary_series or [])
         self.styles = spec.styles or {}
         self.ax.set_title(spec.title)
@@ -70,8 +69,7 @@ class PlotManager:
         for sec in self.secondary_series:
             self._ensure_line(sec)
         self._update_legend()
-        self._redraw_full()
-        self._last_limits = self._capture_limits()
+        self._redraw_full(reason="initial draw")
 
     def add_point(self, x, y, series_label: str = "Data"):
         if series_label not in self.lines:
@@ -87,7 +85,7 @@ class PlotManager:
         self.ax.autoscale_view()
         if self.ax2:
             self.ax2.relim()
-            self.ax2.autoscale_view()
+            self.ax2.autoscale_view(scalex=False)
         self._maybe_redraw()
 
     def add_series(self, xs, ys, series_label: str):
@@ -103,7 +101,7 @@ class PlotManager:
         self.ax.autoscale_view()
         if self.ax2:
             self.ax2.relim()
-            self.ax2.autoscale_view()
+            self.ax2.autoscale_view(scalex=False)
         self._maybe_redraw()
 
     def finish(self, save_path: Optional[str] = None):
@@ -139,18 +137,18 @@ class PlotManager:
             self._background = None  # legend changes require new background
             self._last_limits = None
 
-    def _redraw_full(self):
+    def _redraw_full(self, reason: Optional[str] = None):
         """Full draw and capture background for blitting."""
-        self._last_redraw_time = time.time() * 1000
-        self._pending_redraw = None
-        self.canvas.draw_idle()  # Use draw_idle for non-blocking render
-        self.canvas.flush_events()  # Process pending draw
         if self.use_blit:
-            # Schedule background capture after draw completes
-            self.root.after(10, self._capture_background)
+            self.canvas.draw()
+            self._capture_background()
+            self._blit_draw()
         else:
             self._background = None
+            self.canvas.draw_idle()  # Use draw_idle for non-blocking render
+            self.canvas.flush_events()  # Process pending draw
         self._last_limits = self._capture_limits()
+
 
     def _capture_background(self):
         """Capture background for blitting after draw completes."""
@@ -159,27 +157,22 @@ class PlotManager:
         except Exception:
             self._background = None
 
-    def _schedule_redraw(self):
-        """Schedule a throttled full redraw."""
-        if self._pending_redraw is not None:
-            return  # Already scheduled
-        now = time.time() * 1000
-        elapsed = now - self._last_redraw_time
-        if elapsed >= self.REDRAW_THROTTLE_MS:
-            self._redraw_full()
-        else:
-            delay = int(self.REDRAW_THROTTLE_MS - elapsed)
-            self._pending_redraw = self.root.after(delay, self._redraw_full)
-
     def _maybe_redraw(self):
         """Redraw if limits changed; otherwise blit."""
-        if not self.use_blit:
-            self.canvas.draw_idle()
-            self._last_limits = self._capture_limits()
-            return
         limits = self._capture_limits()
-        if self._background is None or self._limits_changed(limits):
-            self._schedule_redraw()
+        if not self.use_blit:
+            self._redraw_full(reason="blit disabled")
+            return
+        reason = None
+        if self._background is None:
+            reason = "background missing"
+        elif self._limits_changed(limits):
+            reason = "limits changed"
+        if reason:
+            # Commit current limits so repeated calls while the draw is pending
+            # do not keep re-triggering full redraws for the same bounds.
+            self._last_limits = limits
+            self._redraw_full(reason=reason)
         else:
             self._blit_draw()
             self._last_limits = limits
@@ -215,7 +208,15 @@ class PlotManager:
             return True
         if len(limits) != len(self._last_limits):
             return True
-        for a, b in zip(limits, self._last_limits):
-            if a != b:
+        for new_bounds, old_bounds in zip(limits, self._last_limits):
+            if self._bounds_changed(new_bounds, old_bounds):
                 return True
         return False
+
+    def _bounds_changed(self, new_bounds, old_bounds) -> bool:
+        """Compare axis bounds with a relative tolerance to ignore float noise."""
+        new_min, new_max = new_bounds
+        old_min, old_max = old_bounds
+        span = max(abs(old_max - old_min), 1e-12)
+        tolerance = span * self.LIMIT_CHANGE_RATIO
+        return (abs(new_min - old_min) > tolerance) or (abs(new_max - old_max) > tolerance)
