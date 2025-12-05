@@ -47,17 +47,20 @@
         }
     },
     "last_selection": {
-        "site": "I",
-        "subsite": "50um",
-        "device": "A1",
+        "site": "VI",
+        "subsite": "TLM",
+        "device": "L800W8",
         "procedure": "FourTerminalIV",
-        "run_subsite": false,
+        "run_subsite": true,
         "set_home_before_run": true,
-        "chip": "test",
+        "chip": "",
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": true,
         "temperature_mode": "Sweep",
-        "temperature_setpoint_c": "50",
-        "temperature_sweep_c": "25, 50",
+        "temperature_setpoint_c": "25",
+        "temperature_sweep_c": "25, 0, 50, 75, 25",
         "temperature_wait_after_s": "30"
     }
 }
