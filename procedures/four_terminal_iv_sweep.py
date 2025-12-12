@@ -150,7 +150,13 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         )
 
         # Start streaming for live plot updates and full capture
+        # it's called "start_measure", but it does not return until the sweep is complete
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
+
+        # We can shut down the source since now the measurement is done
+        b1500.zero_output(B1500Session.CH_ALL)
+        b1500.set_switch(B1500Session.CH_ALL, False)
+
         data_by_ch = {ch: [] for ch in channels}
         status_by_ch = {ch: [] for ch in channels}
         timestamps = []
