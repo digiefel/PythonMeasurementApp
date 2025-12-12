@@ -30,13 +30,13 @@ DEFAULT_CONFIG = {
     },
 }
 
-
 class Config:
     def __init__(self, config_path: str, devices_csv_path: str):
-        self.config_path = config_path
-        self.devices_csv_path = devices_csv_path
+        self.config_root = "saved_configs/"
+        self.config_path = os.path.join(self.config_root, config_path)
+        self.devices_csv_path = os.path.join(self.config_root, devices_csv_path)
         self.data = self.load()
-        self.sites = load_devices_csv(devices_csv_path)
+        self.sites = load_devices_csv(self.devices_csv_path)
     
     def load(self):
         if os.path.exists(self.config_path):

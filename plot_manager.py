@@ -48,6 +48,7 @@ class PlotManager:
         self._bg = None
         self._animated: List[Artist] = []
         self._last_limits = None
+        self._full_draw_pending = False
         if self.use_blit:
             self.canvas.mpl_connect("draw_event", self._on_draw)
 
@@ -93,7 +94,7 @@ class PlotManager:
         self._update_legend()
 
         # Full draw so the background (including legend) is captured on draw_event.
-        self.canvas.draw()
+        self._request_full_draw()
         self._last_limits = self._capture_limits()
 
     def add_point(self, x: float, y: float, series_label: str = "Data"):
@@ -157,12 +158,32 @@ class PlotManager:
             self.ax.legend(handles=handles, loc="upper left")
         if self.use_blit:
             # Legend changed layout; force full draw so background is updated.
-            self.canvas.draw()
+            self._bg = None
+            self._request_full_draw()
             self._last_limits = self._capture_limits()
 
     # ------------------------------------------------------------------
     # Internal helpers: blitting (BlitManager logic)
     # ------------------------------------------------------------------
+    
+    def _request_full_draw(self) -> None:
+        """Schedule a full draw once, to be executed in the Tk event loop."""
+        if not self.use_blit:
+            self.canvas.draw_idle()
+            return
+        if self._full_draw_pending:
+            return  # one is already queued
+        self._full_draw_pending = True
+
+        def _do_draw():
+            # This runs once after Tk gets back to the event loop.
+            self._full_draw_pending = False
+            # Background and limits will be updated in _on_draw via draw_event.
+            self.canvas.draw_idle()
+
+        # Use after_idle to mirror Tk's own delayed drawing model.
+        self.root.after_idle(_do_draw)
+
 
     def _add_animated(self, art: Artist) -> None:
         if art.figure is not self.fig:
@@ -210,13 +231,13 @@ class PlotManager:
             self.ax2.autoscale_view(scalex=False)
 
         if not self.use_blit:
-            self.canvas.draw_idle()
+            self._request_full_draw()
             return
 
         new_limits = self._capture_limits()
         if self._last_limits is None or self._limits_changed(new_limits, self._last_limits):
             # Axis limits changed significantly: full draw → new background.
-            self.canvas.draw()
+            self._request_full_draw()
             self._last_limits = self._capture_limits()
         else:
             # Fast path: blit only the animated artists (lines).

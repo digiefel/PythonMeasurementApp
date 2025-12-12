@@ -399,7 +399,8 @@ class MainUI:
             return
         path = filedialog.askopenfilename(
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            title="Load settings"
+            title="Load settings",
+            initialdir=self.config.config_root
         )
         if not path:
             return
