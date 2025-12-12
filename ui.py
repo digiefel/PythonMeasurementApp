@@ -83,8 +83,8 @@ class MainUI:
             'FourTerminalIV': [
                 ('gpib_address', 'GPIB Address', str),
                 ('force_high_channel', 'Force High SMU', 'smu'),
-                ('force_low_channel', 'Force Low SMU', 'smu'),
                 ('sense_high_channel', 'Sense High SMU', 'smu'),
+                ('force_low_channel', 'Force Low SMU', 'smu'),
                 ('sense_low_channel', 'Sense Low SMU', 'smu'),
                 ('start_current', 'Start Current (A)', float),
                 ('stop_current', 'Stop Current (A)', float),
@@ -124,8 +124,8 @@ class MainUI:
             'FourTerminalIV': {
                 'gpib_address': 'GPIB0::17::INSTR',
                 'force_high_channel': 4,
-                'force_low_channel': 3,
                 'sense_high_channel': 5,
+                'force_low_channel': 3,
                 'sense_low_channel': 6,
                 'start_current': 0.0,
                 'stop_current': 1e-6,
