@@ -50,7 +50,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         try:
             # Initialize B1500 session
             b1500.reset()
-            b1500.set_timeout(10000)  # 10 second timeout
+            # b1500.set_timeout(10000)  # 10 second timeout
             b1500.enable_error_detect(True)
 
             # Perform the I-V sweep
@@ -150,12 +150,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         )
 
         # Start streaming for live plot updates and full capture
-        # it's called "start_measure", but it does not return until the sweep is complete
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
-
-        # We can shut down the source since now the measurement is done
-        b1500.zero_output(B1500Session.CH_ALL)
-        b1500.set_switch(B1500Session.CH_ALL, False)
 
         data_by_ch = {ch: [] for ch in channels}
         status_by_ch = {ch: [] for ch in channels}
@@ -168,6 +163,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         while True:
             self.check_stop(b1500)
             _ret, eod, data_type, value, status, channel = b1500.read_data()
+
             if status:
                 key = (channel, data_type, status)
                 if key not in nonzero_statuses:
@@ -203,6 +199,12 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             # Stop if we received all expected points or instrument signaled end
             if eod or plotted >= max_points:
                 break
+
+        # Once we exit the loop, the sweep is done
+        # We can shut down the source
+        self.check_stop(b1500)
+        b1500.zero_output(B1500Session.CH_ALL)
+        b1500.set_switch(B1500Session.CH_ALL, False)
 
         results = []
         point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))

@@ -18,8 +18,8 @@
         "FourTerminalIV": {
             "gpib_address": "GPIB0::17::INSTR",
             "force_high_channel": 4,
-            "force_low_channel": 3,
             "sense_high_channel": 6,
+            "force_low_channel": 3,
             "sense_low_channel": 5,
             "start_current": -1e-06,
             "stop_current": 1e-06,
@@ -58,9 +58,9 @@
         "temp_comp_y_um_per_c": "1.435",
         "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": true,
-        "temperature_mode": "Sweep",
+        "temperature_mode": "Setpoint",
         "temperature_setpoint_c": "25",
         "temperature_sweep_c": "25, 0, 50, 75, 25",
-        "temperature_wait_after_s": "30"
+        "temperature_wait_after_s": "0"
     }
 }
