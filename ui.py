@@ -41,6 +41,8 @@ class MainUI:
         self.runner.plot_point_callback = self._post_plot_point
         self.runner.plot_series_callback = self._post_plot_series
         self.runner.plot_finalize_callback = self._post_plot_finish
+        self.runner.plot_limits_callback = self._post_plot_limits
+        self.runner.plot_append_callback = self._post_plot_append
         self.runner.status_callback = self._post_status
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self._run_thread = None
@@ -673,6 +675,12 @@ class MainUI:
     def _post_plot_finish(self, *args, **kwargs):
         self._post(self.finish_plot, *args, **kwargs)
 
+    def _post_plot_limits(self, *args, **kwargs):
+        self._post(self.set_plot_limits, *args, **kwargs)
+
+    def _post_plot_append(self, *args, **kwargs):
+        self._post(self.append_plot_points, *args, **kwargs)
+
     def _set_running_state(self, running: bool):
         """Toggle Run/Stop button appearance and command."""
         if running:
@@ -765,10 +773,16 @@ class MainUI:
         self.plot.start(spec)
 
     def add_plot_point(self, x, y, series_label="Data"):
-        self.plot.add_point(x, y, series_label)
+        self.plot.append_point(x, y, series_label)
 
     def add_plot_series(self, xs, ys, series_label="Data"):
         self.plot.add_series(xs, ys, series_label)
+
+    def set_plot_limits(self, xlim=None, ylim=None, y2lim=None):
+        self.plot.set_limits(xlim, ylim, y2lim)
+
+    def append_plot_points(self, points: dict):
+        self.plot.append_points(points)
 
     def finish_plot(self, filename: str | None, output_root: str, output_relative: str, fallback_root: str):
         if not filename:

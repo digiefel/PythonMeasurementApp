@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Iterable
+from typing import Dict, List, Optional, Iterable, Tuple
 
 import tkinter as tk
 
@@ -97,7 +97,7 @@ class PlotManager:
         self._request_full_draw()
         self._last_limits = self._capture_limits()
 
-    def add_point(self, x: float, y: float, series_label: str = "Data"):
+    def append_point(self, x: float, y: float, series_label: str = "Data"):
         """
         Append a point to a series and refresh the view (with blitting if possible).
         """
@@ -121,6 +121,40 @@ class PlotManager:
         series["x"] = list(xs)
         series["y"] = list(ys)
         series["line"].set_data(series["x"], series["y"])
+        self._update_after_data_change()
+
+    def set_limits(self, xlim: Optional[Tuple[float, float]] = None, ylim: Optional[Tuple[float, float]] = None, y2lim: Optional[Tuple[float, float]] = None):
+        """
+        Set fixed axis limits and disable autoscaling.
+        Call this after start() to pre-set known bounds.
+        """
+        if xlim is not None:
+            self.ax.set_xlim(xlim)
+            self.ax.autoscale(enable=False, axis='x')
+        if ylim is not None:
+            self.ax.set_ylim(ylim)
+            self.ax.autoscale(enable=False, axis='y')
+        if y2lim is not None and self.ax2:
+            self.ax2.set_ylim(y2lim)
+            self.ax2.autoscale(enable=False, axis='y')
+        self._last_limits = self._capture_limits()
+        self._request_full_draw()
+
+    def append_points(self, points: dict):
+        """
+        Append multiple points to multiple series in one update.
+        points: {series_label: [(x1, y1), (x2, y2), ...], ...}
+        Only triggers one redraw at the end.
+        """
+        for series_label, xy_list in points.items():
+            if series_label not in self.lines:
+                self._ensure_line(series_label)
+                self._update_legend()
+            series = self.lines[series_label]
+            for x, y in xy_list:
+                series["x"].append(x)
+                series["y"].append(y)
+            series["line"].set_data(series["x"], series["y"])
         self._update_after_data_change()
 
     def finish(self, save_path):

@@ -141,35 +141,86 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
 
+			# Calculate expected limits for the plot
+			total_pattern_time = sum(dt for dt, _ in vectors)
+			total_time = total_pattern_time * self.repetition_count
+			# Voltage is ±vmax, current we estimate but can adjust
+			v_margin = self.vmax * 0.1
+			xlim = (0, total_time)
+			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
+
+			# Initialize live plot before starting execution
+			runner = self.runner
+			runner.start_live_plot(
+				title=f'PUND - {device.name}',
+				xlabel='Time (s)',
+				ylabel='Voltage (V)',
+				series_label='V(t)',
+				styles={
+					'V(t)': {'color': 'C0', 'marker': None, 'linestyle': '-'},
+					'I(t)': {'color': 'C1', 'marker': None, 'linestyle': '-'},
+				},
+				secondary_series=['I(t)'],
+				secondary_ylabel='Current (μA)',
+			)
+			# Set fixed limits to avoid autoscaling overhead
+			# y2lim for current will autoscale on first batch since we don't know the range
+			runner.set_plot_limits(xlim=xlim, ylim=ylim)
+
 			wgfmu.execute()
 
-			self.check_stop(b1500)
+			# Poll for data and plot live
+			# Status codes from wgfmu.h:
+			# WGFMU_STATUS_COMPLETED = 10000
+			STATUS_COMPLETED = 10000
 
-			# Wait briefly for measurement data to become available
-			for _ in range(20):
-				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
-				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
-				if measured_1 > 0 and measured_2 > 0:
-					break
-				time.sleep(0.1)
-
-			measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
-			measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
-			count = min(measured_1, measured_2)
 			data = []
-			for i in range(count):
-				t_v, v = wgfmu.get_measure_value(self.channel_1, i)
-				t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
-				t = t_v if t_v is not None else t_i
-				data.append([t, cur, v])
+			plotted_count = 0
+			while True:
+				self.check_stop(b1500)
+
+				status, elapsed, total = wgfmu.get_status()
+
+				# Get available measurement data
+				measured_1, total_1 = wgfmu.get_measure_value_size(self.channel_1)
+				measured_2, total_2 = wgfmu.get_measure_value_size(self.channel_2)
+				available = min(measured_1, measured_2)
+
+				# Fetch and plot new points in batches
+				if available > plotted_count:
+					batch_v = []
+					batch_i = []
+					for i in range(plotted_count, available):
+						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
+						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
+						t = t_v if t_v is not None else t_i
+						data.append([t, cur, v])
+						batch_v.append((t, v))
+						batch_i.append((t, cur * 1e6))  # Convert to μA
+
+					# Single batched update for all new points
+					runner.append_plot_points({
+						'V(t)': batch_v,
+						'I(t)': batch_i,
+					})
+					plotted_count = available
+
+				# Check if measurement is complete and data is ready
+				# STATUS_COMPLETED (10000) means all data is ready to read
+				# STATUS_DONE (10001) means just completed but data may not be ready yet
+				if status == STATUS_COMPLETED:
+					break
+
+				time.sleep(0.05)  # Small delay to avoid hammering the instrument
 
 			base = self.format_filename("PUND", device.name)
 			filename = f"{base}.csv"
 			self.save_data(data, filename, ["Time_s", "Current_A", "Voltage_V"], add_timestamp=False)
 			self.log(f"PUND complete: {len(data)} points")
 
-			# Generate plots
-			self._plot_pund_results(data, device, base)
+			# Finalize and save plot
+			plot_filename = f'{base}_plot.png'
+			runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 		finally:
 			try:
 				wgfmu.clear()
@@ -178,40 +229,3 @@ class PUNDProcedure(MeasurementProcedure):
 				wgfmu.close()
 			except Exception:
 				pass
-
-	def _plot_pund_results(self, data, device, base):
-		"""
-		Create a time-domain plot for PUND results with Voltage and Current on dual y-axes.
-		"""
-		runner = self.runner
-
-		if len(data) < 2:
-			self.log("Insufficient data points for plotting")
-			return
-
-		# Extract data
-		times = np.array([row[0] for row in data])
-		currents = np.array([row[1] for row in data]) * 1e6  # Convert A to μA
-		voltages = np.array([row[2] for row in data])
-
-		# Initialize live plot with V(t) and I(t) on dual axes
-		runner.start_live_plot(
-			title=f'PUND - {device.name}',
-			xlabel='Time (s)',
-			ylabel='Voltage (V)',
-			series_label='V(t)',
-			styles={
-				'V(t)': {'color': 'C0', 'marker': None, 'linestyle': '-'},
-				'I(t)': {'color': 'C1', 'marker': None, 'linestyle': '-'},
-			},
-			secondary_series=['I(t)'],
-			secondary_ylabel='Current (μA)',
-		)
-
-		# Push all data points for time-domain plot
-		runner.add_live_series(times.tolist(), voltages.tolist(), 'V(t)')
-		runner.add_live_series(times.tolist(), currents.tolist(), 'I(t)')
-
-		# Save plot
-		plot_filename = f'{base}_plot.png'
-		runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)

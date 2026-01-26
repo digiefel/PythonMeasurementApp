@@ -1128,6 +1128,19 @@ class WGFMUSession:
         ret = dll_wgfmu.WGFMU_execute()
         self._check_ret(ret, "WGFMU execute")
 
+    def wait_until_completed(self):
+        ret = dll_wgfmu.WGFMU_waitUntilCompleted()
+        self._check_ret(ret, "WGFMU wait until completed")
+
+    def get_status(self):
+        """Get execution status. Returns (status_code, elapsed_time, total_time)."""
+        status = ct.c_int()
+        elapsed = ct.c_double()
+        total = ct.c_double()
+        ret = dll_wgfmu.WGFMU_getStatus(ct.byref(status), ct.byref(elapsed), ct.byref(total))
+        self._check_ret(ret, "WGFMU get status")
+        return status.value, elapsed.value, total.value
+
     def get_measure_value_size(self, channel_id):
         measured = ct.c_int()
         total = ct.c_int()
