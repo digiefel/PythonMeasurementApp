@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import os
+import threading
 from datetime import datetime
 
 class MeasurementAbortRequested(Exception):
@@ -66,29 +67,58 @@ class MeasurementProcedure(ABC):
         fallback_dir = os.path.join(self.fallback_root, self.output_relative)
         return os.path.join(fallback_dir, os.path.basename(primary_path))
 
-    def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True):
-        """Persist data to disk with fallback to a safe local directory."""
-        primary_path = self.make_output_path(filename, add_timestamp=add_timestamp)
+    def _threaded_write(self, path: str, headers: list, data: list, result: dict):
+        """Write CSV in a thread, storing success/error in result dict."""
         try:
-            self._write_csv(primary_path, headers, data)
+            self._write_csv(path, headers, data)
+            result['success'] = True
+        except Exception as e:
+            result['success'] = False
+            result['error'] = e
+
+    def save_data(self, data: list, filename: str, headers: list, add_timestamp: bool = True, primary_timeout: float = 5.0):
+        """Persist data to disk with fallback to a safe local directory.
+        
+        The primary save runs in a separate thread with a timeout to improve robustness
+        against slow or unresponsive network paths.
+        """
+        primary_path = self.make_output_path(filename, add_timestamp=add_timestamp)
+        
+        # Attempt primary save in a separate thread with timeout
+        result = {}
+        write_thread = threading.Thread(
+            target=self._threaded_write,
+            args=(primary_path, headers, data, result),
+            daemon=True
+        )
+        write_thread.start()
+        write_thread.join(timeout=primary_timeout)
+        
+        if write_thread.is_alive():
+            # Thread is still running - timed out
+            self.log(f"Warning: primary save timed out after {primary_timeout}s; falling back.")
+        elif result.get('success'):
             self.log(f'Saved data to {primary_path}')
             return primary_path
-        except Exception as e:
-            self.log(f"Warning: primary save path failed ({e}); retrying in fallback directory.")
-            fallback_path = self._make_fallback_path(primary_path)
+        else:
+            error = result.get('error', 'Unknown error')
+            self.log(f"Warning: primary save path failed ({error}); retrying in fallback directory.")
+        
+        # Fallback save (run synchronously since fallback should be local/reliable)
+        fallback_path = self._make_fallback_path(primary_path)
+        try:
+            self._write_csv(fallback_path, headers, data)
+            # Stick to the fallback directory for subsequent artifacts
+            self.output_root = self.fallback_root
+            self.log(f"Saved data to fallback path {fallback_path}")
+            return fallback_path
+        except Exception as e2:
+            self.log(f"Error saving to fallback directory: {e2}")
+            # Ensure hardware is shut down safely before propagating
             try:
-                self._write_csv(fallback_path, headers, data)
-                # Stick to the fallback directory for subsequent artifacts
-                self.output_root = self.fallback_root
-                self.log(f"Saved data to fallback path {fallback_path}")
-                return fallback_path
-            except Exception as e2:
-                self.log(f"Error saving to fallback directory: {e2}")
-                # Ensure hardware is shut down safely before propagating
-                try:
-                    self.runner.safe_stop()
-                finally:
-                    raise
+                self.runner.safe_stop()
+            finally:
+                raise
 
     def format_filename(self, procedure_tag: str, device_name: str):
         """Generate base filename chip_site_subsite_device_timestamp_procedure."""
