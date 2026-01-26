@@ -134,40 +134,53 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
 
-			# Calculate expected limits for the plot
-			total_time = pattern_duration * self.repetition_count
-			# Voltage is ±vmax, current we estimate but can adjust
+			# Calculate expected limits for the overlay plot
 			v_margin = self.vmax * 0.1
-			xlim = (0, total_time)
+			xlim = (0, pattern_duration)
 			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
 
-			# Initialize live plot before starting execution
+			# Build styles with color gradient for each rep
+			# Blues for voltage, oranges for current
+			max_reps_to_plot = min(self.repetition_count, 50)
+			step = max(1, self.repetition_count // max_reps_to_plot)
+			reps_to_plot = list(range(0, self.repetition_count, step))
+			if (self.repetition_count - 1) not in reps_to_plot:
+				reps_to_plot.append(self.repetition_count - 1)
+
+			styles = {}
+			secondary_labels = []
+			for idx, rep in enumerate(reps_to_plot):
+				intensity = 0.2 + 0.7 * (idx / max(1, len(reps_to_plot) - 1))
+				v_label = f'V (rep {rep+1})' if rep == 0 or rep == self.repetition_count - 1 else f'_V_{rep}'
+				i_label = f'I (rep {rep+1})' if rep == 0 or rep == self.repetition_count - 1 else f'_I_{rep}'
+				styles[v_label] = {'color': (0, 0, intensity), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
+				styles[i_label] = {'color': (intensity, 0.3 * intensity, 0), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
+				secondary_labels.append(i_label)
+
+			# Initialize live overlay plot
 			runner = self.runner
 			runner.start_live_plot(
-				title=f'PUND - {device.name}',
+				title=f'PUND Overlay - {device.name}',
 				xlabel='Time (s)',
 				ylabel='Voltage (V)',
-				series_label='V(t)',
-				styles={
-					'V(t)': {'color': 'C0', 'marker': None, 'linestyle': '-'},
-					'I(t)': {'color': 'C1', 'marker': None, 'linestyle': '-'},
-				},
-				secondary_series=['I(t)'],
+				series_label=None,
+				styles=styles,
+				secondary_series=secondary_labels,
 				secondary_ylabel='Current (μA)',
 			)
-			# Set fixed limits to avoid autoscaling overhead
-			# y2lim for current will autoscale on first batch since we don't know the range
 			runner.set_plot_limits(xlim=xlim, ylim=ylim)
 
 			wgfmu.execute()
 
-			# Poll for data and plot live
-			# Status codes from wgfmu.h:
-			# WGFMU_STATUS_COMPLETED = 10000
+			# Poll for data and plot live in overlay mode
 			STATUS_COMPLETED = 10000
 
 			data = []
 			plotted_count = 0
+			# Track which rep we're currently in
+			current_rep = 0
+			rep_start_time = None
+
 			while True:
 				self.check_stop(b1500)
 
@@ -178,40 +191,56 @@ class PUNDProcedure(MeasurementProcedure):
 				measured_2, total_2 = wgfmu.get_measure_value_size(self.channel_2)
 				available = min(measured_1, measured_2)
 
-				# Fetch and plot new points in batches
+				# Fetch new points
 				if available > plotted_count:
-					batch_v = []
-					batch_i = []
+					# Group points by rep for overlay plotting
+					rep_batches = {}  # rep_index -> {'v': [...], 'i': [...]}
+					
 					for i in range(plotted_count, available):
 						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
 						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
 						t = t_v if t_v is not None else t_i
 						data.append([t, cur, v])
-						batch_v.append((t, v))
-						batch_i.append((t, cur * 1e6))  # Convert to μA
 
-					# Single batched update for all new points
-					runner.append_plot_points({
-						'V(t)': batch_v,
-						'I(t)': batch_i,
-					})
+						# Determine which rep this point belongs to
+						rep_idx = int(t / pattern_duration) if pattern_duration > 0 else 0
+						rep_idx = min(rep_idx, self.repetition_count - 1)
+
+						# Only plot reps in our display list
+						if rep_idx in reps_to_plot:
+							# Calculate relative time within this rep
+							rel_t = t - (rep_idx * pattern_duration)
+							
+							if rep_idx not in rep_batches:
+								rep_batches[rep_idx] = {'v': [], 'i': []}
+							rep_batches[rep_idx]['v'].append((rel_t, v))
+							rep_batches[rep_idx]['i'].append((rel_t, cur * 1e6))
+
+					# Build batch update for all reps
+					batch_update = {}
+					for rep_idx, batch_data in rep_batches.items():
+						v_label = f'V (rep {rep_idx+1})' if rep_idx == 0 or rep_idx == self.repetition_count - 1 else f'_V_{rep_idx}'
+						i_label = f'I (rep {rep_idx+1})' if rep_idx == 0 or rep_idx == self.repetition_count - 1 else f'_I_{rep_idx}'
+						batch_update[v_label] = batch_data['v']
+						batch_update[i_label] = batch_data['i']
+
+					if batch_update:
+						runner.append_plot_points(batch_update)
+
 					plotted_count = available
 
-				# Check if measurement is complete and data is ready
-				# STATUS_COMPLETED (10000) means all data is ready to read
-				# STATUS_DONE (10001) means just completed but data may not be ready yet
 				if status == STATUS_COMPLETED:
 					break
 
-				time.sleep(0.05)  # Small delay to avoid hammering the instrument
+				time.sleep(0.05)
 
 			base = self.format_filename("PUND", device.name)
 			filename = f"{base}.csv"
 			self.save_data(data, filename, ["Time_s", "Current_A", "Voltage_V"], add_timestamp=False)
 			self.log(f"PUND complete: {len(data)} points")
 
-			# Finalize and save plot
-			plot_filename = f'{base}_plot.png'
+			# Finalize and save overlay plot
+			plot_filename = f'{base}_overlay.png'
 			runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 		finally:
 			try:

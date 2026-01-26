@@ -187,7 +187,11 @@ class PlotManager:
             self._add_animated(line)
 
     def _update_legend(self):
-        handles = [meta["line"] for meta in self.lines.values()]
+        # Exclude lines with labels starting with '_' (hidden from legend)
+        handles = [
+            meta["line"] for meta in self.lines.values()
+            if not (meta["line"].get_label() or "").startswith("_")
+        ]
         if handles:
             self.ax.legend(handles=handles, loc="upper left")
         if self.use_blit:
