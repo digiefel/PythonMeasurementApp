@@ -55,6 +55,9 @@ class PUNDProcedure(MeasurementProcedure):
 			vectors += [(pulse_width, s * self.vmax), (pulse_width, 0.0), (gap, 0.0)]
 		vectors[-1] = (edge, 0.0)  # last gap becomes trailing edge
 
+		# Track active duration (before repetition_delay)
+		self._active_duration = sum(dt for dt, _ in vectors)
+
 		if self.repetition_delay > 0:
 			vectors.append((self.repetition_delay, 0.0))
 		return vectors
@@ -90,17 +93,27 @@ class PUNDProcedure(MeasurementProcedure):
 
 			vectors = self._build_pund_vectors()
 			pattern_duration = sum(dt for dt, _ in vectors)
+			active_duration = self._active_duration
 
 			# Compute sample interval and points per WGFMU constraints:
 			# - interval >= 10 ns, in 10 ns resolution
-			# - eventEndTime = interval * points (with average=interval) must fit in pattern
 			MIN_INTERVAL = 1e-8
 			RESOLUTION = 1e-8
 			raw_interval = 1e-3 / self.frequency
 			sample_interval = max(raw_interval, MIN_INTERVAL)
 			sample_interval = round(sample_interval / RESOLUTION) * RESOLUTION
 			averaging_time = sample_interval
-			sample_points = int(pattern_duration / sample_interval)
+			active_points = int(active_duration / sample_interval)
+
+			# For repetition_delay: sparse sampling (10 points or fewer)
+			DELAY_POINTS = 100
+			if self.repetition_delay > 0:
+				delay_interval = max(self.repetition_delay / DELAY_POINTS, MIN_INTERVAL)
+				delay_interval = round(delay_interval / RESOLUTION) * RESOLUTION
+				delay_points = int(self.repetition_delay / delay_interval)
+			else:
+				delay_points = 0
+				delay_interval = sample_interval
 
 			wgfmu.create_pattern(pattern_pg, 0.0)
 			for dt, voltage in vectors:
@@ -112,24 +125,46 @@ class PUNDProcedure(MeasurementProcedure):
 				if dt > 0:
 					wgfmu.add_vector(pattern_iv, dt, 0.0)
 
+			# Measure event for active portion (full rate)
 			wgfmu.set_measure_event(
 				pattern_pg,
-				"meas",
+				"meas_active",
 				0.0,
-				sample_points,
+				active_points,
 				sample_interval,
 				averaging_time,
 				WGFMU_MEASURE_EVENT_DATA_AVERAGED,
 			)
 			wgfmu.set_measure_event(
 				pattern_iv,
-				"meas",
+				"meas_active",
 				0.0,
-				sample_points,
+				active_points,
 				sample_interval,
 				averaging_time,
 				WGFMU_MEASURE_EVENT_DATA_AVERAGED,
 			)
+
+			# Measure event for repetition_delay portion (sparse)
+			if delay_points > 0:
+				wgfmu.set_measure_event(
+					pattern_pg,
+					"meas_delay",
+					active_duration,
+					delay_points,
+					delay_interval,
+					delay_interval,
+					WGFMU_MEASURE_EVENT_DATA_AVERAGED,
+				)
+				wgfmu.set_measure_event(
+					pattern_iv,
+					"meas_delay",
+					active_duration,
+					delay_points,
+					delay_interval,
+					delay_interval,
+					WGFMU_MEASURE_EVENT_DATA_AVERAGED,
+				)
 
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
