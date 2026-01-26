@@ -13,11 +13,20 @@ from ui_temperature import TemperatureUI
 
 from config import Config
 from runner import MeasurementRunner
-from bindings import SMU_CHANNEL_MAP, B1500_VOLTAGE_RANGES, B1500_CURRENT_RANGES, B1500Session
+from bindings import (
+    SMU_CHANNEL_MAP,
+    WGFMU_CHANNEL_MAP,
+    B1500_VOLTAGE_RANGES,
+    B1500_CURRENT_RANGES,
+    WGFMU_MEASURE_VOLTAGE_RANGES,
+    WGFMU_MEASURE_CURRENT_RANGES,
+    B1500Session,
+)
 from procedures.base import MeasurementAbortRequested
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
+from procedures.PUND import PUNDProcedure
 from tooltip_helper import attach_tooltip
 from plot_manager import PlotManager, PlotSpec
 
@@ -110,6 +119,19 @@ class MainUI:
                 ('delay_time', 'Delay Time (s)', float),
                 ('second_delay', 'Second Delay (s)', float),
             ],
+            'PUND': [
+                ('gpib_address', 'GPIB Address', str),
+                ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
+                ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
+                ('vmax', 'Vmax (V)', float),
+                ('frequency', 'Frequency (Hz)', float),
+                ('pulse_delay', 'Pulse Delay (x 1/f)', float),
+                ('repetition_count', 'Repetition Count', int),
+                ('repetition_delay', 'Repetition Delay (s)', float),
+                ('invert_polarity', 'Invert Polarity (PNNPP)', bool),
+                ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
+                ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
+            ],
         }
         self.procedure_defaults = {
             'RVSweep': {
@@ -150,6 +172,19 @@ class MainUI:
                 'hold_time': 0.0,
                 'delay_time': 0.0,
                 'second_delay': 0.0,
+            },
+            'PUND': {
+                'gpib_address': 'GPIB0::17::INSTR',
+                'channel_1': 101,
+                'channel_2': 102,
+                'vmax': 1.0,
+                'frequency': 1e3,
+                'pulse_delay': 0.0,
+                'repetition_count': 1,
+                'repetition_delay': 0.0,
+                'invert_polarity': False,
+                'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
+                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
             },
         }
 
@@ -357,6 +392,24 @@ class MainUI:
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CURRENT_RANGES], state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, cast)
+            elif cast == 'wgfmu_voltage_range':
+                label_val = self.lookup_range_label(val, WGFMU_MEASURE_VOLTAGE_RANGES)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in WGFMU_MEASURE_VOLTAGE_RANGES], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
+            elif cast == 'wgfmu_channel':
+                label_val = self.lookup_wgfmu_label(val)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=list(WGFMU_CHANNEL_MAP.keys()), state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
+            elif cast == 'wgfmu_current_range':
+                label_val = self.lookup_range_label(val, WGFMU_MEASURE_CURRENT_RANGES)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in WGFMU_MEASURE_CURRENT_RANGES], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
             else:
                 var = tk.StringVar(value=str(val))
                 entry = ttk.Entry(self.params_frame, textvariable=var)
@@ -381,6 +434,12 @@ class MainUI:
                     settings[key] = self.lookup_range_value(var.get(), B1500_VOLTAGE_RANGES)
                 elif cast == 'current_range':
                     settings[key] = self.lookup_range_value(var.get(), B1500_CURRENT_RANGES)
+                elif cast == 'wgfmu_voltage_range':
+                    settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_VOLTAGE_RANGES)
+                elif cast == 'wgfmu_channel':
+                    settings[key] = WGFMU_CHANNEL_MAP.get(var.get(), var.get())
+                elif cast == 'wgfmu_current_range':
+                    settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_CURRENT_RANGES)
                 elif cast is int:
                     settings[key] = int(float(var.get()))
                 elif cast is float:
@@ -468,6 +527,7 @@ class MainUI:
             'RVSweep': RVSweepProcedure,
             'FourTerminalIV': FourTerminalIVProcedure,
             'OxideBreakdown': OxideBreakdownProcedure,
+            'PUND': PUNDProcedure,
         }[proc_name]
         settings = self.collect_settings()
         # Cache current settings/selection in memory only to avoid overwriting config files on run
@@ -740,6 +800,15 @@ class MainUI:
             if str(ch) == str(value):
                 return label
         return next(iter(SMU_CHANNEL_MAP.keys()))
+
+    def lookup_wgfmu_label(self, value):
+        # Accept already a label, or map numeric back to label
+        if value in WGFMU_CHANNEL_MAP:
+            return value
+        for label, ch in WGFMU_CHANNEL_MAP.items():
+            if str(ch) == str(value):
+                return label
+        return next(iter(WGFMU_CHANNEL_MAP.keys()))
 
     def lookup_range_label(self, numeric_value, options):
         for val, label in options:

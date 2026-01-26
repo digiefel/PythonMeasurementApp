@@ -1,0 +1,81 @@
+{
+    "gpib_address": "GPIB0::17::INSTR",
+    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
+    "asu_channels": [
+        "SMU2"
+    ],
+    "asu_path_mode": 1,
+    "asu_range_mode": null,
+    "procedures": {
+        "RVSweep": {
+            "rv_start": 0.1,
+            "rv_stop": 2.0,
+            "rv_step": 0.1,
+            "pulse_length": 0.0001,
+            "read_bias": 0.3,
+            "set_amplitude": -1.8,
+            "mock_mode": true
+        },
+        "FourTerminalIV": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "force_high_channel": 4,
+            "force_low_channel": 3,
+            "sense_high_channel": 5,
+            "sense_low_channel": 6,
+            "start_current": 0.0,
+            "stop_current": 1e-06,
+            "points": 10,
+            "voltage_compliance": 1.0,
+            "power_compliance": 0.0,
+            "measurement_range": 0.0,
+            "current_compliance": 1e-05,
+            "hold_time": 0.0,
+            "delay_time": 0.0,
+            "second_delay": 0.0
+        },
+        "OxideBreakdown": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "high_channel": 4,
+            "low_channel": 3,
+            "v_max": 0.2,
+            "points": 20,
+            "double_sweep": false,
+            "current_compliance": 0.001,
+            "current_range": 0.0,
+            "hold_time": 0.0,
+            "delay_time": 0.0,
+            "second_delay": 0.0
+        },
+        "PUND": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "channel_1": 101,
+            "channel_2": 102,
+            "vmax": 1.0,
+            "frequency": 1000.0,
+            "pulse_delay": 0.0,
+            "repetition_count": 1,
+            "repetition_delay": 0.0,
+            "invert_polarity": false,
+            "meas_range_1": 5001,
+            "meas_range_2": 6002
+        }
+    },
+    "last_selection": {
+        "site": "VI",
+        "subsite": "25um",
+        "device": "D1",
+        "procedure": "PUND",
+        "run_subsite": false,
+        "set_home_before_run": true,
+        "chip": "RuO2test_A10",
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
+        "temperature_enabled": false,
+        "temperature_mode": "Sweep",
+        "temperature_setpoint_c": "",
+        "temperature_sweep_c": "25, 75",
+        "temperature_wait_after_s": "30"
+    },
+    "fallback_output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\test_output"
+}
