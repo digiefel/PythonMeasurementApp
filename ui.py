@@ -127,7 +127,7 @@ class MainUI:
                 ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
                 ('vmax', 'Vmax (V)', float),
                 ('frequency', 'Frequency (Hz)', float),
-                ('pulse_delay', 'Pulse Delay (x 1/f)', float),
+                ('pulse_delay', 'Pulse Delay (s)', float),
                 ('repetition_count', 'Repetition Count', int),
                 ('repetition_delay', 'Repetition Delay (s)', float),
                 ('invert_polarity', 'Invert Polarity (PNNPP)', bool),

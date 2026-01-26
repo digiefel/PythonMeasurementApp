@@ -34,43 +34,27 @@ class PUNDProcedure(MeasurementProcedure):
 		self.meas_range_2 = int(settings.get('meas_range_2', WGFMU_MEASURE_CURRENT_RANGES[0][0]))
 
 	def _build_pund_vectors(self):
+		"""Build PUND waveform: N-P-P-N-N sequence (or inverted P-N-N-P-P)."""
 		if self.frequency <= 0:
 			raise ValueError("Frequency must be > 0")
 		if self.vmax <= 0:
 			raise ValueError("Vmax must be > 0")
-		if self.repetition_count < 1:
-			raise ValueError("Repetition count must be >= 1")
-		if self.pulse_delay < 0:
-			raise ValueError("Pulse delay must be >= 0")
-		if self.repetition_delay < 0:
-			raise ValueError("Repetition delay must be >= 0")
 
-		pbias = self.vmax
-		nbias = -self.vmax
-		if self.invert_polarity:
-			pbias, nbias = nbias, pbias
+		# NPPNN = [-1, 1, 1, -1, -1], inverted = PNNPP
+		signs = [1, -1, -1, 1, 1] if self.invert_polarity else [-1, 1, 1, -1, -1]
 
-		scale = 1.0e4 / self.frequency
-		seq = [
-			(1.0e-5, 0.0),
-			(4.0e-5, nbias),
-			(4.0e-5, 0.0),
-			(2.0e-5, 0.0),
-			(4.0e-5, pbias),
-			(4.0e-5, 0.0),
-			(2.0e-5, 0.0),
-			(4.0e-5, pbias),
-			(4.0e-5, 0.0),
-			(2.0e-5, 0.0),
-			(4.0e-5, nbias),
-			(4.0e-5, 0.0),
-			(2.0e-5, 0.0),
-			(4.0e-5, nbias),
-			(4.0e-5, 0.0),
-			(1.0e-5, 0.0),
-		]
+		# Timing as fractions of period T = 1/f
+		# Each pulse: 0.4T high, 0.4T low, 0.2T gap; edges 0.1T; total = 5T
+		T = 1.0 / self.frequency
+		pulse_width = 0.4 * T
+		gap = 0.2 * T + self.pulse_delay
+		edge = 0.1 * T
 
-		vectors = [(dt * scale, v) for dt, v in seq]
+		vectors = [(edge, 0.0)]
+		for s in signs:
+			vectors += [(pulse_width, s * self.vmax), (pulse_width, 0.0), (gap, 0.0)]
+		vectors[-1] = (edge, 0.0)  # last gap becomes trailing edge
+
 		if self.repetition_delay > 0:
 			vectors.append((self.repetition_delay, 0.0))
 		return vectors
@@ -105,9 +89,18 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
 			vectors = self._build_pund_vectors()
-			sample_points = 5000
-			sample_interval = 1.0e-3 / self.frequency
+			pattern_duration = sum(dt for dt, _ in vectors)
+
+			# Compute sample interval and points per WGFMU constraints:
+			# - interval >= 10 ns, in 10 ns resolution
+			# - eventEndTime = interval * points (with average=interval) must fit in pattern
+			MIN_INTERVAL = 1e-8
+			RESOLUTION = 1e-8
+			raw_interval = 1e-3 / self.frequency
+			sample_interval = max(raw_interval, MIN_INTERVAL)
+			sample_interval = round(sample_interval / RESOLUTION) * RESOLUTION
 			averaging_time = sample_interval
+			sample_points = int(pattern_duration / sample_interval)
 
 			wgfmu.create_pattern(pattern_pg, 0.0)
 			for dt, voltage in vectors:
@@ -142,8 +135,7 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
 
 			# Calculate expected limits for the plot
-			total_pattern_time = sum(dt for dt, _ in vectors)
-			total_time = total_pattern_time * self.repetition_count
+			total_time = pattern_duration * self.repetition_count
 			# Voltage is ±vmax, current we estimate but can adjust
 			v_margin = self.vmax * 0.1
 			xlim = (0, total_time)
