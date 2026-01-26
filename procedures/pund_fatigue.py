@@ -268,9 +268,94 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						all_rows.append([cycle_num, t_v, voltage, current])
 
 			if all_rows:
-				filename = self.format_filename("PUND_Fatigue", device.name) + ".csv"
+				base = self.format_filename("PUND_Fatigue", device.name)
+				filename = f"{base}.csv"
 				self.save_data(all_rows, filename,
 					["Cycle", "Time_s", "Voltage_V", "Current_A"], add_timestamp=False)
+
+			# --- Plot overlay of measured cycles ---
+			if measure_cycles and data[0] and data[1]:
+				runner = self.runner
+				
+				# Build styles with color gradient for each measured cycle
+				# Blues for voltage, oranges for current
+				max_cycles_to_plot = min(len(measure_cycles), 50)
+				step = max(1, len(measure_cycles) // max_cycles_to_plot)
+				cycles_to_plot_idx = list(range(0, len(measure_cycles), step))
+				if (len(measure_cycles) - 1) not in cycles_to_plot_idx:
+					cycles_to_plot_idx.append(len(measure_cycles) - 1)
+
+				styles = {}
+				secondary_labels = []
+				for plot_idx, meas_idx in enumerate(cycles_to_plot_idx):
+					cycle_num = measure_cycles[meas_idx]
+					intensity = 0.2 + 0.7 * (plot_idx / max(1, len(cycles_to_plot_idx) - 1))
+					# Label first and last cycle, hide others in legend
+					if meas_idx == 0:
+						v_label = f'V (cycle {cycle_num})'
+						i_label = f'I (cycle {cycle_num})'
+					elif meas_idx == len(measure_cycles) - 1:
+						v_label = f'V (cycle {cycle_num})'
+						i_label = f'I (cycle {cycle_num})'
+					else:
+						v_label = f'_V_{cycle_num}'
+						i_label = f'_I_{cycle_num}'
+					styles[v_label] = {'color': (0, 0, intensity), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
+					styles[i_label] = {'color': (intensity, 0.3 * intensity, 0), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
+					secondary_labels.append(i_label)
+
+				# Calculate expected limits for the overlay plot
+				v_margin = self.vmax * 0.1
+				xlim = (0, pattern_duration)
+				ylim = (-self.vmax - v_margin, self.vmax + v_margin)
+
+				runner.start_live_plot(
+					title=f'PUND Fatigue Overlay - {device.name}',
+					xlabel='Time (s)',
+					ylabel='Voltage (V)',
+					series_label=None,
+					styles=styles,
+					secondary_series=secondary_labels,
+					secondary_ylabel='Current (μA)',
+				)
+				runner.set_plot_limits(xlim=xlim, ylim=ylim)
+
+				# Add data for each cycle
+				batch_update = {}
+				for plot_idx, meas_idx in enumerate(cycles_to_plot_idx):
+					cycle_num = measure_cycles[meas_idx]
+					offset = meas_idx * sample_points
+					
+					if meas_idx == 0:
+						v_label = f'V (cycle {cycle_num})'
+						i_label = f'I (cycle {cycle_num})'
+					elif meas_idx == len(measure_cycles) - 1:
+						v_label = f'V (cycle {cycle_num})'
+						i_label = f'I (cycle {cycle_num})'
+					else:
+						v_label = f'_V_{cycle_num}'
+						i_label = f'_I_{cycle_num}'
+					
+					v_points = []
+					i_points = []
+					for i in range(sample_points):
+						if offset + i < len(data[0]) and offset + i < len(data[1]):
+							t_v, voltage = data[0][offset + i]
+							t_i, current = data[1][offset + i]
+							# Use relative time within pattern
+							rel_t = (t_v % pattern_duration) if t_v is not None else (i * sample_interval)
+							v_points.append((rel_t, voltage))
+							i_points.append((rel_t, current * 1e6))  # Convert to μA
+					
+					batch_update[v_label] = v_points
+					batch_update[i_label] = i_points
+
+				if batch_update:
+					runner.append_plot_points(batch_update)
+
+				# Save the overlay plot
+				plot_filename = f'{base}_overlay.png'
+				runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 
 			self.log(f"PUND Fatigue complete: {self.cycle_count:.2e} cycles, {len(measure_cycles)} measurements")
 
