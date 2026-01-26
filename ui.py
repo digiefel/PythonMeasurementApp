@@ -27,6 +27,7 @@ from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
 from procedures.PUND import PUNDProcedure
+from procedures.pund_fatigue import PUNDFatigueProcedure
 from tooltip_helper import attach_tooltip
 from plot_manager import PlotManager, PlotSpec
 
@@ -134,6 +135,19 @@ class MainUI:
                 ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
                 ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
             ],
+            'PUNDFatigue': [
+                ('gpib_address', 'GPIB Address', str),
+                ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
+                ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
+                ('vmax', 'Vmax (V)', float),
+                ('frequency', 'Frequency (Hz)', float),
+                ('pulse_delay', 'Pulse Delay (s)', float),
+                ('cycle_count', 'Cycle Count', float),
+                ('invert_polarity', 'Invert Polarity (PNNPP)', bool),
+                ('points_per_decade', 'Points per Decade', int),
+                ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
+                ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
+            ],
         }
         self.procedure_defaults = {
             'RVSweep': {
@@ -185,6 +199,19 @@ class MainUI:
                 'repetition_count': 1,
                 'repetition_delay': 0.0,
                 'invert_polarity': False,
+                'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
+                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
+            },
+            'PUNDFatigue': {
+                'gpib_address': 'GPIB0::17::INSTR',
+                'channel_1': 101,
+                'channel_2': 102,
+                'vmax': 1.0,
+                'frequency': 1e3,
+                'pulse_delay': 0.0,
+                'cycle_count': 1e6,
+                'invert_polarity': False,
+                'points_per_decade': 10,
                 'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                 'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
             },
@@ -419,6 +446,60 @@ class MainUI:
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, cast)
 
+        # Add preview button for PUNDFatigue
+        if proc_name == 'PUNDFatigue':
+            row_idx = len(fields)
+            preview_btn = ttk.Button(self.params_frame, text="Preview Sequence", command=self._show_pund_fatigue_preview)
+            preview_btn.grid(row=row_idx, column=0, columnspan=2, pady=10)
+
+    def _show_pund_fatigue_preview(self):
+        """Show preview dialog for PUNDFatigue measurement schedule."""
+        try:
+            cycle_count = float(self.param_vars.get('cycle_count', (tk.StringVar(value='1e6'), float))[0].get())
+            frequency = float(self.param_vars.get('frequency', (tk.StringVar(value='1e3'), float))[0].get())
+            ppd = int(float(self.param_vars.get('points_per_decade', (tk.StringVar(value='10'), int))[0].get()))
+        except ValueError as e:
+            messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {e}")
+            return
+
+        preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
+        measure_cycles = preview['measure_cycles']
+
+        # Format duration
+        total_sec = preview['total_duration']
+        if total_sec < 60:
+            duration_str = f"{total_sec:.1f} s"
+        elif total_sec < 3600:
+            duration_str = f"{total_sec/60:.1f} min"
+        else:
+            duration_str = f"{total_sec/3600:.2f} h"
+
+        # Build message
+        lines = [
+            f"Cycle Count: {cycle_count:.2e}",
+            f"Frequency: {frequency:.0f} Hz",
+            f"Points per Decade: {ppd}",
+            f"Decades: {preview['decades']:.1f}",
+            f"",
+            f"Total Measurements: {preview['total_measurements']}",
+            f"Estimated Duration: {duration_str}",
+            f"",
+            f"Measurement at cycles:",
+        ]
+
+        # Show cycles in compact form
+        if len(measure_cycles) <= 20:
+            lines.append("  " + ", ".join(str(c) for c in measure_cycles))
+        else:
+            # Show first 10 and last 10
+            first = ", ".join(str(c) for c in measure_cycles[:10])
+            last = ", ".join(str(c) for c in measure_cycles[-10:])
+            lines.append(f"  {first}")
+            lines.append(f"  ... ({len(measure_cycles) - 20} more)")
+            lines.append(f"  {last}")
+
+        messagebox.showinfo("PUND Fatigue Preview", "\n".join(lines))
+
     def collect_settings(self):
         proc_name = self.proc_var.get()
         fields = self.procedure_fields.get(proc_name, [])
@@ -530,6 +611,7 @@ class MainUI:
             'FourTerminalIV': FourTerminalIVProcedure,
             'OxideBreakdown': OxideBreakdownProcedure,
             'PUND': PUNDProcedure,
+            'PUNDFatigue': PUNDFatigueProcedure,
         }[proc_name]
         settings = self.collect_settings()
         # Cache current settings/selection in memory only to avoid overwriting config files on run
