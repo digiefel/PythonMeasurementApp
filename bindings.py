@@ -8,6 +8,7 @@ Note: Some argtypes may need refinement based on exact VISA types. This is a gen
 """
 
 import ctypes as ct
+import warnings
 
 # Define VISA types (from vpptype.h)
 ViStatus = ct.c_long
@@ -32,6 +33,13 @@ SMU_CHANNEL_MAP = {
     "SMU2": 4,
     "SMU3": 5,
     "SMU4": 6,
+}
+
+WGFMU_CHANNEL_MAP = {
+    "WGFMU1:RS": 101,
+    "WGFMU2:RS": 102,
+    "WGFMU3:RS": 201,
+    "WGFMU4:RS": 202,
 }
 
 # Range presets (from agb1500.h: positive = limited auto, negative = fixed, 0 = auto)
@@ -81,6 +89,64 @@ B1500_CURRENT_RANGES = [
     (-10.0e-3, "Fixed 10 mA"),
     (-100.0e-3, "Fixed 100 mA"),
     (-1.0, "Fixed 1 A"),
+]
+
+# WGFMU constants (from WGFMU.cs)
+WGFMU_OPERATION_MODE_OFFSET = 2000
+WGFMU_OPERATION_MODE_DC = WGFMU_OPERATION_MODE_OFFSET + 0
+WGFMU_OPERATION_MODE_FASTIV = WGFMU_OPERATION_MODE_OFFSET + 1
+WGFMU_OPERATION_MODE_PG = WGFMU_OPERATION_MODE_OFFSET + 2
+WGFMU_OPERATION_MODE_SMU = WGFMU_OPERATION_MODE_OFFSET + 3
+
+WGFMU_FORCE_VOLTAGE_RANGE_OFFSET = 3000
+WGFMU_FORCE_VOLTAGE_RANGE_AUTO = WGFMU_FORCE_VOLTAGE_RANGE_OFFSET + 0
+WGFMU_FORCE_VOLTAGE_RANGE_3V = WGFMU_FORCE_VOLTAGE_RANGE_OFFSET + 1
+WGFMU_FORCE_VOLTAGE_RANGE_5V = WGFMU_FORCE_VOLTAGE_RANGE_OFFSET + 2
+WGFMU_FORCE_VOLTAGE_RANGE_10V_NEGATIVE = WGFMU_FORCE_VOLTAGE_RANGE_OFFSET + 3
+WGFMU_FORCE_VOLTAGE_RANGE_10V_POSITIVE = WGFMU_FORCE_VOLTAGE_RANGE_OFFSET + 4
+
+WGFMU_MEASURE_MODE_OFFSET = 4000
+WGFMU_MEASURE_MODE_VOLTAGE = WGFMU_MEASURE_MODE_OFFSET + 0
+WGFMU_MEASURE_MODE_CURRENT = WGFMU_MEASURE_MODE_OFFSET + 1
+
+WGFMU_MEASURE_VOLTAGE_RANGE_OFFSET = 5000
+WGFMU_MEASURE_VOLTAGE_RANGE_5V = WGFMU_MEASURE_VOLTAGE_RANGE_OFFSET + 1
+WGFMU_MEASURE_VOLTAGE_RANGE_10V = WGFMU_MEASURE_VOLTAGE_RANGE_OFFSET + 2
+
+WGFMU_MEASURE_CURRENT_RANGE_OFFSET = 6000
+WGFMU_MEASURE_CURRENT_RANGE_1UA = WGFMU_MEASURE_CURRENT_RANGE_OFFSET + 1
+WGFMU_MEASURE_CURRENT_RANGE_10UA = WGFMU_MEASURE_CURRENT_RANGE_OFFSET + 2
+WGFMU_MEASURE_CURRENT_RANGE_100UA = WGFMU_MEASURE_CURRENT_RANGE_OFFSET + 3
+WGFMU_MEASURE_CURRENT_RANGE_1MA = WGFMU_MEASURE_CURRENT_RANGE_OFFSET + 4
+WGFMU_MEASURE_CURRENT_RANGE_10MA = WGFMU_MEASURE_CURRENT_RANGE_OFFSET + 5
+
+WGFMU_MEASURE_ENABLED_OFFSET = 7000
+WGFMU_MEASURE_ENABLED_DISABLE = WGFMU_MEASURE_ENABLED_OFFSET + 0
+WGFMU_MEASURE_ENABLED_ENABLE = WGFMU_MEASURE_ENABLED_OFFSET + 1
+
+WGFMU_MEASURE_EVENT_DATA_OFFSET = 12000
+WGFMU_MEASURE_EVENT_DATA_AVERAGED = WGFMU_MEASURE_EVENT_DATA_OFFSET + 0
+WGFMU_MEASURE_EVENT_DATA_RAW = WGFMU_MEASURE_EVENT_DATA_OFFSET + 1
+
+WGFMU_FORCE_VOLTAGE_RANGES = [
+    (WGFMU_FORCE_VOLTAGE_RANGE_AUTO, "Auto"),
+    (WGFMU_FORCE_VOLTAGE_RANGE_3V, "3 V"),
+    (WGFMU_FORCE_VOLTAGE_RANGE_5V, "5 V"),
+    (WGFMU_FORCE_VOLTAGE_RANGE_10V_NEGATIVE, "10 V Negative"),
+    (WGFMU_FORCE_VOLTAGE_RANGE_10V_POSITIVE, "10 V Positive"),
+]
+
+WGFMU_MEASURE_VOLTAGE_RANGES = [
+    (WGFMU_MEASURE_VOLTAGE_RANGE_5V, "5 V"),
+    (WGFMU_MEASURE_VOLTAGE_RANGE_10V, "10 V"),
+]
+
+WGFMU_MEASURE_CURRENT_RANGES = [
+    (WGFMU_MEASURE_CURRENT_RANGE_1UA, "1 µA"),
+    (WGFMU_MEASURE_CURRENT_RANGE_10UA, "10 µA"),
+    (WGFMU_MEASURE_CURRENT_RANGE_100UA, "100 µA"),
+    (WGFMU_MEASURE_CURRENT_RANGE_1MA, "1 mA"),
+    (WGFMU_MEASURE_CURRENT_RANGE_10MA, "10 mA"),
 ]
 
 # Load DLLs
@@ -929,50 +995,149 @@ class WGFMUSession:
     """
     High-level wrapper for WGFMU instrument using ctypes bindings.
     """
-    def __init__(self):
+    def __init__(self, address: str | None = None):
         if not dll_wgfmu:
             raise RuntimeError("WGFMU DLL not loaded.")
+        if address is not None:
+            ret = dll_wgfmu.WGFMU_openSession(address.encode())
+            self._check_ret(ret, "WGFMU open session")
         ret = dll_wgfmu.WGFMU_initialize()
-        if ret != 0:
-            raise RuntimeError(f"WGFMU init failed: {ret}")
+        self._check_ret(ret, "WGFMU initialize")
+
+    def _get_error_summary(self) -> str | None:
+        try:
+            size = ct.c_int()
+            ret = dll_wgfmu.WGFMU_getErrorSummarySize(ct.byref(size))
+            if ret < 0 or size.value <= 0:
+                return None
+            buf = ct.create_string_buffer(size.value)
+            ret = dll_wgfmu.WGFMU_getErrorSummary(buf, ct.byref(size))
+            if ret < 0:
+                return None
+            text = buf.value.decode(errors="replace").strip()
+            return text or None
+        except Exception:
+            return None
+
+    def _get_warning_summary(self) -> str | None:
+        try:
+            size = ct.c_int()
+            ret = dll_wgfmu.WGFMU_getWarningSummarySize(ct.byref(size))
+            if ret < 0 or size.value <= 0:
+                return None
+            buf = ct.create_string_buffer(size.value)
+            ret = dll_wgfmu.WGFMU_getWarningSummary(buf, ct.byref(size))
+            if ret < 0:
+                return None
+            text = buf.value.decode(errors="replace").strip()
+            return text or None
+        except Exception:
+            return None
+
+    def _check_ret(self, ret, context):
+        # WGFMU returns:
+        #   ret < 0  => error
+        #   ret == 0 => OK
+        #   ret > 0  => warning (non-fatal)
+        if ret < 0:
+            detail = self._get_error_summary()
+            if detail:
+                raise RuntimeError(f"{context} failed: {ret}. {detail}")
+            raise RuntimeError(f"{context} failed: {ret}")
+        if ret > 0:
+            detail = self._get_warning_summary()
+            if detail:
+                warnings.warn(f"{context}: {detail} (code {ret})", RuntimeWarning)
+            else:
+                warnings.warn(f"{context}: warning code {ret}", RuntimeWarning)
+
+    def close(self):
+        ret = dll_wgfmu.WGFMU_closeSession()
+        self._check_ret(ret, "WGFMU close session")
 
     def clear(self):
         ret = dll_wgfmu.WGFMU_clear()
-        if ret != 0:
-            raise RuntimeError(f"WGFMU clear failed: {ret}")
+        self._check_ret(ret, "WGFMU clear")
+
+    def connect(self, channel_id: int):
+        ret = dll_wgfmu.WGFMU_connect(channel_id)
+        self._check_ret(ret, "WGFMU connect")
+
+    def disconnect(self, channel_id: int):
+        ret = dll_wgfmu.WGFMU_disconnect(channel_id)
+        self._check_ret(ret, "WGFMU disconnect")
+
+    def set_operation_mode(self, channel_id: int, mode: int):
+        ret = dll_wgfmu.WGFMU_setOperationMode(channel_id, mode)
+        self._check_ret(ret, "WGFMU set operation mode")
+
+    def set_force_voltage_range(self, channel_id: int, rng: int):
+        ret = dll_wgfmu.WGFMU_setForceVoltageRange(channel_id, rng)
+        self._check_ret(ret, "WGFMU set force voltage range")
+
+    def set_measure_mode(self, channel_id: int, mode: int):
+        ret = dll_wgfmu.WGFMU_setMeasureMode(channel_id, mode)
+        self._check_ret(ret, "WGFMU set measure mode")
+
+    def set_measure_voltage_range(self, channel_id: int, rng: int):
+        ret = dll_wgfmu.WGFMU_setMeasureVoltageRange(channel_id, rng)
+        self._check_ret(ret, "WGFMU set measure voltage range")
+
+    def set_measure_current_range(self, channel_id: int, rng: int):
+        ret = dll_wgfmu.WGFMU_setMeasureCurrentRange(channel_id, rng)
+        self._check_ret(ret, "WGFMU set measure current range")
+
+    def set_measure_enabled(self, channel_id: int, enabled: int):
+        ret = dll_wgfmu.WGFMU_setMeasureEnabled(channel_id, enabled)
+        self._check_ret(ret, "WGFMU set measure enabled")
+
+    def set_measure_event(
+        self,
+        pattern_name: str,
+        event_name: str,
+        time: float,
+        measurement_points: int,
+        measurement_interval: float,
+        averaging_time: float,
+        raw_data: int,
+    ):
+        ret = dll_wgfmu.WGFMU_setMeasureEvent(
+            pattern_name.encode(),
+            event_name.encode(),
+            time,
+            measurement_points,
+            measurement_interval,
+            averaging_time,
+            raw_data,
+        )
+        self._check_ret(ret, "WGFMU set measure event")
 
     def create_pattern(self, name, initial_voltage=0.0):
         ret = dll_wgfmu.WGFMU_createPattern(name.encode(), initial_voltage)
-        if ret != 0:
-            raise RuntimeError(f"Create pattern failed: {ret}")
+        self._check_ret(ret, "WGFMU create pattern")
 
     def add_vector(self, pattern_name, time, voltage):
         ret = dll_wgfmu.WGFMU_addVector(pattern_name.encode(), time, voltage)
-        if ret != 0:
-            raise RuntimeError(f"Add vector failed: {ret}")
+        self._check_ret(ret, "WGFMU add vector")
 
     def add_sequence(self, channel_id, pattern_name, repetitions):
         ret = dll_wgfmu.WGFMU_addSequence(channel_id, pattern_name.encode(), repetitions)
-        if ret != 0:
-            raise RuntimeError(f"Add sequence failed: {ret}")
+        self._check_ret(ret, "WGFMU add sequence")
 
     def execute(self):
         ret = dll_wgfmu.WGFMU_execute()
-        if ret != 0:
-            raise RuntimeError(f"Execute failed: {ret}")
+        self._check_ret(ret, "WGFMU execute")
 
     def get_measure_value_size(self, channel_id):
         measured = ct.c_int()
         total = ct.c_int()
         ret = dll_wgfmu.WGFMU_getMeasureValueSize(channel_id, ct.byref(measured), ct.byref(total))
-        if ret != 0:
-            raise RuntimeError(f"Get measure value size failed: {ret}")
+        self._check_ret(ret, "WGFMU get measure value size")
         return measured.value, total.value
 
     def get_measure_value(self, channel_id, index):
         time_ = ct.c_double()
         value = ct.c_double()
         ret = dll_wgfmu.WGFMU_getMeasureValue(channel_id, index, ct.byref(time_), ct.byref(value))
-        if ret != 0:
-            raise RuntimeError(f"Get measure value failed: {ret}")
+        self._check_ret(ret, "WGFMU get measure value")
         return time_.value, value.value
