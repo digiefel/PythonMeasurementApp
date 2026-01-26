@@ -1,4 +1,5 @@
 import time
+import numpy as np
 from procedures.base import MeasurementProcedure
 from bindings import (
 	WGFMUSession,
@@ -166,6 +167,9 @@ class PUNDProcedure(MeasurementProcedure):
 			filename = f"{base}.csv"
 			self.save_data(data, filename, ["Time_s", "Current_A", "Voltage_V"], add_timestamp=False)
 			self.log(f"PUND complete: {len(data)} points")
+
+			# Generate plots
+			self._plot_pund_results(data, device, base)
 		finally:
 			try:
 				wgfmu.clear()
@@ -174,3 +178,40 @@ class PUNDProcedure(MeasurementProcedure):
 				wgfmu.close()
 			except Exception:
 				pass
+
+	def _plot_pund_results(self, data, device, base):
+		"""
+		Create a time-domain plot for PUND results with Voltage and Current on dual y-axes.
+		"""
+		runner = self.runner
+
+		if len(data) < 2:
+			self.log("Insufficient data points for plotting")
+			return
+
+		# Extract data
+		times = np.array([row[0] for row in data])
+		currents = np.array([row[1] for row in data]) * 1e6  # Convert A to μA
+		voltages = np.array([row[2] for row in data])
+
+		# Initialize live plot with V(t) and I(t) on dual axes
+		runner.start_live_plot(
+			title=f'PUND - {device.name}',
+			xlabel='Time (s)',
+			ylabel='Voltage (V)',
+			series_label='V(t)',
+			styles={
+				'V(t)': {'color': 'C0', 'marker': None, 'linestyle': '-'},
+				'I(t)': {'color': 'C1', 'marker': None, 'linestyle': '-'},
+			},
+			secondary_series=['I(t)'],
+			secondary_ylabel='Current (μA)',
+		)
+
+		# Push all data points for time-domain plot
+		runner.add_live_series(times.tolist(), voltages.tolist(), 'V(t)')
+		runner.add_live_series(times.tolist(), currents.tolist(), 'I(t)')
+
+		# Save plot
+		plot_filename = f'{base}_plot.png'
+		runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
