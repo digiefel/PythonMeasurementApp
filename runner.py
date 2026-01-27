@@ -294,7 +294,7 @@ class MeasurementRunner:
         except Exception as e:
             self.log(f'Warning: SENTIO move failed: {e}')
     
-    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, run_subsite=False, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
+    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, devices_to_run=None, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
         try:
             for idx, target in enumerate(temp_list_c):
@@ -314,8 +314,9 @@ class MeasurementRunner:
                         self.log(f"Temp phase start cb error: {e}")
                 run_settings = dict(settings)
                 run_settings['temperature_c'] = target
-                if run_subsite:
-                    self.run_subsite(chip_id, site, subsite, proc_class, run_settings)
+                if devices_to_run:
+                    # Run specific list of devices
+                    self.run_devices(chip_id, site, subsite, devices_to_run, proc_class, run_settings)
                 else:
                     self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings)
                     if self.temp_device_done_cb:
@@ -334,25 +335,26 @@ class MeasurementRunner:
             raise # things will be cleaned up in safe_stop
         # TODO restore to uncontrolled if ui checkbox says so
 
-    def run_subsite(self, chip_id, site, subsite, proc_class, settings):
+    def run_devices(self, chip_id, site, subsite, devices, proc_class, settings):
         """
-        Run the given procedure for every device in the subsite, optionally
-        capturing the current chuck position as the subsite origin first.
+        Run the given procedure for a specific list of devices.
         """
         if not chip_id:
-            raise ValueError("Chip ID is required to run a subsite.")
+            raise ValueError("Chip ID is required to run devices.")
+        if not devices:
+            self.log("No devices to run.")
+            return
         try:
-            for idx, device in enumerate(subsite.devices):
+            for idx, device in enumerate(devices):
                 # Copy settings per device to avoid accidental mutation
                 self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
                 if self.temp_device_done_cb and self._current_temp_step is not None:
                     try:
-                        self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, len(subsite.devices))
+                        self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, len(devices))
                     except Exception as e:
                         self.log(f"Temp device done cb error: {e}")
         except MeasurementAbortRequested:
-            # things will be cleaned up in safe_stop
-            self.log("Measurement aborted during subsite run.")
+            self.log("Measurement aborted during devices run.")
             raise
 
     

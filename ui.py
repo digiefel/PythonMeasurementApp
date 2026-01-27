@@ -10,6 +10,7 @@ from typing import Optional
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from ui_temperature import TemperatureUI
+from ui_device_selection import DeviceSelectionDialog
 
 from config import Config
 from runner import MeasurementRunner
@@ -47,6 +48,8 @@ class MainUI:
         self.runner.status_callback = self._post_status
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self._run_thread = None
+        # Selected devices for custom runs (device names)
+        self.selected_device_names = set()
 
         self.root.title("Python Measurement App")
         self.root.geometry("1400x900")
@@ -69,7 +72,6 @@ class MainUI:
         self.asu_range_var = tk.BooleanVar()
         self.status_labels = {}
         # Run options
-        self.run_subsite_var = tk.BooleanVar(value=False)
         self.set_home_var = tk.BooleanVar(value=False)
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
@@ -289,8 +291,17 @@ class MainUI:
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
         self.asu_range_check.grid(row=7, column=1, sticky="w", pady=2)
 
-        ttk.Checkbutton(self.selection_frame, text="Run all devices in subsite", variable=self.run_subsite_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=9, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # Device selection button and label
+        device_sel_frame = ttk.Frame(self.selection_frame)
+        device_sel_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
+        device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
+        
+        ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.selected_devices_label = ttk.Label(device_sel_frame, text="")
+        self.selected_devices_label.grid(row=0, column=1, sticky="w", padx=(4, 0))
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
@@ -378,6 +389,128 @@ class MainUI:
         self.device_cb['values'] = [d.name for d in subsite.devices]
         if subsite.devices:
             self.device_var.set(subsite.devices[0].name)
+        # Clear selected devices when subsite changes
+        self.selected_device_names.clear()
+        self._update_selected_devices_label()
+
+    def _update_selected_devices_label(self):
+        """Update the label showing how many devices are selected."""
+        count = len(self.selected_device_names)
+        if count == 0:
+            self.selected_devices_label.config(text="")
+        elif count == 1:
+            self.selected_devices_label.config(text=f"✓ 1 device selected")
+        else:
+            self.selected_devices_label.config(text=f"✓ {count} devices selected")
+
+    def open_device_selection(self):
+        """Open the device selection dialog."""
+        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
+        if not subsite or not subsite.devices:
+            messagebox.showwarning("No Devices", "Please select a subsite with devices first.")
+            return
+        
+        # Get currently selected device (used for origin if "set subsite origin" is checked)
+        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        set_home_checked = self.set_home_var.get()
+        
+        # Get current prober position
+        prober_pos = None
+        try:
+            pos = self.runner.prober_read_position()
+            if pos:
+                origin = self.runner.prober_ctrl.subsite_origin
+                
+                if set_home_checked and device:
+                    # Simulate what will happen when "set subsite origin at start" runs:
+                    # new_origin = current_abs_pos - device_offset
+                    # After that, prober_rel = current_abs_pos - new_origin = device_offset
+                    # 
+                    # But we need to show where the prober CURRENTLY is relative to devices.
+                    # If prober is at absolute pos P and we're about to set origin O = P - device_offset,
+                    # then after origin is set: prober_rel = P - O = device_offset
+                    # 
+                    # So if the prober is currently at the device we're setting origin to,
+                    # the prober_rel will equal that device's coordinates.
+                    # 
+                    # Formula: new_prober_rel = abs_pos - (abs_pos - device_offset) = device_offset
+                    # But abs_pos is NOT the device position necessarily - user might be anywhere.
+                    # 
+                    # Let's compute where prober will appear relative to device coordinates:
+                    # If current origin exists: abs_pos = origin + current_rel
+                    # New origin = abs_pos - device_offset
+                    # New rel = abs_pos - new_origin = abs_pos - (abs_pos - device_offset) = device_offset
+                    # 
+                    # Wait, that's wrong. The new origin is set based on WHERE the prober is NOW,
+                    # offset by the selected device's coords. So:
+                    # new_origin = abs_pos - selected_device_offset
+                    # new_rel_for_any_device = abs_pos - new_origin = selected_device_offset
+                    #
+                    # This means: after setting origin, the prober will appear at coordinates
+                    # equal to the selected device's offset. If prober is at D4 and we set origin
+                    # to D4, prober will show at D4's coords (-480, 480).
+                    #
+                    # But this only works if the prober IS at the selected device. If prober is
+                    # elsewhere, we need: new_rel = abs_pos - new_origin = abs_pos - (abs_pos - device_offset) = device_offset
+                    # Hmm, that still gives device_offset regardless of where prober is. That's wrong.
+                    #
+                    # Let me re-read set_subsite_origin:
+                    # subsite_origin = current_pos - device_offset
+                    # This means: "the origin point is at (current_pos - device_offset)"
+                    # Then when we want to go to a device: target = origin + device_coords
+                    # 
+                    # For current prober position: prober_rel = current_pos - origin
+                    #                            = current_pos - (current_pos - device_offset) 
+                    #                            = device_offset
+                    #
+                    # So the prober's new relative position = the device offset used to set origin.
+                    # This is correct - if you set origin while at D4, you're saying "I'm at D4".
+                    
+                    prober_pos = (device.x, device.y)
+                elif origin:
+                    # Origin already set, compute relative position
+                    prober_pos = (pos[0] - origin[0], pos[1] - origin[1])
+                else:
+                    # No origin set and not simulating - show absolute position
+                    # This won't align with device coords but shows raw prober position
+                    prober_pos = pos
+        except Exception as e:
+            self.log(f"Could not read prober position: {e}")
+        
+        # Open the dialog
+        dialog = DeviceSelectionDialog(
+            self.root,
+            subsite.devices,
+            prober_position=prober_pos,
+            initially_selected=self.selected_device_names
+        )
+        
+        # Set up refresh callback
+        def refresh_prober():
+            try:
+                pos = self.runner.prober_read_position()
+                if pos:
+                    origin = self.runner.prober_ctrl.subsite_origin
+                    
+                    if set_home_checked and device:
+                        # Same simulation as above
+                        dialog.update_prober_position((device.x, device.y))
+                    elif origin:
+                        dialog.update_prober_position((pos[0] - origin[0], pos[1] - origin[1]))
+                    else:
+                        dialog.update_prober_position(pos)
+            except Exception as e:
+                self.log(f"Could not refresh prober position: {e}")
+        
+        dialog.set_refresh_callback(refresh_prober)
+        
+        result = dialog.show()
+        if result is not None:
+            self.selected_device_names = result
+            self._update_selected_devices_label()
+            if len(result) > 0:
+                self.log(f"Selected {len(result)} device(s): {', '.join(sorted(result))}")
 
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
@@ -617,9 +750,18 @@ class MainUI:
         # Cache current settings/selection in memory only to avoid overwriting config files on run
         self.config.data.setdefault('procedures', {})[proc_name] = settings
         self.config.data['last_selection'] = self.build_last_selection()
-        run_all = self.run_subsite_var.get()
         set_home = self.set_home_var.get()
-        device_count = len(subsite.devices) if run_all and subsite else 1
+        
+        # Determine which devices to run
+        if self.selected_device_names:
+            # Use selected devices (in their original order from subsite)
+            devices_to_run = [d for d in subsite.devices if d.name in self.selected_device_names]
+            run_mode = 'selected'
+        else:
+            devices_to_run = [device]
+            run_mode = 'single'
+        
+        device_count = len(devices_to_run)
         if self._run_thread and self._run_thread.is_alive():
             self.log("A run is already in progress.")
             return
@@ -644,15 +786,15 @@ class MainUI:
                         device,
                         proc_class,
                         settings,
-                        run_subsite=run_all,
+                        devices_to_run=devices_to_run if run_mode == 'selected' else None,
                         poll_interval_s=poll_interval
                     )
                 else:
                     self.runner.current_temp_c = None
-                    if run_all:
-                        self.runner.run_subsite(chip_id, site, subsite, proc_class, settings)
-                    else:
+                    if run_mode == 'single':
                         self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings)
+                    else:
+                        self.runner.run_devices(chip_id, site, subsite, devices_to_run, proc_class, settings)
             except MeasurementAbortRequested:
                 self._post_log('Run aborted by user.')
             except Exception as e:
@@ -940,8 +1082,6 @@ class MainUI:
             self.update_devices()
         if last_sel.get('device'):
             self.device_var.set(last_sel['device'])
-        if 'run_subsite' in last_sel:
-            self.run_subsite_var.set(bool(last_sel['run_subsite']))
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'chip' in last_sel:
@@ -961,7 +1101,6 @@ class MainUI:
             'subsite': self.subsite_var.get(),
             'device': self.device_var.get(),
             'procedure': self.proc_var.get(),
-            'run_subsite': self.run_subsite_var.get(),
             'set_home_before_run': self.set_home_var.get(),
             'chip': self.chip_var.get(),
         }
