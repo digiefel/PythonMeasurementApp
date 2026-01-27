@@ -149,6 +149,13 @@ WGFMU_MEASURE_CURRENT_RANGES = [
     (WGFMU_MEASURE_CURRENT_RANGE_10MA, "10 mA"),
 ]
 
+# WGFMU status codes (from WGFMU manual)
+WGFMU_STATUS_COMPLETED = 10000
+WGFMU_STATUS_DONE = 10001
+WGFMU_STATUS_RUNNING = 10002
+WGFMU_STATUS_ABORT_COMPLETED = 10003
+WGFMU_STATUS_ABORTED = 10004
+
 # Load DLLs
 dll_b1500 = ct.windll.LoadLibrary(r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll")
 dll_wgfmu = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\WGFMU.dll")
@@ -758,10 +765,19 @@ class B1500Session:
     def __init__(self, gpib_addr="GPIB0::17::INSTR"):
         if not dll_b1500:
             raise RuntimeError("B1500 DLL not loaded.")
+        self.gpib_addr = gpib_addr
         self.session = ViSession()
+        self._wgfmu = None  # Lazy-loaded WGFMU session
         ret = dll_b1500.agb1500_init(gpib_addr.encode(), 1, 1, ct.byref(self.session))
         if ret != 0:
             raise RuntimeError(f"B1500 init failed: {ret}")
+
+    @property
+    def wgfmu(self):
+        """Get or create the WGFMU session (lazy initialization)."""
+        if self._wgfmu is None:
+            self._wgfmu = WGFMUSession(self.gpib_addr)
+        return self._wgfmu
     
     def error_query(self):
         """Return (error_number, error_message) from instrument."""
@@ -897,7 +913,13 @@ class B1500Session:
         self._check_ret(ret, "Zero output")
 
     def abort_measure(self):
-        """Abort ongoing measurement/sweep."""
+        """Abort ongoing measurement/sweep on B1500 and WGFMU."""
+        # Abort WGFMU first if it was used
+        if self._wgfmu is not None:
+            try:
+                self._wgfmu.abort()
+            except Exception:
+                pass
         dll_b1500.agb1500_abortMeasure(self.session)
 
     def spot_meas(self, channel, mode, range_=AUTO_RANGE):
@@ -989,6 +1011,13 @@ class B1500Session:
         return cls.DATA_TYPE_SHORT.get(data_type, f"T{data_type}")
 
     def close(self):
+        # Close WGFMU session first if it was used
+        if self._wgfmu is not None:
+            try:
+                self._wgfmu.close()
+            except Exception:
+                pass
+            self._wgfmu = None
         dll_b1500.agb1500_close(self.session)
 
 class WGFMUSession:
@@ -1128,10 +1157,6 @@ class WGFMUSession:
         ret = dll_wgfmu.WGFMU_execute()
         self._check_ret(ret, "WGFMU execute")
 
-    def wait_until_completed(self):
-        ret = dll_wgfmu.WGFMU_waitUntilCompleted()
-        self._check_ret(ret, "WGFMU wait until completed")
-
     def get_status(self):
         """Get execution status. Returns (status_code, elapsed_time, total_time)."""
         status = ct.c_int()
@@ -1154,3 +1179,28 @@ class WGFMUSession:
         ret = dll_wgfmu.WGFMU_getMeasureValue(channel_id, index, ct.byref(time_), ct.byref(value))
         self._check_ret(ret, "WGFMU get measure value")
         return time_.value, value.value
+
+    def abort(self, timeout_s: float = 2.0):
+        """Abort all WGFMU channels and wait for abort to complete."""
+        ret = dll_wgfmu.WGFMU_abort()
+        if ret < 0:
+            return ret  # Already failed, don't wait
+        
+        # Wait for ABORT_COMPLETED or IDLE status
+        import time
+        start = time.time()
+        while time.time() - start < timeout_s:
+            try:
+                status, _, _ = self.get_status()
+                # 10003 = ABORT_COMPLETED, 10001 = IDLE, 10000 = COMPLETED
+                if status in (10003, 10001, 10000):
+                    return 0  # Success
+            except Exception:
+                pass
+            time.sleep(0.01)
+        return ret  # Timeout, return original result
+
+    def abort_channel(self, channel_id: int):
+        """Abort a specific WGFMU channel."""
+        ret = dll_wgfmu.WGFMU_abortChannel(channel_id)
+        return ret

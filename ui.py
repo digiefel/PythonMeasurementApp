@@ -752,14 +752,12 @@ class MainUI:
         self.config.data['last_selection'] = self.build_last_selection()
         set_home = self.set_home_var.get()
         
-        # Determine which devices to run
+        # Determine which devices to run (always a list)
         if self.selected_device_names:
             # Use selected devices (in their original order from subsite)
             devices_to_run = [d for d in subsite.devices if d.name in self.selected_device_names]
-            run_mode = 'selected'
         else:
             devices_to_run = [device]
-            run_mode = 'single'
         
         device_count = len(devices_to_run)
         if self._run_thread and self._run_thread.is_alive():
@@ -783,24 +781,21 @@ class MainUI:
                         chip_id,
                         site,
                         subsite,
-                        device,
                         proc_class,
                         settings,
-                        devices_to_run=devices_to_run if run_mode == 'selected' else None,
+                        devices_to_run=devices_to_run,
                         poll_interval_s=poll_interval
                     )
                 else:
                     self.runner.current_temp_c = None
-                    if run_mode == 'single':
-                        self.runner.run_procedure(chip_id, site, subsite, device, proc_class, settings)
-                    else:
-                        self.runner.run_devices(chip_id, site, subsite, devices_to_run, proc_class, settings)
+                    self.runner.run_devices(chip_id, site, subsite, devices_to_run, proc_class, settings)
             except MeasurementAbortRequested:
                 self._post_log('Run aborted by user.')
             except Exception as e:
                 self._post_log(f'Run error: {e}')
                 raise
             finally:
+                self.runner.stop_event.clear()  # Clear stop flag now that we're done
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
                 self._post(self._set_running_state, False)

@@ -6,9 +6,8 @@ Optionally measures at N points (linear or log spaced) throughout the run.
 """
 import time
 import numpy as np
-from procedures.base import MeasurementProcedure
+from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import (
-	WGFMUSession,
 	WGFMU_OPERATION_MODE_PG,
 	WGFMU_OPERATION_MODE_FASTIV,
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
@@ -161,7 +160,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		}
 
 	def run(self, b1500, device):
-		self.check_stop(b1500=b1500)
+		self.check_stop(b1500)
 
 		vectors = self._build_pund_pattern()
 		pattern_duration = sum(dt for dt, _ in vectors)
@@ -173,7 +172,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self.log(f"  {len(measure_cycles)} measurement points ({self.points_per_decade} pts/decade)")
 		self.log(f"  Estimated duration: {total_time:.1f} s (+ initialization + data transfer ≈ 25 s)")
 
-		wgfmu = WGFMUSession(self.gpib_address)
+		wgfmu = b1500.wgfmu
 		ts = self.get_run_timestamp()
 		pattern_fat = f"FAT_{ts}"  # fatigue pattern (no measure)
 		pattern_meas_pg = f"MEAS_PG_{ts}"  # measure pattern ch1
@@ -314,20 +313,22 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			data_ch2 = []
 
 			while True:
-				self.check_stop(b1500=b1500, wgfmu=wgfmu)
+				self.check_stop(b1500)
 				status, elapsed, total = wgfmu.get_status()
 
 				# Get available measurement data
 				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
 				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
 				available = min(measured_1, measured_2)
-
+				
 				# Fetch and plot new points
 				if available > plotted_count:
 					# Group points by measurement cycle for overlay plotting
 					cycle_batches = {}  # meas_idx -> {'v': [...], 'i': [...]}
 
 					for i in range(plotted_count, available):
+						self.check_stop(b1500)
+
 						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
 						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
 						data_ch1.append((t_v, v))
@@ -358,6 +359,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						runner.append_plot_points(batch_update)
 
 					plotted_count = available
+					self.check_stop(b1500)
 
 				if status == STATUS_COMPLETED:
 					break
@@ -395,6 +397,5 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				wgfmu.clear()
 				wgfmu.disconnect(self.channel_1)
 				wgfmu.disconnect(self.channel_2)
-				wgfmu.close()
 			except Exception:
 				pass

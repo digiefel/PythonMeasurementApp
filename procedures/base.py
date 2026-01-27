@@ -31,13 +31,19 @@ class MeasurementProcedure(ABC):
         self.runner.log(message)
 
     def check_stop(self, b1500):
-        """Raise an abort if a stop request is active."""
+        """Check if stop was requested, abort hardware if so, then raise.
+        
+        This runs in the worker thread - the only thread that should talk to
+        the instrument to avoid GPIB bus contention.
+        """
         if not self.runner.stop_event.is_set():
             return
-        try:
-            b1500.abort_measure()
-        except Exception:
-            pass
+        # We're in the worker thread - safe to abort here
+        if b1500 is not None:
+            try:
+                b1500.abort_measure()
+            except Exception:
+                pass
         raise MeasurementAbortRequested("Measurement aborted by user")
 
     def get_run_timestamp(self):

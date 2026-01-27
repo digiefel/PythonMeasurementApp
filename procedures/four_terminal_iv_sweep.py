@@ -202,7 +202,6 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Once we exit the loop, the sweep is done
         # We can shut down the source
-        self.check_stop(b1500)
         b1500.zero_output(B1500Session.CH_ALL)
         b1500.set_switch(B1500Session.CH_ALL, False)
 

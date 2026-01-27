@@ -58,27 +58,13 @@ class MeasurementRunner:
     def safe_stop(self):
         """
         Universal stop method.
-        1. Signals all loops to stop (stop_event).
-        2. Aborts and closes B1500 session.
-        3. Separates prober.
-        4. Returns prober to local.
+        Only sets the stop_event flag. The worker thread handles the actual
+        instrument abort to avoid GPIB bus contention.
         """
         self.stop_event.set()
-        self.log("Safe stop requested, closing B1500 session.")
+        self.log("Stop requested.")
         
-        b1500 = getattr(self, 'b1500', None)
-        if b1500:
-            try:
-                b1500.abort_measure()
-                b1500.zero_output(B1500Session.CH_ALL)
-                b1500.set_switch(B1500Session.CH_ALL, False)
-                b1500.close()
-            except Exception as e:
-                self.log(f"Error cleaning up B1500: {e}")
-            finally:
-                self.b1500 = None
-        
-        # try to separate
+        # Separate prober for safety (this is a different bus, OK to call here)
         has_prober = getattr(self.prober_ctrl, "prober", None) is not None
         if has_prober:
             try:
@@ -89,9 +75,6 @@ class MeasurementRunner:
                         self.log(f"Contact state cb error: {e}")
             except Exception:
                 pass
-        # return prober to local control (no new session will be opened here)
-        self.prober_ctrl.close()
-        self.stop_event.clear()
 
     def check_stop(self, context: str = ""):
         """Raise an abort if a stop is active."""
@@ -294,7 +277,7 @@ class MeasurementRunner:
         except Exception as e:
             self.log(f'Warning: SENTIO move failed: {e}')
     
-    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, device, proc_class, settings, devices_to_run=None, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
+    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, proc_class, settings, devices_to_run, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
         try:
             for idx, target in enumerate(temp_list_c):
@@ -314,16 +297,7 @@ class MeasurementRunner:
                         self.log(f"Temp phase start cb error: {e}")
                 run_settings = dict(settings)
                 run_settings['temperature_c'] = target
-                if devices_to_run:
-                    # Run specific list of devices
-                    self.run_devices(chip_id, site, subsite, devices_to_run, proc_class, run_settings)
-                else:
-                    self.run_procedure(chip_id, site, subsite, device, proc_class, run_settings)
-                    if self.temp_device_done_cb:
-                        try:
-                            self.temp_device_done_cb(time.time(), idx, 1, 1)
-                        except Exception as e:
-                            self.log(f"Temp device done cb error: {e}")
+                self.run_devices(chip_id, site, subsite, devices_to_run, proc_class, run_settings)
                 if self.temp_phase_cb:
                     try:
                         self.temp_phase_cb("measure_end", idx)
@@ -385,7 +359,8 @@ class MeasurementRunner:
         self.check_stop("Stop requested before device move")
         self.move_to_device(device)
         # Ensure contact right before measurement
-        self.prober_contact()
+        if not self.prober_contact():
+            self.log("Warning: Failed to establish contact before measurement")
         self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:

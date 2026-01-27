@@ -1,8 +1,7 @@
 import time
 import numpy as np
-from procedures.base import MeasurementProcedure
+from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from bindings import (
-	WGFMUSession,
 	WGFMU_OPERATION_MODE_PG,
 	WGFMU_OPERATION_MODE_FASTIV,
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
@@ -66,7 +65,7 @@ class PUNDProcedure(MeasurementProcedure):
 		self.check_stop(b1500)
 		self.log(f"Starting PUND on {device.name}")
 
-		wgfmu = WGFMUSession(self.gpib_address)
+		wgfmu = b1500.wgfmu
 		pattern_pg = f"PUND_PG_{self.get_run_timestamp()}"
 		pattern_iv = f"PUND_IV_{self.get_run_timestamp()}"
 
@@ -90,6 +89,8 @@ class PUNDProcedure(MeasurementProcedure):
 
 			wgfmu.set_measure_enabled(self.channel_1, WGFMU_MEASURE_ENABLED_ENABLE)
 			wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
+
+			self.check_stop(b1500)
 
 			vectors = self._build_pund_vectors()
 			pattern_duration = sum(dt for dt, _ in vectors)
@@ -166,6 +167,7 @@ class PUNDProcedure(MeasurementProcedure):
 					WGFMU_MEASURE_EVENT_DATA_AVERAGED,
 				)
 
+			self.check_stop(b1500)
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
 
@@ -205,6 +207,7 @@ class PUNDProcedure(MeasurementProcedure):
 			)
 			runner.set_plot_limits(xlim=xlim, ylim=ylim)
 
+			self.check_stop(b1500)
 			wgfmu.execute()
 
 			# Poll for data and plot live in overlay mode
@@ -282,6 +285,5 @@ class PUNDProcedure(MeasurementProcedure):
 				wgfmu.clear()
 				wgfmu.disconnect(self.channel_1)
 				wgfmu.disconnect(self.channel_2)
-				wgfmu.close()
 			except Exception:
 				pass
