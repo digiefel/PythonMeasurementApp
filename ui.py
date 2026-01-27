@@ -1081,6 +1081,9 @@ class MainUI:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
+        if 'selected_devices' in last_sel:
+            self.selected_device_names = set(last_sel['selected_devices'])
+            self.update_device_selection_label()
         if 'temp_comp_x_um_per_c' in last_sel:
             self.temp_comp_x_var.set(str(last_sel.get('temp_comp_x_um_per_c', '0.0')))
         if 'temp_comp_y_um_per_c' in last_sel:
@@ -1098,6 +1101,7 @@ class MainUI:
             'procedure': self.proc_var.get(),
             'set_home_before_run': self.set_home_var.get(),
             'chip': self.chip_var.get(),
+            'selected_devices': list(self.selected_device_names),
         }
         data['temp_comp_x_um_per_c'] = self.temp_comp_x_var.get()
         data['temp_comp_y_um_per_c'] = self.temp_comp_y_var.get()
