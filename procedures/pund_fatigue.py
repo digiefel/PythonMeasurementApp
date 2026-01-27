@@ -83,14 +83,12 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		With ppd=5:  1,2,3,4,5,20,40,60,80,100,200,400,...
 		With ppd=2:  1,2,50,100,500,1000,...
 		With ppd=1:  1,100,1000,...
+		With ppd=20: 1,2,...,10,15,20,25,...,100,150,200,...
 		"""
 		n = int(cycle_count)
 		ppd = points_per_decade
 		if ppd <= 0 or n < 1:
 			return []
-		
-		# Cap at 10 points per decade
-		ppd = min(ppd, 10)
 		
 		cycles = []
 		decade = 0
@@ -100,18 +98,25 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			
 			if decade == 0:
 				# First decade: only first ppd cycles (1,2,...,ppd)
-				for c in range(1, min(ppd + 1, n + 1)):
+				# Cap at (1,2,...,10)
+				for c in range(1, min(ppd + 1, 10 + 1, n + 1)):
 					cycles.append(c)
 			else:
-				# step = base * round(10/ppd)
+				# step = next_base / ppd (integer division, at least 1)
 				# For ppd=10: step=10 -> 20,30,...,100
 				# For ppd=5: step=20 -> 20,40,60,80,100
 				# For ppd=2: step=50 -> 50,100
-				step_mult = round(10 / ppd)
-				step = base * step_mult
+				# For ppd=20: step=5 -> 15,20,25,...,100
+				# For ppd=50: step=2 -> 12,14,16,...,100
+				step = max(1, next_base // ppd)
 				
 				# Start after base to avoid duplicate with previous decade's end
-				start = step if step > base else step * 2
+				if step > base:
+					start = step  # step is already past base
+				elif step == base:
+					start = step * 2  # skip base (which equals step)
+				else:  # step < base (ppd > 10)
+					start = base + step
 				
 				for c in range(start, next_base + 1, step):
 					if c > n:
@@ -342,8 +347,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						if offset + i < len(data[0]) and offset + i < len(data[1]):
 							t_v, voltage = data[0][offset + i]
 							t_i, current = data[1][offset + i]
-							# Use relative time within pattern
-							rel_t = (t_v % pattern_duration) if t_v is not None else (i * sample_interval)
+							# Use sample index for relative time (absolute time includes fatigue cycles)
+							rel_t = i * sample_interval
 							v_points.append((rel_t, voltage))
 							i_points.append((rel_t, current * 1e6))  # Convert to μA
 					
