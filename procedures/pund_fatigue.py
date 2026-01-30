@@ -174,7 +174,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 		wgfmu = b1500.wgfmu
 		ts = self.get_run_timestamp()
-		pattern_fat = f"FAT_{ts}"  # fatigue pattern (no measure)
+		pattern_fat_pg = f"FAT_PG_{ts}"  # fatigue pattern ch1 (PUND waveform, no measure)
+		pattern_fat_iv = f"FAT_IV_{ts}"  # fatigue pattern ch2 (0V, no measure)
 		pattern_meas_pg = f"MEAS_PG_{ts}"  # measure pattern ch1
 		pattern_meas_iv = f"MEAS_IV_{ts}"  # measure pattern ch2
 
@@ -203,11 +204,17 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			sample_interval = round(sample_interval / RESOLUTION) * RESOLUTION
 			sample_points = int(pattern_duration / sample_interval)
 
-			# Create fatigue pattern (no measure event) - same waveform for both channels
-			wgfmu.create_pattern(pattern_fat, 0.0)
+			# Create fatigue pattern for ch1 (PG mode - applies PUND waveform, no measure event)
+			wgfmu.create_pattern(pattern_fat_pg, 0.0)
 			for dt, voltage in vectors:
 				if dt > 0:
-					wgfmu.add_vector(pattern_fat, dt, voltage)
+					wgfmu.add_vector(pattern_fat_pg, dt, voltage)
+
+			# Create fatigue pattern for ch2 (FastIV mode - holds at 0V, no measure event)
+			wgfmu.create_pattern(pattern_fat_iv, 0.0)
+			for dt, _ in vectors:
+				if dt > 0:
+					wgfmu.add_vector(pattern_fat_iv, dt, 0.0)
 
 			# Create measure patterns with sampling
 			wgfmu.create_pattern(pattern_meas_pg, 0.0)
@@ -234,8 +241,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			for mc in measure_cycles:
 				fatigue_count = mc - prev_cycle - 1
 				if fatigue_count > 0:
-					wgfmu.add_sequence(self.channel_1, pattern_fat, fatigue_count)
-					wgfmu.add_sequence(self.channel_2, pattern_fat, fatigue_count)
+					wgfmu.add_sequence(self.channel_1, pattern_fat_pg, fatigue_count)
+					wgfmu.add_sequence(self.channel_2, pattern_fat_iv, fatigue_count)
 				# Measure cycle
 				wgfmu.add_sequence(self.channel_1, pattern_meas_pg, 1)
 				wgfmu.add_sequence(self.channel_2, pattern_meas_iv, 1)
@@ -244,8 +251,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			# Remaining fatigue cycles after last measurement
 			remaining = int(self.cycle_count) - prev_cycle
 			if remaining > 0:
-				wgfmu.add_sequence(self.channel_1, pattern_fat, remaining)
-				wgfmu.add_sequence(self.channel_2, pattern_fat, remaining)
+				wgfmu.add_sequence(self.channel_1, pattern_fat_pg, remaining)
+				wgfmu.add_sequence(self.channel_2, pattern_fat_iv, remaining)
 
 			wgfmu.execute()
 
