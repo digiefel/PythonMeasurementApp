@@ -112,7 +112,10 @@ class ProberController:
     def get_temp(self) -> Optional[float]:
         try:
             prober = self._get()
-            return prober.status.get_chuck_temp()
+            if prober.status.get_chuck_thermo_state() == ThermoChuckState.Uncontrolled:
+                return 25.0 # TODO this is a bit of a hack
+            else:
+                return prober.status.get_chuck_temp()
         except Exception as e:
             self.log(f"Warning: Get chuck temperature failed: {e}")
             return None

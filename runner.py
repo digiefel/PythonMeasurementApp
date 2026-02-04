@@ -125,7 +125,6 @@ class MeasurementRunner:
     def prober_set_temp(self, temp_c: float):
         ok = self.prober_ctrl.set_temp(temp_c)
         if ok:
-            self.current_temp_c = temp_c
             self._record_temp_setpoint(temp_c)
         return ok
 
@@ -203,6 +202,7 @@ class MeasurementRunner:
             stop_check=self.check_stop,
         )
         if reached:
+            self.current_temp_c = target_c
             try:
                 self._apply_z_compensation(target_c)
             except Exception as e:
@@ -289,7 +289,6 @@ class MeasurementRunner:
                 self.prober_set_temp(target)
                 if poll_interval_s > 0:
                     self.prober_wait_until_temp(target, tolerance_c, wait_after_stable_s, poll_interval_s)
-                self.current_temp_c = target
                 if self.temp_phase_cb:
                     try:
                         self.temp_phase_cb("measure_start", idx)
