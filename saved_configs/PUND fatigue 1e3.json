@@ -58,13 +58,26 @@
             "invert_polarity": false,
             "meas_range_1": 5001,
             "meas_range_2": 6004
+        },
+        "PUNDFatigue": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "channel_1": 101,
+            "channel_2": 102,
+            "vmax": 3.0,
+            "frequency": 100000.0,
+            "pulse_delay": 0.0,
+            "cycle_count": 1000.0,
+            "invert_polarity": false,
+            "points_per_decade": 10,
+            "meas_range_1": 5001,
+            "meas_range_2": 6004
         }
     },
     "last_selection": {
         "site": "VI",
         "subsite": "25um",
         "device": "D10",
-        "procedure": "PUND",
+        "procedure": "PUNDFatigue",
         "run_subsite": false,
         "set_home_before_run": true,
         "chip": "RuO2test_A10",
