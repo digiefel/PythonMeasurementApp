@@ -78,6 +78,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
+        # make sure that all channels are open unless otherwise configured
+        b1500.set_switch(b1500.CH_ALL, False)
         # Enable SMUs
         b1500.set_switch(high, True)
         b1500.set_switch(low, True)
