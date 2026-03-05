@@ -18,12 +18,12 @@ class Site:
         self.subsites = subsites
 
 def load_devices_csv(csv_path: str) -> List[Site]:
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, dtype=str)
     sites = {}
     for _, row in df.iterrows():
         site_name = row['Site']
         subsite_name = row['Subsite']
-        device = Device(row['Device'], row['X'], row['Y'])
+        device = Device(row['Device'], float(row['X']), float(row['Y']))
         
         if site_name not in sites:
             sites[site_name] = {}
