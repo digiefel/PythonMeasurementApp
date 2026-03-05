@@ -20,6 +20,7 @@ class MeasurementRunner:
         self.plot_append_callback = None
         self.status_callback = None
         self.contact_state_callback = None
+        self.light_state_callback = None
         self._last_status_message = None
         self.temp_step_started_cb = None
         self.temp_phase_cb = None
@@ -68,11 +69,14 @@ class MeasurementRunner:
         has_prober = getattr(self.prober_ctrl, "prober", None) is not None
         if has_prober:
             try:
-                if self.prober_ctrl.separation() and self.contact_state_callback:
+                separated = self.prober_ctrl.separation()
+                if separated and self.contact_state_callback:
                     try:
                         self.contact_state_callback(False)
                     except Exception as e:
                         self.log(f"Contact state cb error: {e}")
+                if separated:
+                    self.prober_set_light(True)
             except Exception:
                 pass
 
@@ -111,6 +115,24 @@ class MeasurementRunner:
 
     def prober_read_position(self):
         return self.prober_ctrl.read_position()
+
+    def prober_toggle_light(self):
+        state = self.prober_ctrl.toggle_scope_light()
+        if state is not None and self.light_state_callback:
+            try:
+                self.light_state_callback(state)
+            except Exception as e:
+                self.log(f"Light state cb error: {e}")
+        return state
+
+    def prober_set_light(self, light_on: bool):
+        state = self.prober_ctrl.set_scope_light(light_on)
+        if state is not None and self.light_state_callback:
+            try:
+                self.light_state_callback(state)
+            except Exception as e:
+                self.log(f"Light state cb error: {e}")
+        return state
 
     def get_chuck_height(self) -> Optional[float]:
         return self.prober_ctrl.get_chuck_height()

@@ -36,7 +36,7 @@ from plot_manager import PlotManager, PlotSpec
 class MainUI:
     def __init__(self, root):
         self.root = root
-        self.config = Config('global_config.json', 'devices.csv')
+        self.config = Config('global_config.json', 'TASE_devices.csv')
         self.runner = MeasurementRunner(self.config)
         self.runner.log_callback = self._post_log
         self.runner.plot_start_callback = self._post_plot_start
@@ -47,6 +47,7 @@ class MainUI:
         self.runner.plot_append_callback = self._post_plot_append
         self.runner.status_callback = self._post_status
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
+        self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
         # Selected devices for custom runs (device names)
         self.selected_device_names = set()
@@ -74,6 +75,7 @@ class MainUI:
         # Run options
         self.set_home_var = tk.BooleanVar(value=False)
         self.prober_contact_state = tk.BooleanVar(value=False)
+        self.prober_light_state = tk.BooleanVar(value=True)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
         self.chip_var = tk.StringVar()
         # Temperature compensation coefficients (um / C)
@@ -335,7 +337,9 @@ class MainUI:
         for c in range(2):
             prober_frame.grid_columnconfigure(c, weight=1)
         self.contact_button = tk.Button(prober_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
-        self.contact_button.grid(row=0, column=0, columnspan=2, sticky="ew", padx=4, pady=2)
+        self.contact_button.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
+        self.light_button = tk.Button(prober_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
+        self.light_button.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         ttk.Button(prober_frame, text="Go To Device", command=self.prober_go_to_device).grid(row=1, column=0, sticky="ew", padx=4, pady=2)
         ttk.Button(prober_frame, text="Set Reference to Device", command=self.prober_set_reference).grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=2, column=0, sticky="ew", padx=4, pady=2)
@@ -770,6 +774,7 @@ class MainUI:
         else:
             self.temp_ui.stop_run()
         def target():
+            self.runner.prober_set_light(False)
             if set_home:
                 self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
                 self.runner.set_subsite_origin(device.x, device.y)
@@ -795,6 +800,7 @@ class MainUI:
                 self._post_log(f'Run error: {e}')
                 raise
             finally:
+                self.runner.prober_set_light(True)
                 self.runner.stop_event.clear()  # Clear stop flag now that we're done
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
@@ -864,7 +870,21 @@ class MainUI:
             self.position_var.set(f"X={x:.1f}um , Y={y:.1f}um")
         else:
             self.position_var.set("X=-- , Y=--")
-    
+
+    def toggle_prober_light(self):
+        state = self.runner.prober_toggle_light()
+        if state is None:
+            self.log("Could not toggle scope light.")
+            return
+        self._set_light_state(state)
+
+    def _set_light_state(self, light_on: bool):
+        self.prober_light_state.set(light_on)
+        if light_on:
+            self.light_button.config(text="Light ON", bg="green yellow")
+        else:
+            self.light_button.config(text="Light OFF", bg="yellow")
+
     def log(self, msg):
         timestamp = datetime.now().strftime('%H:%M:%S')
         log_msg = f'[{timestamp}] {msg}'

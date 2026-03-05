@@ -7,6 +7,7 @@ from sentio_prober_control.Sentio.Enumerations import (
     ChuckSite,
     ThermoChuckState,
     ZReference,
+    CameraMountPoint,
 )
 from sentio_prober_control.Sentio.Response import Response
 
@@ -18,6 +19,7 @@ class ProberController:
         self.log = log
         self.prober: Optional[SentioProber] = None
         self.subsite_origin = None
+        self._scope_light_on: Optional[bool] = None
 
     def _get(self) -> SentioProber:
         if self.prober is None:
@@ -96,6 +98,41 @@ class ProberController:
         prober.move_chuck_xy(XyReference.Home, target_x, target_y)
         prober.wait_all()
         return prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
+
+    # --- Vision helpers ---
+    def set_scope_light(self, light_on: bool, on_level: int = 80) -> Optional[bool]:
+        try:
+            prober = self._get()
+            camera = CameraMountPoint.Scope
+            if not prober.vision.has_camera(camera):
+                self.log("Warning: Scope camera is not available on this prober.")
+                return None
+
+            target = on_level if light_on else 0
+            prober.vision.camera.set_light(camera, target)
+            self._scope_light_on = light_on
+            self.log(f"Scope light {'ON' if light_on else 'OFF'} (level={target}).")
+            return light_on
+        except Exception as e:
+            self.log(f"Warning: Set scope light failed: {e}")
+            return None
+
+    def toggle_scope_light(self, on_level: int = 80) -> Optional[bool]:
+        try:
+            prober = self._get()
+            camera = CameraMountPoint.Scope
+            if not prober.vision.has_camera(camera):
+                self.log("Warning: Scope camera is not available on this prober.")
+                return None
+
+            if self._scope_light_on is None:
+                current = prober.vision.camera.get_light(camera)
+                self._scope_light_on = current > 0.5
+
+            return self.set_scope_light(not self._scope_light_on, on_level)
+        except Exception as e:
+            self.log(f"Warning: Toggle scope light failed: {e}")
+            return None
 
     # --- Temperature helpers ---
     def set_temp(self, temp_c: float):
