@@ -65,6 +65,7 @@ class MainUI:
         self.site_var = tk.StringVar()
         self.subsite_var = tk.StringVar()
         self.device_var = tk.StringVar()
+        self.devices_csv_var = tk.StringVar()
         self.proc_var = tk.StringVar()
         self.param_vars = {}
         # Global ASU state
@@ -222,6 +223,7 @@ class MainUI:
         }
 
         self.build_layout()
+        self._refresh_devices_csv_options()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
@@ -261,43 +263,52 @@ class MainUI:
         ttk.Label(self.selection_frame, text="Chip ID", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Entry(self.selection_frame, textvariable=self.chip_var).grid(row=0, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="Site").grid(row=1, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Devices CSV").grid(row=1, column=0, sticky="w")
+        csv_frame = ttk.Frame(self.selection_frame)
+        csv_frame.grid(row=1, column=1, sticky="ew", pady=2)
+        csv_frame.grid_columnconfigure(0, weight=1)
+        self.devices_csv_cb = ttk.Combobox(csv_frame, textvariable=self.devices_csv_var)
+        self.devices_csv_cb.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.devices_csv_cb.bind('<<ComboboxSelected>>', self.on_devices_csv_selected)
+        ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(self.selection_frame, text="Site").grid(row=2, column=0, sticky="w")
         self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
-        self.site_cb.grid(row=1, column=1, sticky="ew", pady=2)
+        self.site_cb.grid(row=2, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
 
-        ttk.Label(self.selection_frame, text="Subsite").grid(row=2, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Subsite").grid(row=3, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
-        self.subsite_cb.grid(row=2, column=1, sticky="ew", pady=2)
+        self.subsite_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
 
-        ttk.Label(self.selection_frame, text="Device").grid(row=3, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Device").grid(row=4, column=0, sticky="w")
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
-        self.device_cb.grid(row=3, column=1, sticky="ew", pady=2)
+        self.device_cb.grid(row=4, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="Procedure").grid(row=4, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Procedure").grid(row=5, column=0, sticky="w")
         self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
-        self.proc_cb.grid(row=4, column=1, sticky="ew", pady=2)
+        self.proc_cb.grid(row=5, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
         # Global ASU config
-        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=5, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=6, column=0, sticky="w")
         self.asu_channels_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_channels_var)
-        self.asu_channels_entry.grid(row=5, column=1, sticky="ew", pady=2)
+        self.asu_channels_entry.grid(row=6, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=6, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=7, column=0, sticky="w")
         self.asu_path_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_path_var)
-        self.asu_path_entry.grid(row=6, column=1, sticky="ew", pady=2)
+        self.asu_path_entry.grid(row=7, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=7, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=8, column=0, sticky="w")
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
-        self.asu_range_check.grid(row=7, column=1, sticky="w", pady=2)
+        self.asu_range_check.grid(row=8, column=1, sticky="w", pady=2)
 
-        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
-        device_sel_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        device_sel_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
@@ -307,14 +318,14 @@ class MainUI:
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=11, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
-        self.run_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.run_button.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -370,29 +381,98 @@ class MainUI:
         self.status_labels = {}
         self._render_status_ok()
 
+    def _refresh_devices_csv_options(self):
+        options = []
+        if os.path.isdir(self.config.config_root):
+            for name in os.listdir(self.config.config_root):
+                if name.lower().endswith('.csv'):
+                    options.append(os.path.normpath(os.path.join(self.config.config_root, name)))
+        if self.config.devices_csv_path not in options:
+            options.insert(0, self.config.devices_csv_path)
+        self.devices_csv_cb['values'] = sorted(set(options), key=str.lower)
+        self.devices_csv_var.set(self.config.devices_csv_path)
+
+    def _switch_devices_csv(self, csv_path: str):
+        target = (csv_path or '').strip()
+        if not target:
+            return
+        if os.path.normcase(os.path.normpath(target)) == os.path.normcase(os.path.normpath(self.config.devices_csv_path)):
+            return
+        try:
+            self.config.reload_devices(target, persist=True)
+        except Exception as e:
+            messagebox.showerror("Devices CSV", f"Failed to load devices CSV:\n{e}")
+            self.devices_csv_var.set(self.config.devices_csv_path)
+            self.log(f"Failed to load devices CSV '{target}': {e}")
+            return
+        self.selected_device_names.clear()
+        self._refresh_devices_csv_options()
+        self.populate_sites()
+        self.log(f"Loaded devices CSV: {self.config.devices_csv_path}")
+
+    def on_devices_csv_selected(self, event=None):
+        self._switch_devices_csv(self.devices_csv_var.get())
+
+    def browse_devices_csv(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Select devices CSV",
+            initialdir=self.config.config_root,
+        )
+        if not path:
+            return
+        self.devices_csv_var.set(path)
+        self._switch_devices_csv(path)
+
     def populate_sites(self):
-        if self.config.sites:
-            self.site_var.set(self.config.sites[0].name)
-            self.update_subsites()
+        site_names = [s.name for s in self.config.sites]
+        self.site_cb['values'] = site_names
+        if not site_names:
+            self.site_var.set('')
+            self.subsite_var.set('')
+            self.device_var.set('')
+            self.subsite_cb['values'] = []
+            self.device_cb['values'] = []
+            self.selected_device_names.clear()
+            self._update_selected_devices_label()
+            return
+        current = self.site_var.get()
+        self.site_var.set(current if current in site_names else site_names[0])
+        self.update_subsites()
 
     def update_subsites(self, event=None):
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         if not site:
+            self.subsite_cb['values'] = []
+            self.device_cb['values'] = []
+            self.subsite_var.set('')
+            self.device_var.set('')
             return
-        self.subsite_cb['values'] = [sub.name for sub in site.subsites]
-        if site.subsites:
-            self.subsite_var.set(site.subsites[0].name)
-            self.update_devices()
+        subsite_names = [sub.name for sub in site.subsites]
+        self.subsite_cb['values'] = subsite_names
+        if not subsite_names:
+            self.device_cb['values'] = []
+            self.subsite_var.set('')
+            self.device_var.set('')
+            return
+        current = self.subsite_var.get()
+        self.subsite_var.set(current if current in subsite_names else subsite_names[0])
+        self.update_devices()
 
     def update_devices(self, event=None):
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         if not subsite:
             self.device_cb['values'] = []
+            self.device_var.set('')
             return
-        self.device_cb['values'] = [d.name for d in subsite.devices]
-        if subsite.devices:
-            self.device_var.set(subsite.devices[0].name)
+        device_names = [d.name for d in subsite.devices]
+        self.device_cb['values'] = device_names
+        if device_names:
+            current = self.device_var.get()
+            self.device_var.set(current if current in device_names else device_names[0])
+        else:
+            self.device_var.set('')
         # Clear selected devices when subsite changes
         self.selected_device_names.clear()
         self._update_selected_devices_label()
@@ -685,7 +765,10 @@ class MainUI:
             return
         try:
             with open(path, 'r') as f:
-                self.config.data = json.load(f)
+                loaded_data = json.load(f)
+                current_devices_csv = self.config.devices_csv_path
+                self.config.replace_data(loaded_data)
+                self.config.data['devices_csv_path'] = current_devices_csv
                 self.config.config_path = path
         except Exception as e:
             self.log(f'Failed to load settings: {e}')
@@ -1089,21 +1172,29 @@ class MainUI:
             self.proc_var.set(last_sel['procedure'])
             self.proc_cb.set(last_sel['procedure'])
             self.render_param_form(last_sel['procedure'])
-        if last_sel.get('site'):
-            self.site_var.set(last_sel['site'])
+        site_names = [s.name for s in self.config.sites]
+        if site_names:
+            preferred_site = last_sel.get('site')
+            self.site_var.set(preferred_site if preferred_site in site_names else site_names[0])
             self.update_subsites()
-        if last_sel.get('subsite'):
-            self.subsite_var.set(last_sel['subsite'])
-            self.update_devices()
-        if last_sel.get('device'):
-            self.device_var.set(last_sel['device'])
+            selected_site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+            if selected_site and selected_site.subsites:
+                sub_names = [sub.name for sub in selected_site.subsites]
+                preferred_sub = last_sel.get('subsite')
+                self.subsite_var.set(preferred_sub if preferred_sub in sub_names else sub_names[0])
+                self.update_devices()
+                selected_sub = next((sub for sub in selected_site.subsites if sub.name == self.subsite_var.get()), None)
+                if selected_sub and selected_sub.devices:
+                    dev_names = [d.name for d in selected_sub.devices]
+                    preferred_dev = last_sel.get('device')
+                    self.device_var.set(preferred_dev if preferred_dev in dev_names else dev_names[0])
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
         if 'selected_devices' in last_sel:
             self.selected_device_names = set(last_sel['selected_devices'])
-            self.update_device_selection_label()
+            self._update_selected_devices_label()
         if 'temp_comp_x_um_per_c' in last_sel:
             self.temp_comp_x_var.set(str(last_sel.get('temp_comp_x_um_per_c', '0.0')))
         if 'temp_comp_y_um_per_c' in last_sel:

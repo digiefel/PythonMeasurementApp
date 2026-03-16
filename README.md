@@ -41,10 +41,11 @@ PythonMeasurementApp/
 Install: `pip install -r requirements.txt`
 
 ## How to Run
-1. Edit `devices.csv` with your sites/subsites/devices.
+1. Prepare one or more device CSV files (columns: `Site,Subsite,Device,X,Y`).
 2. Run `python ui.py` to launch GUI.
-3. Select site/subsite/device/procedure.
-4. Click "Run" to execute (logs to GUI, saves data).
+3. In the Selection panel, choose a `Devices CSV` source (dropdown or `Browse...`).
+4. Select site/subsite/device/procedure.
+5. Click "Run" to execute (logs to GUI, saves data).
 
 ## Key Classes and Methods
 ### models.py
@@ -128,8 +129,8 @@ Install: `pip install -r requirements.txt`
 - Hacky solutions
 
 ## Config Files
-- **devices.csv**: Flat CSV for devices. Columns: Site, Subsite, Device, X, Y. Edit manually.
-- **global_config.json**: Stores GPIB address, output dir, procedure settings. Auto-loaded/saved.
+- **Device CSV files**: Flat CSV catalogs for devices. Columns: Site, Subsite, Device, X, Y.
+- **global_config.json**: Stores global app settings including the active `devices_csv_path`.
 
 ## Procedures
 - Known at compile time (hardcoded in UI).
