@@ -9,6 +9,8 @@ from prober import ProberController
 
 
 class MeasurementRunner:
+    CONTACT_LIGHTS_OFF_DELAY_S = 1.0
+
     def __init__(self, config):
         self.config = config
         self.log_callback = None
@@ -380,8 +382,17 @@ class MeasurementRunner:
         self.check_stop("Stop requested before device move")
         self.move_to_device(device)
         # Ensure contact right before measurement
-        if not self.prober_contact():
+        contact_ok = self.prober_contact()
+        if not contact_ok:
             self.log("Warning: Failed to establish contact before measurement")
+        else:
+            delay_s = max(float(self.CONTACT_LIGHTS_OFF_DELAY_S), 0.0)
+            if delay_s > 0:
+                self.log(f"Contact established. Waiting {delay_s:.1f}s before turning scope light off.")
+                if self.stop_event.wait(delay_s):
+                    self.check_stop("Stop requested during post-contact light delay")
+            self.prober_set_light(False)
+            self.log("Scope light off. Starting measurement.")
         self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:

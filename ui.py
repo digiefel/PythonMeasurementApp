@@ -857,7 +857,6 @@ class MainUI:
         else:
             self.temp_ui.stop_run()
         def target():
-            self.runner.prober_set_light(False)
             if set_home:
                 self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
                 self.runner.set_subsite_origin(device.x, device.y)
