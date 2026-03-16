@@ -49,6 +49,7 @@ class MainUI:
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
+        self._prober_warning_shown = False
         # Selected devices for custom runs (device names)
         self.selected_device_names = set()
 
@@ -235,6 +236,26 @@ class MainUI:
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
         self.load_global_asu()
+        self._init_prober_state()
+
+    def _init_prober_state(self):
+        available = self.runner.prober_ctrl.initialize()
+        error_message = self.runner.prober_ctrl.get_last_init_error()
+        self._finish_prober_initialization(available, error_message)
+
+    def _finish_prober_initialization(self, available: bool, error_message: str | None):
+        if not available:
+            self.position_var.set("Prober unavailable")
+            if error_message:
+                self.log(error_message)
+            if not self._prober_warning_shown:
+                self._prober_warning_shown = True
+                messagebox.showwarning(
+                    "SENTIO Prober Unavailable",
+                    error_message or "Could not initialize the SENTIO probe station."
+                )
+            return
+
         self._init_contact_state()
 
     def _init_contact_state(self):

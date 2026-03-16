@@ -1,5 +1,6 @@
 import time
 from typing import Optional, Callable
+from sentio_prober_control.Communication.CommunicatorVisa import CommunicatorVisa
 from sentio_prober_control.Sentio.ProberSentio import SentioProber
 from sentio_prober_control.Sentio.Enumerations import (
     XyReference,
@@ -15,18 +16,85 @@ from sentio_prober_control.Sentio.Response import Response
 class ProberController:
     """Encapsulate SENTIO prober interactions."""
 
+    DEFAULT_ADDRESS = "GPIB0::28::INSTR"
+    INIT_TIMEOUT_MS = 5000
+
     def __init__(self, log: Callable[[str], None]):
         self.log = log
         self.prober: Optional[SentioProber] = None
+        self._last_init_error: Optional[str] = None
         self.subsite_origin = None
         self._scope_light_on: Optional[bool] = None
 
+    def initialize(self, force: bool = False) -> bool:
+        """Initialize the SENTIO session.
+
+        Returns True when the prober is ready for commands.
+        Returns False when initialization fails; details are available via
+        get_last_init_error().
+        """
+        if self.prober is not None:
+            if force:
+                self.close()
+            else:
+                return True
+        return self._initialize_session()
+
+    def _initialize_session(self) -> bool:
+        """Open VISA, create SENTIO prober, and apply startup defaults."""
+        comm = CommunicatorVisa()
+        try:
+            self.log(f"Opening SENTIO prober session at {self.DEFAULT_ADDRESS}")
+            self._connect_with_init_timeout(comm)
+
+            prober = SentioProber(comm)
+            prober.set_stepping_contact_mode(SteppingContactMode.BackToContact)
+
+            self.prober = prober
+            self._last_init_error = None
+            return True
+        except Exception as e:
+            err = f"SENTIO initialization failed: {e}"
+            self.log(f"Warning: {err}")
+            self._last_init_error = err
+            self.prober = None
+            self._cleanup_failed_comm(comm)
+            return False
+
+    def _connect_with_init_timeout(self, comm: CommunicatorVisa) -> None:
+        """Open VISA resource with a short timeout during initialization.
+
+        sentio_prober_control does not provide a public timeout parameter for
+        CommunicatorVisa.connect(), so we set the internal VISA handle directly.
+        """
+        rm = getattr(comm, "_CommunicatorVisa__rm")
+        visa = rm.open_resource(self.DEFAULT_ADDRESS)
+        visa.timeout = self.INIT_TIMEOUT_MS
+        setattr(comm, "_CommunicatorVisa__visa", visa)
+        setattr(comm, "_CommunicatorVisa__address", self.DEFAULT_ADDRESS)
+
+    def _cleanup_failed_comm(self, comm: CommunicatorVisa) -> None:
+        """Best-effort cleanup for partially initialized VISA communicator."""
+        try:
+            comm.disconnect()
+        except Exception:
+            pass
+
+        rm = getattr(comm, "_CommunicatorVisa__rm", None)
+        if rm is not None:
+            try:
+                rm.close()
+            except Exception:
+                pass
+
+    def get_last_init_error(self) -> Optional[str]:
+        return self._last_init_error
+
     def _get(self) -> SentioProber:
         if self.prober is None:
-            addr = "GPIB0::28::INSTR"
-            self.log(f'Opening SENTIO prober session at {addr}')
-            self.prober = SentioProber.create_prober("visa", addr)
-            self.prober.set_stepping_contact_mode(SteppingContactMode.BackToContact)
+            if not self.initialize():
+                raise RuntimeError(self._last_init_error or "SENTIO prober is not available.")
+        assert self.prober is not None
         return self.prober
 
     # --- Positioning helpers ---
