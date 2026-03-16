@@ -91,6 +91,122 @@ B1500_CURRENT_RANGES = [
     (-1.0, "Fixed 1 A"),
 ]
 
+# CMU/C-V helper option lists for UI usage.
+B1500_CMU_CHANNELS = [
+    (-1, "Default CMU"),
+]
+
+# Full MFCMU measurement mode list from the B1500 programming guide.
+B1500_CMU_MEASUREMENT_MODES_ALL = [
+    (1, "R-X"),
+    (2, "G-B"),
+    (10, "Z-Theta (radian)"),
+    (11, "Z-Theta (degree)"),
+    (20, "Y-Theta (radian)"),
+    (21, "Y-Theta (degree)"),
+    (100, "Cp-G"),
+    (101, "Cp-D"),
+    (102, "Cp-Q"),
+    (103, "Cp-Rp"),
+    (200, "Cs-Rs"),
+    (201, "Cs-D"),
+    (202, "Cs-Q"),
+    (300, "Lp-G"),
+    (301, "Lp-D"),
+    (302, "Lp-Q"),
+    (303, "Lp-Rp"),
+    (400, "Ls-Rs"),
+    (401, "Ls-D"),
+    (402, "Ls-Q"),
+]
+
+B1500_CMU_MODE_NAME_BY_CODE = {code: label for code, label in B1500_CMU_MEASUREMENT_MODES_ALL}
+
+# Split each CMU mode into primary/monitor quantity names used by sweepCv output.
+B1500_CMU_MODE_COMPONENTS = {
+    1: ("R", "X"),
+    2: ("G", "B"),
+    10: ("Z", "Theta_rad"),
+    11: ("Z", "Theta_deg"),
+    20: ("Y", "Theta_rad"),
+    21: ("Y", "Theta_deg"),
+    100: ("Cp", "G"),
+    101: ("Cp", "D"),
+    102: ("Cp", "Q"),
+    103: ("Cp", "Rp"),
+    200: ("Cs", "Rs"),
+    201: ("Cs", "D"),
+    202: ("Cs", "Q"),
+    300: ("Lp", "G"),
+    301: ("Lp", "D"),
+    302: ("Lp", "Q"),
+    303: ("Lp", "Rp"),
+    400: ("Ls", "Rs"),
+    401: ("Ls", "D"),
+    402: ("Ls", "Q"),
+}
+
+B1500_CMU_COMPONENT_UNITS = {
+    "R": "Ohm",
+    "X": "Ohm",
+    "Z": "Ohm",
+    "Y": "S",
+    "G": "S",
+    "B": "S",
+    "Cp": "F",
+    "Cs": "F",
+    "Lp": "H",
+    "Ls": "H",
+    "Rp": "Ohm",
+    "Rs": "Ohm",
+    "D": "",
+    "Q": "",
+    "Theta_rad": "rad",
+    "Theta_deg": "deg",
+}
+
+
+def get_cmu_mode_name(mode: int) -> str:
+    return B1500_CMU_MODE_NAME_BY_CODE.get(mode, f"Mode {mode}")
+
+
+def get_cmu_mode_components(mode: int) -> tuple[str, str]:
+    return B1500_CMU_MODE_COMPONENTS.get(mode, ("Primary", "Monitor"))
+
+
+def format_cmu_component_label(component: str) -> str:
+    unit = B1500_CMU_COMPONENT_UNITS.get(component, "")
+    return f"{component} ({unit})" if unit else component
+
+# Curated subset shown in the UI by default.
+B1500_CMU_MEASUREMENT_MODES = [
+    (100, "Cp-G"),
+    (103, "Cp-Rp"),
+    (200, "Cs-Rs"),
+    (11, "Z-Theta (degree)"),
+]
+
+B1500_CMU_INTEGRATION_MODES = [
+    (0, "Auto"),
+    (1, "Manual"),
+    (2, "PLC"),
+]
+
+# MFCMU measurement range argument for sweepCv/spotCmuMeas.
+# Values are representative inputs for each documented range bucket.
+B1500_CMU_SWEEP_RANGES = [
+    (0.0, "Auto ranging"),
+    (50.0, "50 Ohm"),
+    (100.0, "100 Ohm"),
+    (300.0, "300 Ohm"),
+    (1000.0, "1 kOhm"),
+    (3000.0, "3 kOhm"),
+    (10000.0, "10 kOhm"),
+    (30000.0, "30 kOhm"),
+    (100000.0, "100 kOhm"),
+    (300001.0, "300 kOhm"),
+]
+
 # WGFMU constants (from WGFMU.cs)
 WGFMU_OPERATION_MODE_OFFSET = 2000
 WGFMU_OPERATION_MODE_DC = WGFMU_OPERATION_MODE_OFFSET + 0
@@ -363,7 +479,7 @@ if dll_b1500:
     dll_b1500.agb1500_setCv.argtypes = [ViSession, ViInt32, ViInt32, ViReal64, ViReal64, ViInt32, ViReal64, ViReal64, ViReal64]
     dll_b1500.agb1500_setCv.restype = ViStatus
 
-    dll_b1500.agb1500_spotCmuMeas.argtypes = [ViSession, ViInt32, ViInt32, ViReal64, ct.POINTER(ViReal64), ct.POINTER(ViInt32), ct.POINTER(ViReal64), ViPReal64]
+    dll_b1500.agb1500_spotCmuMeas.argtypes = [ViSession, ViInt32, ViInt32, ViReal64, ct.POINTER(ViReal64), ct.POINTER(ViInt32), ct.POINTER(ViReal64), ct.POINTER(ViInt32), ViPReal64]
     dll_b1500.agb1500_spotCmuMeas.restype = ViStatus
 
     dll_b1500.agb1500_sweepCv.argtypes = [ViSession, ViInt32, ViInt32, ViReal64, ViPInt32, ct.POINTER(ViReal64), ct.POINTER(ViReal64), ct.POINTER(ViInt32), ct.POINTER(ViReal64), ct.POINTER(ViInt32), ct.POINTER(ViReal64)]
@@ -751,7 +867,30 @@ class B1500Session:
     SWP_IF_SGLLIN = -1   # Single linear current sweep
     SWP_IF_DBLLIN = -3   # Double linear current sweep
     SWP_VF_SGLLIN = 1    # Single linear voltage sweep
+    SWP_VF_SGLLOG = 2    # Single log voltage sweep
     SWP_VF_DBLLIN = 3    # Double linear voltage sweep
+    SWP_VF_DBLLOG = 4    # Double log voltage sweep
+    # CMU modes (from agb1500.h)
+    CMUM_R_X = 1
+    CMUM_G_B = 2
+    CMUM_Z_TRAD = 10
+    CMUM_Z_TDEG = 11
+    CMUM_Y_TRAD = 20
+    CMUM_Y_TDEG = 21
+    CMUM_CP_G = 100
+    CMUM_CP_D = 101
+    CMUM_CP_Q = 102
+    CMUM_CP_RP = 103
+    CMUM_CS_RS = 200
+    CMUM_CS_D = 201
+    CMUM_CS_Q = 202
+    CMUM_LP_G = 300
+    CMUM_LP_D = 301
+    CMUM_LP_Q = 302
+    CMUM_LP_RP = 303
+    CMUM_LS_RS = 400
+    CMUM_LS_D = 401
+    CMUM_LS_Q = 402
     # Stop/last mode (see agb1500_stopMode)
     STOP_DISABLE = 0      # Do not abort on compliance/abort conditions
     STOP_ENABLE = 1       # Abort on stop conditions
@@ -906,6 +1045,117 @@ class B1500Session:
                 "time": list(time_)[start:end],
             }
         return data, point_count.value
+
+    def force_cmu_dc_bias(self, channel, value):
+        """Force a DC bias on the CMU channel."""
+        ret = dll_b1500.agb1500_forceCmuDcBias(self.session, channel, value)
+        self._check_ret(ret, "Force CMU DC bias")
+
+    def set_cmu_integ(self, mode, value):
+        """Set CMU integration mode/value (see agb1500_INTEG_* constants)."""
+        ret = dll_b1500.agb1500_setCmuInteg(self.session, mode, value)
+        self._check_ret(ret, "Set CMU integration")
+
+    def force_cmu_ac_level(self, channel, value):
+        """Set CMU AC test level."""
+        ret = dll_b1500.agb1500_forceCmuAcLevel(self.session, channel, value)
+        self._check_ret(ret, "Force CMU AC level")
+
+    def set_cmu_freq(self, channel, frequency_hz):
+        """Set CMU measurement frequency."""
+        ret = dll_b1500.agb1500_setCmuFreq(self.session, channel, frequency_hz)
+        self._check_ret(ret, "Set CMU frequency")
+
+    def set_cv(self, channel, mode, start, stop, points, hold=0.0, delay=0.0, second_delay=0.0):
+        """Configure a C-V sweep on the CMU."""
+        ret = dll_b1500.agb1500_setCv(
+            self.session,
+            channel,
+            mode,
+            start,
+            stop,
+            points,
+            hold,
+            delay,
+            second_delay,
+        )
+        self._check_ret(ret, "Set C-V sweep")
+
+    def spot_cmu_meas(self, channel, mode, range_=AUTO_RANGE):
+        """Single CMU measurement point.
+
+        Returns (primary, status, monitor, status_monitor, timestamp).
+        """
+        data = ViReal64()
+        status = ViInt32()
+        monitor = ViReal64()
+        status_mon = ViInt32()
+        time_ = ViReal64()
+        ret = dll_b1500.agb1500_spotCmuMeas(
+            self.session,
+            channel,
+            mode,
+            range_,
+            ct.byref(data),
+            ct.byref(status),
+            ct.byref(monitor),
+            ct.byref(status_mon),
+            ct.byref(time_),
+        )
+        self._check_ret(ret, "Spot CMU measurement")
+        return data.value, status.value, monitor.value, status_mon.value, time_.value
+
+    def sweep_cv(self, channel, mode, measurement_range, expected_points):
+        """Execute configured C-V sweep and return arrays with point_count.
+
+        The DLL reports point_count = N (number of bias points) but writes
+        2*N entries into value[], status[], monitor[], and status_mon[] —
+        interleaving the two measurement components per bias point:
+          value[2i]   = primary component (e.g. Cp)
+          value[2i+1] = secondary component (e.g. Rp)
+        source[] and time[] have exactly N entries (one per bias point).
+        This method returns the full 2*N slice for value/status/monitor arrays.
+        """
+        expected = max(1, int(expected_points))
+        # source/time: N entries; value/status/monitor: 2*N entries.
+        cap_source = min(200000, max(expected + 64, expected * 2))
+        cap_values = min(400000, max(expected * 2 + 64, expected * 3))
+
+        source = (ViReal64 * cap_source)()
+        value = (ViReal64 * cap_values)()
+        status = (ViInt32 * cap_values)()
+        monitor = (ViReal64 * cap_values)()
+        status_mon = (ViInt32 * cap_values)()
+        time_ = (ViReal64 * cap_source)()
+        point_count = ViInt32(cap_source)
+        ret = dll_b1500.agb1500_sweepCv(
+            self.session,
+            channel,
+            mode,
+            measurement_range,
+            ct.byref(point_count),
+            source,
+            value,
+            status,
+            monitor,
+            status_mon,
+            time_,
+        )
+        self._check_ret(ret, "Sweep C-V")
+        count = point_count.value
+        if count < 0 or count > cap_source:
+            raise RuntimeError(
+                f"Sweep C-V returned invalid point_count={count} for capacity={cap_source}."
+            )
+        return (
+            list(source)[:count],
+            list(value)[:2 * count],
+            list(status)[:2 * count],
+            list(monitor)[:2 * count],
+            list(status_mon)[:2 * count],
+            list(time_)[:count],
+            count,
+        )
 
     def zero_output(self, channel):
         """Return channel to zero output state."""

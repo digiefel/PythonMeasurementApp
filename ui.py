@@ -19,14 +19,20 @@ from bindings import (
     WGFMU_CHANNEL_MAP,
     B1500_VOLTAGE_RANGES,
     B1500_CURRENT_RANGES,
+    B1500_CMU_CHANNELS,
+    B1500_CMU_MEASUREMENT_MODES,
+    B1500_CMU_INTEGRATION_MODES,
+    B1500_CMU_SWEEP_RANGES,
     WGFMU_MEASURE_VOLTAGE_RANGES,
     WGFMU_MEASURE_CURRENT_RANGES,
     B1500Session,
+    get_cmu_mode_name,
 )
 from procedures.base import MeasurementAbortRequested
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
+from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
 from tooltip_helper import attach_tooltip
@@ -50,6 +56,8 @@ class MainUI:
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
         self._prober_warning_shown = False
+        # Keep CMU mode labels sourced from shared bindings metadata.
+        self.cmu_mode_options = [(code, get_cmu_mode_name(code)) for code, _ in B1500_CMU_MEASUREMENT_MODES]
         # Selected devices for custom runs (device names)
         self.selected_device_names = set()
 
@@ -128,6 +136,23 @@ class MainUI:
                 ('delay_time', 'Delay Time (s)', float),
                 ('second_delay', 'Second Delay (s)', float),
             ],
+            'CVSweep': [
+                ('gpib_address', 'GPIB Address', str),
+                ('cmu_channel', 'CMU Channel', 'cmu_channel'),
+                ('double_sweep', 'Double Sweep (return)', bool),
+                ('cmu_mode', 'C-V Measurement Output', 'cmu_mode'),
+                ('start_bias', 'Start Bias (V)', float),
+                ('stop_bias', 'Stop Bias (V)', float),
+                ('points', 'Points', int),
+                ('measurement_range', 'MFCMU Measurement Range', 'cmu_sweep_range'),
+                ('ac_level_mv', 'AC Level (mV)', float),
+                ('frequency_hz', 'Frequency (Hz)', float),
+                ('integration_mode', 'Integration Mode', 'cmu_integration_mode'),
+                ('integration_value', 'Integration Value (manual/PLC)', int),
+                ('hold_time', 'Hold Time (s)', float),
+                ('delay_time', 'Delay Time (s)', float),
+                ('second_delay', 'Second Delay (s)', float),
+            ],
             'PUND': [
                 ('gpib_address', 'GPIB Address', str),
                 ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
@@ -191,6 +216,23 @@ class MainUI:
                 'double_sweep': True,
                 'current_compliance': 1e-3,
                 'current_range': 0.0,
+                'hold_time': 0.0,
+                'delay_time': 0.0,
+                'second_delay': 0.0,
+            },
+            'CVSweep': {
+                'gpib_address': 'GPIB0::17::INSTR',
+                'cmu_channel': -1,
+                'double_sweep': False,
+                'cmu_mode': 101,
+                'start_bias': -2.0,
+                'stop_bias': 2.0,
+                'points': 101,
+                'measurement_range': 0.0,
+                'ac_level_mv': 30.0,
+                'frequency_hz': 1e5,
+                'integration_mode': 0,
+                'integration_value': 1,
                 'hold_time': 0.0,
                 'delay_time': 0.0,
                 'second_delay': 0.0,
@@ -659,6 +701,30 @@ class MainUI:
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CURRENT_RANGES], state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, cast)
+            elif cast == 'cmu_channel':
+                label_val = self.lookup_range_label(val, B1500_CMU_CHANNELS)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_CHANNELS], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
+            elif cast == 'cmu_mode':
+                label_val = self.lookup_range_label(val, self.cmu_mode_options)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in self.cmu_mode_options], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
+            elif cast == 'cmu_sweep_range':
+                label_val = self.lookup_range_label(val, B1500_CMU_SWEEP_RANGES)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_SWEEP_RANGES], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
+            elif cast == 'cmu_integration_mode':
+                label_val = self.lookup_range_label(val, B1500_CMU_INTEGRATION_MODES)
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_INTEGRATION_MODES], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
             elif cast == 'wgfmu_voltage_range':
                 label_val = self.lookup_range_label(val, WGFMU_MEASURE_VOLTAGE_RANGES)
                 var = tk.StringVar(value=label_val)
@@ -683,6 +749,10 @@ class MainUI:
                 entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, cast)
+
+        # CV-specific: keep MFCMU range options consistent with entered frequency.
+        if proc_name == 'CVSweep':
+            self._bind_cv_range_filter()
 
         # Add preview button for PUNDFatigue
         if proc_name == 'PUNDFatigue':
@@ -755,6 +825,14 @@ class MainUI:
                     settings[key] = self.lookup_range_value(var.get(), B1500_VOLTAGE_RANGES)
                 elif cast == 'current_range':
                     settings[key] = self.lookup_range_value(var.get(), B1500_CURRENT_RANGES)
+                elif cast == 'cmu_channel':
+                    settings[key] = int(self.lookup_range_value(var.get(), B1500_CMU_CHANNELS))
+                elif cast == 'cmu_mode':
+                    settings[key] = int(self.lookup_range_value(var.get(), self.cmu_mode_options))
+                elif cast == 'cmu_sweep_range':
+                    settings[key] = float(self.lookup_range_value(var.get(), B1500_CMU_SWEEP_RANGES))
+                elif cast == 'cmu_integration_mode':
+                    settings[key] = int(self.lookup_range_value(var.get(), B1500_CMU_INTEGRATION_MODES))
                 elif cast == 'wgfmu_voltage_range':
                     settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_VOLTAGE_RANGES)
                 elif cast == 'wgfmu_channel':
@@ -851,6 +929,7 @@ class MainUI:
             'RVSweep': RVSweepProcedure,
             'FourTerminalIV': FourTerminalIVProcedure,
             'OxideBreakdown': OxideBreakdownProcedure,
+            'CVSweep': CVSweepProcedure,
             'PUND': PUNDProcedure,
             'PUNDFatigue': PUNDFatigueProcedure,
         }[proc_name]
@@ -1177,6 +1256,63 @@ class MainUI:
             if lbl == label:
                 return val
         return options[0][0] if options else 0.0
+
+    def _bind_cv_range_filter(self):
+        """Filter CMU range options based on frequency limits from the MFCMU table."""
+        range_item = self.param_vars.get('measurement_range')
+        freq_item = self.param_vars.get('frequency_hz')
+        if not range_item or not freq_item:
+            return
+        range_var, _ = range_item
+        freq_var, _ = freq_item
+
+        def refresh(*_args):
+            opts = self._cv_range_options_for_freq(freq_var.get())
+            combo = None
+            for child in self.params_frame.winfo_children():
+                if isinstance(child, ttk.Combobox) and child.cget('textvariable') == str(range_var):
+                    combo = child
+                    break
+            if combo is None:
+                return
+            labels = [label for _, label in opts]
+            combo.configure(values=labels)
+            if range_var.get() not in labels:
+                range_var.set(labels[0])
+
+        # Initial sync and live updates as frequency is edited.
+        refresh()
+        try:
+            freq_var.trace_add('write', refresh)
+        except Exception:
+            pass
+
+    def _cv_range_options_for_freq(self, freq_text):
+        # Frequency-dependent availability from MFCMU table:
+        # <=200 kHz: all manual ranges; <=2 MHz: up to 30 kOhm; <=5 MHz: up to 3 kOhm.
+        try:
+            freq = float(freq_text)
+        except Exception:
+            return B1500_CMU_SWEEP_RANGES
+
+        limits = {
+            50.0: 5e6,
+            100.0: 5e6,
+            300.0: 5e6,
+            1000.0: 5e6,
+            3000.0: 5e6,
+            10000.0: 2e6,
+            30000.0: 2e6,
+            100000.0: 2e5,
+            300001.0: 2e5,
+        }
+
+        filtered = [B1500_CMU_SWEEP_RANGES[0]]  # Auto ranging always available
+        for val, label in B1500_CMU_SWEEP_RANGES[1:]:
+            max_freq = limits.get(float(val), 0.0)
+            if freq <= max_freq:
+                filtered.append((val, label))
+        return filtered
 
     # Temperature UI logic is encapsulated in TemperatureUI (ui_temperature.py)
     def _on_close(self):
