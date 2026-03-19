@@ -3,6 +3,7 @@ import os
 import threading
 from datetime import datetime
 import time
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
@@ -63,8 +64,9 @@ def parse_si_value(text: str) -> float:
 
 
 def parse_si_list(text: str) -> list:
-    """Parse comma-separated SI-prefixed values, e.g. '100k, 1M' → [100000.0, 1000000.0]."""
-    return [parse_si_value(part) for part in text.split(',') if part.strip()]
+    """Parse SI-prefixed values separated by commas and/or whitespace."""
+    parts = [part for part in re.split(r"[\s,]+", text.strip()) if part]
+    return [parse_si_value(part) for part in parts]
 
 
 def format_si_value(value: float) -> str:
@@ -73,6 +75,34 @@ def format_si_value(value: float) -> str:
         if value >= mult and value % mult == 0:
             return f"{value / mult:g}{suffix}"
     return f"{value:g}"
+
+
+def format_si_compact_0(value: float) -> str:
+    """Format value using SI suffixes with zero decimals (e.g. 15320 -> '15k')."""
+    try:
+        v = float(value)
+    except Exception:
+        return "0"
+    if v == 0.0:
+        return "0"
+
+    abs_v = abs(v)
+    scales = [
+        (1e12, 'T'),
+        (1e9, 'G'),
+        (1e6, 'M'),
+        (1e3, 'k'),
+        (1.0, ''),
+        (1e-3, 'm'),
+        (1e-6, 'u'),
+        (1e-9, 'n'),
+        (1e-12, 'p'),
+    ]
+    for mult, suffix in scales:
+        if abs_v >= mult:
+            return f"{v / mult:.0f}{suffix}"
+    # Very small values: fall back to 0 with no decimals to keep display compact.
+    return "0"
 
 
 class MainUI:
@@ -113,6 +143,13 @@ class MainUI:
         self.devices_csv_var = tk.StringVar()
         self.proc_var = tk.StringVar()
         self.param_vars = {}
+        self._cv_calibration_store = {}
+        self._cv_calib_buttons = {}
+        self._cv_calibration_session_done = {}
+        self._cv_phase_live_cache = {}
+        self._cv_phase_probe_inflight = set()
+        self._cv_phase_probe_lock = threading.Lock()
+        self._cv_calib_readout_var = tk.StringVar(value="No calibration data")
         # Global ASU state
         self.asu_channels_var = tk.StringVar()
         self.asu_path_var = tk.StringVar()
@@ -153,7 +190,7 @@ class MainUI:
                 ('points', 'Points', int),
                 ('voltage_compliance', 'Voltage Compliance (V)', float),
                 ('power_compliance', 'Power Compliance (W)', float),
-                ('measurement_range', 'Voltage Measurement Range', 'voltage_range'),
+                ('measurement_range', 'Voltage Meas Range', 'voltage_range'),
                 ('current_compliance', 'Return Current Compliance (A)', float),
                 ('hold_time', 'Hold Time (s)', float),
                 ('delay_time', 'Delay Time (s)', float),
@@ -176,15 +213,15 @@ class MainUI:
                 ('gpib_address', 'GPIB Address', str),
                 ('cmu_channel', 'CMU Channel', 'cmu_channel'),
                 ('sweep_type', 'Sweep Type', 'cv_sweep_type'),
-                ('cmu_mode', 'C-V Measurement Output', 'cmu_mode'),
+                ('cmu_mode', 'C-V Meas Output', 'cmu_mode'),
                 ('start_bias', 'Start Bias (V)', float),
                 ('stop_bias', 'Stop Bias (V)', float),
                 ('points', 'Points', int),
-                ('measurement_range', 'MFCMU Measurement Range', 'cmu_sweep_range'),
+                ('measurement_range', 'MFCMU Meas Range', 'cmu_sweep_range'),
                 ('ac_level_mv', 'AC Level (mV)', float),
                 ('frequencies', 'Frequencies (e.g. 100k, 1M)', str),
                 ('integration_mode', 'Integration Mode', 'cmu_integration_mode'),
-                ('integration_value', 'Integration Value (manual/PLC)', int),
+                ('integration_value', 'Integration (manual/PLC)', int),
                 ('hold_time', 'Hold Time (s)', float),
                 ('delay_time', 'Delay Time (s)', float),
                 ('second_delay', 'Second Delay (s)', float),
@@ -703,6 +740,7 @@ class MainUI:
         for child in self.params_frame.winfo_children():
             child.destroy()
         self.param_vars = {}
+        self._cv_calib_buttons = {}
 
         fields = self.procedure_fields.get(proc_name, [])
         if not fields:
@@ -794,7 +832,16 @@ class MainUI:
 
         # CV-specific: keep MFCMU range options consistent with entered frequency.
         if proc_name == 'CVSweep':
+            self._cv_calibration_store = self.config.get_cmu_calibration()
             self._bind_cv_range_filter()
+            # Bottom-anchor the calibration box: expandable spacer consumes extra height.
+            spacer_row = 999
+            calib_row = 1000
+            self.params_frame.grid_rowconfigure(spacer_row, weight=1)
+            spacer = ttk.Frame(self.params_frame)
+            spacer.grid(row=spacer_row, column=0, columnspan=2, sticky="nsew")
+            self._render_cv_calibration_section(calib_row)
+            self._refresh_cv_calibration_readout()
 
         # Add preview button for PUNDFatigue
         if proc_name == 'PUNDFatigue':
@@ -893,6 +940,469 @@ class MainUI:
                 # Leave invalid entries as strings to avoid hard fail; they will be validated by procedure
                 settings[key] = var.get()
         return settings
+
+    def _render_cv_calibration_section(self, row_idx: int):
+        section = ttk.LabelFrame(self.params_frame, text="CMU Calibration")
+        section.grid(row=row_idx, column=0, columnspan=2, sticky="ew", padx=4, pady=(8, 6))
+        section.grid_columnconfigure(2, weight=1)
+
+        self._cv_calib_buttons = {}
+        for row, label, cal_type, tip in (
+            [
+                (0, "Open", "open", "Open-circuit calibration"),
+                (1, "Short", "short", "Short-circuit calibration"),
+                (2, "Phase", "phase", "Phase compensation"),
+                (3, "Load", "load", "Load calibration"),
+            ]
+        ):
+            btn = tk.Button(
+                section,
+                text=label,
+                width=8,
+                command=lambda c=cal_type: self._on_cv_calibration_button(c),
+                bg="#f2a0a0",
+                activebackground="#e38f8f",
+            )
+            btn.grid(row=row, column=0, sticky="ew", padx=2, pady=2)
+            attach_tooltip(btn, lambda c=cal_type, t=tip: self._build_cv_calibration_tooltip(c, t))
+            self._cv_calib_buttons[cal_type] = btn
+
+        readout = ttk.Label(
+            section,
+            textvariable=self._cv_calib_readout_var,
+            justify="left",
+            anchor="w",
+            wraplength=780,
+        )
+        readout.grid(row=0, column=2, rowspan=4, sticky="ew", padx=(10, 6), pady=4)
+
+        cmu_item = self.param_vars.get('cmu_channel')
+        if cmu_item:
+            cmu_var, _ = cmu_item
+            try:
+                cmu_var.trace_add('write', lambda *_: self._refresh_cv_calibration_readout())
+            except Exception:
+                pass
+
+        # Recompute calibration coverage state when selected frequencies change.
+        freq_item = self.param_vars.get('frequencies')
+        if freq_item:
+            freq_var, _ = freq_item
+            try:
+                freq_var.trace_add('write', lambda *_: self._refresh_cv_calibration_readout())
+            except Exception:
+                pass
+
+    def _build_cv_calibration_tooltip(self, cal_type: str, base_tip: str) -> str:
+        try:
+            cmu_var, _ = self.param_vars.get('cmu_channel', (None, None))
+            if cmu_var is None:
+                return base_tip
+            channel = int(self.lookup_range_value(cmu_var.get(), B1500_CMU_CHANNELS))
+        except Exception:
+            return base_tip
+
+        ch_data = self._cv_calibration_store.get(str(channel), {})
+        entry = ch_data.get(cal_type)
+        if not isinstance(entry, dict):
+            return f"{base_tip}\nLast: not calibrated"
+
+        ts = entry.get('timestamp', 'n/a')
+        lines = [base_tip, f"Last: {ts}"]
+
+        if cal_type == 'phase':
+            result = entry.get('result', {}) if isinstance(entry, dict) else {}
+            live = self._get_live_phase_calibrated(channel, schedule_probe=True)
+            if live is True:
+                lines.append("Live: calibrated")
+            elif live is False:
+                lines.append("Live: not calibrated")
+            return "\n".join(lines)
+
+        by_freq = entry.get('results_by_frequency', {})
+        if isinstance(by_freq, dict) and by_freq:
+            freq_labels = []
+            for fk in by_freq.keys():
+                try:
+                    freq_labels.append(f"{format_si_value(float(fk))}Hz")
+                except Exception:
+                    pass
+            if freq_labels:
+                lines.append("F: " + ", ".join(sorted(freq_labels)))
+            return "\n".join(lines)
+
+        freq_hz = entry.get('frequency_hz')
+        if freq_hz is not None:
+            try:
+                lines.append(f"F: {format_si_value(float(freq_hz))}Hz")
+            except Exception:
+                pass
+        return "\n".join(lines)
+
+    def _update_cv_calibration_button_colors(self):
+        cmu_item = self.param_vars.get('cmu_channel')
+        channel_key = None
+        channel = None
+        selected_freq_keys = set()
+        if cmu_item:
+            cmu_var, _ = cmu_item
+            try:
+                channel = int(self.lookup_range_value(cmu_var.get(), B1500_CMU_CHANNELS))
+                if channel != -1:
+                    channel_key = str(channel)
+            except Exception:
+                channel_key = None
+
+        try:
+            _, freqs = self._get_cv_channel_and_frequencies()
+            selected_freq_keys = {self._freq_key(f) for f in freqs}
+        except Exception:
+            selected_freq_keys = set()
+
+        session_done = self._cv_calibration_session_done.get(channel_key, {}) if channel_key else {}
+        stored = self._cv_calibration_store.get(channel_key, {}) if channel_key else {}
+
+        for cal_type, btn in self._cv_calib_buttons.items():
+            if cal_type == 'phase':
+                phase_done_session = bool(session_done.get('phase', False))
+                phase_live_calibrated = self._get_live_phase_calibrated(channel) if channel_key else None
+                phase_has_stored = cal_type in stored
+                if phase_done_session:
+                    btn.configure(bg="#9be39b", activebackground="#87d287")
+                elif phase_live_calibrated is True:
+                    btn.configure(bg="#f3e58f", activebackground="#e7d97f")
+                elif phase_live_calibrated is False:
+                    btn.configure(bg="#f2a0a0", activebackground="#e38f8f")
+                elif phase_has_stored:
+                    btn.configure(bg="#f3e58f", activebackground="#e7d97f")
+                else:
+                    btn.configure(bg="#f2a0a0", activebackground="#e38f8f")
+                continue
+
+            session_freqs = set(session_done.get(cal_type, set()))
+            stored_freqs = self._get_stored_freq_keys(stored.get(cal_type))
+
+            if selected_freq_keys and selected_freq_keys.issubset(session_freqs):
+                btn.configure(bg="#9be39b", activebackground="#87d287")
+            elif selected_freq_keys and selected_freq_keys.issubset(stored_freqs):
+                btn.configure(bg="#f3e58f", activebackground="#e7d97f")
+            else:
+                btn.configure(bg="#f2a0a0", activebackground="#e38f8f")
+
+    def _get_live_phase_calibrated(self, channel: int | None, schedule_probe: bool = False):
+        """Return cached phase-comp state; optional async probe when explicitly requested.
+
+        Important: ADJ? can trigger MFCMU activity, so we do NOT probe by default
+        during normal UI refresh paths (like procedure selection).
+        """
+        if channel is None or channel == -1:
+            return None
+
+        channel_key = str(channel)
+        now = time.time()
+        cached = self._cv_phase_live_cache.get(channel_key)
+        if cached and (now - cached.get('ts', 0.0) < 2.0):
+            return cached.get('calibrated')
+
+        # Avoid extra instrument traffic while a run/calibration is active.
+        if self._run_thread and self._run_thread.is_alive():
+            return cached.get('calibrated') if cached else None
+
+        if schedule_probe:
+            self._schedule_live_phase_probe(channel)
+        return cached.get('calibrated') if cached else None
+
+    def _schedule_live_phase_probe(self, channel: int):
+        channel_key = str(channel)
+        with self._cv_phase_probe_lock:
+            if channel_key in self._cv_phase_probe_inflight:
+                return
+            self._cv_phase_probe_inflight.add(channel_key)
+
+        def worker():
+            calibrated = None
+            try:
+                settings_now = self.collect_settings()
+                gpib_address = settings_now.get('gpib_address', 'GPIB0::17::INSTR')
+                b1500 = self.runner.get_b1500(gpib_address)
+                result_code = b1500.get_cmu_phase_compensation_result(channel, mode=0)
+                # ADJ? result meanings: 0=ok, 1=failed, 2=aborted, 3=never performed.
+                calibrated = result_code != 3
+            except Exception:
+                calibrated = None
+            finally:
+                self._post(self._finish_live_phase_probe, channel_key, calibrated)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_live_phase_probe(self, channel_key: str, calibrated):
+        self._cv_phase_live_cache[channel_key] = {
+            'ts': time.time(),
+            'calibrated': calibrated,
+        }
+        with self._cv_phase_probe_lock:
+            self._cv_phase_probe_inflight.discard(channel_key)
+
+        # Repaint colors/readout with fresh live state.
+        self._refresh_cv_calibration_readout()
+
+    @staticmethod
+    def _freq_key(freq_hz: float) -> str:
+        return f"{float(freq_hz):.12g}"
+
+    def _get_stored_freq_keys(self, entry) -> set:
+        if not isinstance(entry, dict):
+            return set()
+        # New format: explicit map of per-frequency results.
+        by_freq = entry.get('results_by_frequency', {})
+        if isinstance(by_freq, dict) and by_freq:
+            return set(str(k) for k in by_freq.keys())
+        # Legacy format: single frequency_hz field.
+        freq = entry.get('frequency_hz', None)
+        if freq is None:
+            return set()
+        try:
+            return {self._freq_key(float(freq))}
+        except Exception:
+            return set()
+
+    def _get_cv_channel_and_frequencies(self):
+        cmu_item = self.param_vars.get('cmu_channel')
+        if not cmu_item:
+            raise RuntimeError("CMU channel field not available.")
+        cmu_var, _ = cmu_item
+        channel = int(self.lookup_range_value(cmu_var.get(), B1500_CMU_CHANNELS))
+        if channel == -1:
+            raise ValueError("Select a valid CMU Channel before calibration.")
+
+        freq_item = self.param_vars.get('frequencies')
+        if not freq_item:
+            raise RuntimeError("Frequency field not available.")
+        freq_var, _ = freq_item
+        raw = str(freq_var.get()).strip()
+        if not raw:
+            raise ValueError("Enter at least one frequency before calibration.")
+        frequencies_hz = sorted(float(f) for f in parse_si_list(raw))
+        if not frequencies_hz:
+            raise ValueError("Enter at least one frequency before calibration.")
+        return channel, frequencies_hz
+
+    def _set_cv_calibration_buttons_enabled(self, enabled: bool):
+        state = tk.NORMAL if enabled else tk.DISABLED
+        for btn in self._cv_calib_buttons.values():
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
+
+    def _get_cmu_channel_name(self, channel: int) -> str:
+        try:
+            return self.lookup_range_label(channel, B1500_CMU_CHANNELS)
+        except Exception:
+            return str(channel)
+
+    def _commit_cv_calibration_result(self, channel: int, cal_type: str, result, frequencies_hz=None):
+        channel_key = str(channel)
+        channel_store = self._cv_calibration_store.setdefault(channel_key, {})
+        if cal_type == 'phase':
+            entry = {
+                'timestamp': datetime.now().isoformat(timespec='seconds'),
+                'result': result,
+            }
+        else:
+            entry = {
+                'timestamp': datetime.now().isoformat(timespec='seconds'),
+                'frequencies_hz': list(frequencies_hz or []),
+                'results_by_frequency': result,
+            }
+        channel_store[cal_type] = entry
+
+        session_state = self._cv_calibration_session_done.setdefault(channel_key, {})
+        if cal_type == 'phase':
+            session_state['phase'] = True
+        else:
+            done_set = set(session_state.get(cal_type, set()))
+            done_set.update(self._freq_key(f) for f in (frequencies_hz or []))
+            session_state[cal_type] = done_set
+
+        self.config.set_cmu_calibration(self._cv_calibration_store)
+        self.config.set_procedure_settings('CVSweep', self.collect_settings())
+        self._refresh_cv_calibration_readout()
+
+    def _finish_cv_calibration_thread(self):
+        self.runner.stop_event.clear()
+        self._run_thread = None
+        self._set_running_state(False)
+        self._set_cv_calibration_buttons_enabled(True)
+
+    def _on_cv_calibration_button(self, cal_type: str):
+        if self._run_thread and self._run_thread.is_alive():
+            messagebox.showwarning("Calibration busy", "A run is in progress. Stop the run before calibrating.")
+            return
+
+        try:
+            channel, frequencies_hz = self._get_cv_channel_and_frequencies()
+            settings_now = self.collect_settings()
+            gpib_address = settings_now.get('gpib_address', 'GPIB0::17::INSTR')
+            ac_level_v = float(settings_now.get('ac_level_mv', 30.0)) / 1000.0
+        except Exception as e:
+            messagebox.showerror("Calibration setup", str(e))
+            return
+
+        prompts = {
+            'open': "Prepare OPEN condition at the fixture, then press OK to start.",
+            'short': "Prepare SHORT condition at the fixture, then press OK to start.",
+            'phase': "Open measurement terminal (OPEN condition), then press OK to start phase compensation.",
+            'load': "Connect LOAD standard, then press OK to start.",
+        }
+        if not messagebox.askokcancel("CMU Calibration", prompts.get(cal_type, "Start calibration?")):
+            return
+
+        self._set_cv_calibration_buttons_enabled(False)
+        self._cv_calib_readout_var.set("Calibration running")
+        self.root.update_idletasks()
+        self.runner.stop_event.clear()
+        self._set_running_state(True)
+        channel_name = self._get_cmu_channel_name(channel)
+
+        def target():
+            try:
+                self.runner.check_stop("Stop requested before CMU calibration start")
+                self._post_log(f"Calibration running on {channel_name}")
+
+                b1500 = self.runner.get_b1500(gpib_address)
+                b1500.set_timeout(120000)
+                b1500.enable_error_detect(True)
+                b1500.set_switch(B1500Session.CH_ALL, False)
+                b1500.set_switch(channel, True)
+                b1500.force_cmu_ac_level(channel, ac_level_v)
+
+                if cal_type == 'phase':
+                    self.runner.check_stop("Stop requested before phase compensation")
+                    result = b1500.run_cmu_phase_compensation(channel)
+                    self._post(self._commit_cv_calibration_result, channel, cal_type, result, None)
+                    self._post_log(f"CMU {cal_type} calibration completed on {channel_name}")
+                else:
+                    result = {}
+                    for freq in frequencies_hz:
+                        self.runner.check_stop("Stop requested during CMU calibration")
+                        freq_key = self._freq_key(freq)
+                        result[freq_key] = b1500.run_cmu_correction(channel, cal_type, freq)
+                    self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz))
+                    freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
+                    self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
+            except MeasurementAbortRequested:
+                self._post_log(f"CMU {cal_type} calibration aborted by user.")
+                self._post(self._cv_calib_readout_var.set, "Calibration aborted.")
+                self._post(self._refresh_cv_calibration_readout)
+            except Exception as e:
+                self._post_log(f"CMU {cal_type} calibration error details: {e}")
+                self._post(self._refresh_cv_calibration_readout)
+                self._post(messagebox.showerror, "Calibration failed", str(e))
+                self._post_log(f"CMU {cal_type} calibration failed: {e}")
+            finally:
+                self._post(self._finish_cv_calibration_thread)
+
+        self._run_thread = threading.Thread(target=target, daemon=True)
+        self._run_thread.start()
+
+    def _refresh_cv_calibration_readout(self):
+        cmu_item = self.param_vars.get('cmu_channel')
+        if not cmu_item:
+            self._cv_calib_readout_var.set("No calibration data")
+            self._update_cv_calibration_button_colors()
+            return
+
+        cmu_var, _ = cmu_item
+        try:
+            channel = int(self.lookup_range_value(cmu_var.get(), B1500_CMU_CHANNELS))
+        except Exception:
+            self._cv_calib_readout_var.set("No calibration data")
+            self._update_cv_calibration_button_colors()
+            return
+
+        ch_data = self._cv_calibration_store.get(str(channel), {})
+        channel_name = self._get_cmu_channel_name(channel)
+        lines = [f"{channel_name}"]
+
+        # Show selected frequencies once above the transposed coefficient table.
+        try:
+            _, selected_freqs_hz = self._get_cv_channel_and_frequencies()
+            selected_labels = [f"{format_si_value(f)}Hz" for f in selected_freqs_hz]
+            chunk = 6
+            for i in range(0, len(selected_labels), chunk):
+                lines.append("F:" + ", ".join(selected_labels[i:i + chunk]))
+        except Exception:
+            lines.append("Frequencies: n/a")
+
+        # Compact per-frequency coefficient table.
+        # Only populate the pair that corresponds to the calibration actually run:
+        # open -> Ro/Xo, short -> Rs/Xs, load -> Rl/Xl.
+        coeff_by_freq = {}
+        for cal_key in ("open", "short", "load"):
+            entry = ch_data.get(cal_key)
+            if not isinstance(entry, dict):
+                continue
+
+            def _merge_coeff_for_type(freq_hz: float, coeffs: dict):
+                row = coeff_by_freq.setdefault(
+                    freq_hz,
+                    {"Go": None, "Bo": None, "Rs": None, "Xs": None, "Rl": None, "Xl": None},
+                )
+                if cal_key == "open":
+                    row["Go"] = float(coeffs.get('open_r', 0.0))
+                    row["Bo"] = float(coeffs.get('open_i', 0.0))
+                elif cal_key == "short":
+                    row["Rs"] = float(coeffs.get('short_r', 0.0))
+                    row["Xs"] = float(coeffs.get('short_i', 0.0))
+                else:
+                    row["Rl"] = float(coeffs.get('load_r', 0.0))
+                    row["Xl"] = float(coeffs.get('load_i', 0.0))
+
+            by_freq = entry.get('results_by_frequency', {})
+            if isinstance(by_freq, dict) and by_freq:
+                for freq_key, item in by_freq.items():
+                    if not isinstance(item, dict):
+                        continue
+                    coeffs = item.get('coefficients', {})
+                    if not isinstance(coeffs, dict):
+                        continue
+                    try:
+                        freq_hz = float(freq_key)
+                    except Exception:
+                        continue
+                    _merge_coeff_for_type(freq_hz, coeffs)
+            else:
+                # Legacy single-frequency storage.
+                result = entry.get('result', {})
+                coeffs = result.get('coefficients', {}) if isinstance(result, dict) else {}
+                if isinstance(coeffs, dict):
+                    try:
+                        legacy_freq = entry.get('frequency_hz')
+                        if legacy_freq is None:
+                            raise ValueError("missing frequency_hz")
+                        freq_hz = float(legacy_freq)
+                    except Exception:
+                        freq_hz = None
+                    if freq_hz is not None:
+                        _merge_coeff_for_type(freq_hz, coeffs)
+
+        if coeff_by_freq:
+            sorted_freqs = sorted(coeff_by_freq.keys())
+
+            def _fmt(v):
+                return "-" if v is None else format_si_compact_0(v)
+
+            lines.extend([
+                "",
+                "param\t" + "\t".join(format_si_compact_0(f) for f in sorted_freqs),
+            ])
+            for param in ("Go", "Bo", "Rs", "Xs", "Rl", "Xl"):
+                row_vals = [_fmt(coeff_by_freq[f][param]) for f in sorted_freqs]
+                lines.append(param + "\t" + "\t".join(row_vals))
+
+        self._cv_calib_readout_var.set("\n".join(lines))
+        self._update_cv_calibration_button_colors()
 
     def load_settings(self):
         proc_name = self.proc_var.get()

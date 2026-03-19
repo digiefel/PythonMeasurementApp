@@ -1,6 +1,7 @@
 import json
 import os
 from copy import deepcopy
+from typing import Optional
 from models import load_devices_csv
 
 DEFAULT_CONFIG = {
@@ -12,6 +13,7 @@ DEFAULT_CONFIG = {
     'asu_path_mode': 1,
     'asu_range_mode': 0,
     'devices_csv_path': 'TASE_devices.csv',
+    'cmu_calibration': {},
     'procedures': {},
     'last_selection': {
         'chip_id': '',
@@ -89,7 +91,7 @@ class Config:
         with open(self.config_path, 'w') as f:
             json.dump(self.data, f, indent=4)
 
-    def reload_devices(self, csv_path: str = None, persist: bool = False):
+    def reload_devices(self, csv_path: Optional[str] = None, persist: bool = False):
         target_path = self.devices_csv_path if csv_path is None else self._resolve_csv_path(csv_path)
         sites = load_devices_csv(target_path)
         self.devices_csv_path = target_path
@@ -104,6 +106,13 @@ class Config:
     
     def set_procedure_settings(self, proc_name: str, settings: dict):
         self.data.setdefault('procedures', {})[proc_name] = settings
+        self.save()
+
+    def get_cmu_calibration(self) -> dict:
+        return self.data.get('cmu_calibration', {}) or {}
+
+    def set_cmu_calibration(self, calibration: dict):
+        self.data['cmu_calibration'] = deepcopy(calibration or {})
         self.save()
 
     def get_last_selection(self):

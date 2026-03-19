@@ -10,7 +10,8 @@ class ToolTip:
         self.tipwindow = None
 
     def show(self, event=None):
-        if self.tipwindow or not self.text:
+        text = self.text() if callable(self.text) else self.text
+        if self.tipwindow or not text:
             return
         x = self.widget.winfo_rootx() + 10
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 2
@@ -19,7 +20,7 @@ class ToolTip:
         tw.wm_geometry(f"+{x}+{y}")
         label = tk.Label(
             tw,
-            text=self.text,
+            text=text,
             justify=tk.LEFT,
             background="#ffffe0",
             relief=tk.SOLID,
@@ -37,7 +38,7 @@ class ToolTip:
             self.tipwindow = None
 
 
-def attach_tooltip(widget, text: str):
+def attach_tooltip(widget, text):
     """Bind hover handlers to show/hide a tooltip with the given text."""
     if not text:
         return

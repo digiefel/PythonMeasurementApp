@@ -952,6 +952,9 @@ class B1500Session:
     # Measurement type constants (agb1500.h)
     MEAS_TYPE_MSPOT = 1
     MEAS_TYPE_SWEEP = 2
+    CMU_CORR_OPEN = 1
+    CMU_CORR_SHORT = 2
+    CMU_CORR_LOAD = 3
     
     def __init__(self, gpib_addr="GPIB0::17::INSTR"):
         if not dll_b1500:
@@ -1322,6 +1325,13 @@ class B1500Session:
         if status < 0:
             raise RuntimeError(f"viWrite failed: {status}")
 
+    def visa_query(self, command: str, max_bytes: int = 4096) -> str:
+        """Send a SCPI query and return the response as decoded ASCII."""
+        if not command.endswith("\n"):
+            command = f"{command}\n"
+        self.visa_write(command)
+        return self.visa_read(max_bytes)
+
     def visa_read(self, max_bytes: int = 4096) -> str:
         """Read response via viRead. Returns decoded ASCII string."""
         buf = ct.create_string_buffer(max_bytes)
@@ -1395,6 +1405,215 @@ class B1500Session:
         finally:
             # Restore normal termination (newline)
             self.visa_set_termchar(10, True)
+
+    @staticmethod
+    def _normalize_corr_type(corr_type) -> int:
+        if isinstance(corr_type, str):
+            key = corr_type.strip().lower()
+            mapping = {
+                "open": B1500Session.CMU_CORR_OPEN,
+                "o": B1500Session.CMU_CORR_OPEN,
+                "short": B1500Session.CMU_CORR_SHORT,
+                "s": B1500Session.CMU_CORR_SHORT,
+                "load": B1500Session.CMU_CORR_LOAD,
+                "l": B1500Session.CMU_CORR_LOAD,
+            }
+            if key not in mapping:
+                raise ValueError(f"Unsupported correction type: {corr_type!r}")
+            return mapping[key]
+        corr = int(corr_type)
+        if corr not in (B1500Session.CMU_CORR_OPEN, B1500Session.CMU_CORR_SHORT, B1500Session.CMU_CORR_LOAD):
+            raise ValueError(f"Unsupported correction type code: {corr}")
+        return corr
+
+    @staticmethod
+    def _parse_csv_floats(text: str):
+        vals = []
+        for token in text.strip().split(","):
+            token = token.strip()
+            if not token:
+                continue
+            vals.append(float(token))
+        return vals
+
+    def _set_corr_mode_enabled(self, channel: int, corr: int, enabled: bool) -> None:
+        # DLL API uses 0 = ON, 1 = OFF for correction mode.
+        state = 0 if enabled else 1
+        if corr == self.CMU_CORR_OPEN:
+            ret = dll_b1500.agb1500_setOpenCorrMode(self.session, int(channel), state)
+            self._check_ret(ret, "Set open correction mode")
+            return
+        if corr == self.CMU_CORR_SHORT:
+            ret = dll_b1500.agb1500_setShortCorrMode(self.session, int(channel), state)
+            self._check_ret(ret, "Set short correction mode")
+            return
+        if corr == self.CMU_CORR_LOAD:
+            ret = dll_b1500.agb1500_setLoadCorrMode(self.session, int(channel), state)
+            self._check_ret(ret, "Set load correction mode")
+            return
+        raise ValueError(f"Unsupported correction type code: {corr}")
+
+    def run_cmu_phase_compensation(self, channel: int, mode: int = 1) -> dict:
+        """Execute CMU phase compensation and return raw/parsed result metadata."""
+        ch = int(channel)
+        mode_i = int(mode)
+        ret = dll_b1500.agb1500_setCmuAdjustMode(self.session, ch, mode_i)
+        self._check_ret(ret, "Set CMU adjust mode")
+        ret = dll_b1500.agb1500_setSwitch(self.session, ch, 1)
+        self._check_ret(ret, "Set channel output switch ON")
+        result = ViInt16(0)
+        ret = dll_b1500.agb1500_execCmuAdjust(self.session, ch, ct.byref(result))
+        self._check_ret(ret, "Execute CMU phase compensation")
+        raw_adj = self.visa_query(f"ADJ? {ch},{mode_i}")
+        return {
+            "channel": ch,
+            "mode": mode_i,
+            "result": int(result.value),
+            "adj_query": raw_adj.strip(),
+        }
+
+    def get_cmu_phase_compensation_result(self, channel: int, mode: int = 0) -> int:
+        """Return ADJ? result code for phase compensation state.
+
+        mode=0 reuses the last phase compensation data without performing
+        a new measurement (manual-defined behavior per programming guide).
+        """
+        ch = int(channel)
+        mode_i = int(mode)
+        raw = self.visa_query(f"ADJ? {ch},{mode_i}").strip()
+        try:
+            # Be tolerant of responses with extra text or separators.
+            token = raw.split(',')[0].split()[0]
+            return int(float(token))
+        except Exception as e:
+            raise RuntimeError(f"Unexpected ADJ? response: {raw!r}") from e
+
+    def get_cmu_correction_count(self, channel: int) -> int:
+        """Return number of correction-frequency entries currently stored in the CMU list."""
+        resp = self.visa_query(f"CORRL? {int(channel)}")
+        return int(float(resp.strip()))
+
+    def get_cmu_correction_frequency(self, channel: int, index: int) -> float:
+        """Return correction frequency (Hz) at index (1-based)."""
+        resp = self.visa_query(f"CORRL? {int(channel)},{int(index)}")
+        return float(resp.strip())
+
+    def get_cmu_correction_data(self, channel: int, index: int) -> dict:
+        """Return full correction coefficients from CORRDT? for a list index."""
+        raw = self.visa_query(f"CORRDT? {int(channel)},{int(index)}")
+        vals = self._parse_csv_floats(raw)
+        if len(vals) != 7:
+            raise RuntimeError(f"Unexpected CORRDT? response: {raw!r}")
+        return {
+            "index": int(index),
+            "frequency_hz": vals[0],
+            "open_r": vals[1],
+            "open_i": vals[2],
+            "short_r": vals[3],
+            "short_i": vals[4],
+            "load_r": vals[5],
+            "load_i": vals[6],
+            "raw": raw.strip(),
+        }
+
+    def get_cmu_correction_data_for_frequency(self, channel: int, frequency_hz: float, tolerance_hz: float = 1.0) -> dict:
+        """Return CORRDT data for a frequency entry; matches by absolute tolerance."""
+        ch = int(channel)
+        target = float(frequency_hz)
+        count = self.get_cmu_correction_count(ch)
+        if count < 1:
+            raise RuntimeError("No correction frequency entries found.")
+        for idx in range(1, count + 1):
+            freq = self.get_cmu_correction_frequency(ch, idx)
+            if abs(freq - target) <= tolerance_hz:
+                return self.get_cmu_correction_data(ch, idx)
+        raise RuntimeError(
+            f"No correction data found for frequency {target:.6g} Hz on channel {ch}."
+        )
+
+    def run_cmu_correction(
+        self,
+        channel: int,
+        corr_type,
+        frequency_hz: float,
+        mode: int | None = None,
+        primary: float = 0.0,
+        secondary: float | None = None,
+    ) -> dict:
+        """Run open/short/load CMU correction and return result + stored coefficients."""
+        ch = int(channel)
+        corr = self._normalize_corr_type(corr_type)
+        freq = float(frequency_hz)
+
+        if mode is None:
+            mode = 100 if corr == self.CMU_CORR_OPEN else 400
+        mode_i = int(mode)
+
+        if secondary is None:
+            secondary = 0.0 if corr == self.CMU_CORR_OPEN else 50.0
+
+        ret = dll_b1500.agb1500_setSwitch(self.session, ch, 1)
+        self._check_ret(ret, "Set channel output switch ON")
+        self._set_corr_mode_enabled(ch, corr, True)
+
+        corr_result = ViInt16(0)
+        if corr == self.CMU_CORR_OPEN:
+            ret = dll_b1500.agb1500_execOpenCorr(
+                self.session,
+                ch,
+                freq,
+                mode_i,
+                float(primary),
+                float(secondary),
+                ct.byref(corr_result),
+            )
+            self._check_ret(ret, "Execute open correction")
+        elif corr == self.CMU_CORR_SHORT:
+            ret = dll_b1500.agb1500_execShortCorr(
+                self.session,
+                ch,
+                freq,
+                mode_i,
+                float(primary),
+                float(secondary),
+                ct.byref(corr_result),
+            )
+            self._check_ret(ret, "Execute short correction")
+        else:
+            ret = dll_b1500.agb1500_execLoadCorr(
+                self.session,
+                ch,
+                freq,
+                mode_i,
+                float(primary),
+                float(secondary),
+                ct.byref(corr_result),
+            )
+            self._check_ret(ret, "Execute load correction")
+
+        if int(corr_result.value) != 0:
+            state_text = {1: "failed", 2: "aborted"}.get(int(corr_result.value), f"code {int(corr_result.value)}")
+            raise RuntimeError(f"CMU correction returned {state_text}")
+
+        # Query correction enable states to keep UI in sync with instrument state.
+        states = {
+            "open": int(float(self.visa_query(f"CORRST? {ch},1").strip())),
+            "short": int(float(self.visa_query(f"CORRST? {ch},2").strip())),
+            "load": int(float(self.visa_query(f"CORRST? {ch},3").strip())),
+        }
+
+        coeffs = self.get_cmu_correction_data_for_frequency(ch, freq)
+        return {
+            "channel": ch,
+            "corr_type": corr,
+            "frequency_hz": freq,
+            "mode": mode_i,
+            "primary_reference": float(primary),
+            "secondary_reference": float(secondary),
+            "result": int(corr_result.value),
+            "corr_state": states,
+            "coefficients": coeffs,
+        }
 
     def close(self):
         # Close WGFMU session first if it was used
