@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import os
 import threading
 from datetime import datetime
+from bindings import B1500Session
 
 class MeasurementAbortRequested(Exception):
     """Custom exception to indicate measurement abortion."""
@@ -24,7 +25,7 @@ class MeasurementProcedure(ABC):
         self._run_timestamp = None
 
     @abstractmethod
-    def run(self, b1500, device):
+    def run(self, b1500: B1500Session, device):
         pass
     
     def log(self, message: str):
