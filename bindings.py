@@ -8,6 +8,7 @@ Note: Some argtypes may need refinement based on exact VISA types. This is a gen
 """
 
 import ctypes as ct
+import re
 import warnings
 
 # Define VISA types (from vpptype.h)
@@ -40,6 +41,13 @@ WGFMU_CHANNEL_MAP = {
     "WGFMU2:RS": 102,
     "WGFMU3:RS": 201,
     "WGFMU4:RS": 202,
+}
+
+WGFMU_SLOT_MAP = {
+    101: 1,
+    102: 102,
+    201: 2,
+    202: 202,
 }
 
 # Range presets (from agb1500.h: positive = limited auto, negative = fixed, 0 = auto)
@@ -93,7 +101,7 @@ B1500_CURRENT_RANGES = [
 
 # CMU/C-V helper option lists for UI usage.
 B1500_CMU_CHANNELS = [
-    (-1, "Default CMU"),
+    (7, "Default CMU"),
 ]
 
 # Full MFCMU measurement mode list from the B1500 programming guide.
@@ -177,6 +185,45 @@ def get_cmu_mode_components(mode: int) -> tuple[str, str]:
 def format_cmu_component_label(component: str) -> str:
     unit = B1500_CMU_COMPONENT_UNITS.get(component, "")
     return f"{component} ({unit})" if unit else component
+
+
+_FMT5_ITEM_RE = re.compile(r"^([A-Za-z])([A-Za-z0-9])([A-Za-z])([+-]?[0-9]*\.?[0-9]+E[+-][0-9]{2})$")
+
+
+def _parse_fmt5_item(item: str) -> tuple[str, str, str, float]:
+    """Parse one FMT1/FMT5 ASCII item into (status, channel, data_type, value).
+
+    Per manual, each item is: Status(1) + Channel(1) + Type(1) + Value(12 digits for FMT 5).
+    """
+    token = item.strip().rstrip(',')
+    match = _FMT5_ITEM_RE.match(token)
+    if not match:
+        raise ValueError(f"Invalid FMT5 token: {item!r}")
+    status, channel, data_type, value_text = match.groups()
+    return status, channel, data_type, float(value_text)
+
+
+def _parse_scpi_status(item: str) -> int:
+    """Extract status from the first character of a FMT 5 data item.
+
+    The first character encodes measurement status:
+    N=normal, T=another compliance, C=this compliance,
+    V=over range, X=oscillation, G=search not found, D=other.
+    """
+    status_map = {
+        'N': 0,
+        'T': 1,
+        'C': 2,
+        'V': 4,
+        'X': 8,
+        'G': 16,
+        'D': 32,
+        'S': 64,
+        'U': 128,
+        'F': 256,
+    }
+    return status_map.get(item[0], 0)
+
 
 # Curated subset shown in the UI by default.
 B1500_CMU_MEASUREMENT_MODES = [
@@ -275,6 +322,11 @@ WGFMU_STATUS_ABORTED = 10004
 # Load DLLs
 dll_b1500 = ct.windll.LoadLibrary(r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll")
 dll_wgfmu = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\WGFMU.dll")
+dll_visa32 = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\visa32.dll")
+
+# VISA attribute constants for SCPI streaming
+VI_ATTR_TERMCHAR = 0x3FFF0018
+VI_ATTR_TERMCHAR_EN = 0x3FFF0038
 
 # B1500 Function declarations
 if dll_b1500:
@@ -1260,6 +1312,90 @@ class B1500Session:
         """Return short code for data_type."""
         return cls.DATA_TYPE_SHORT.get(data_type, f"T{data_type}")
 
+    # --- Raw VISA methods for SCPI streaming ---
+
+    def visa_write(self, command: str):
+        """Send a SCPI command string via viWrite."""
+        buf = command.encode('ascii')
+        ret_count = ct.c_uint32(0)
+        status = dll_visa32.viWrite(self.session, buf, len(buf), ct.byref(ret_count))
+        if status < 0:
+            raise RuntimeError(f"viWrite failed: {status}")
+
+    def visa_read(self, max_bytes: int = 4096) -> str:
+        """Read response via viRead. Returns decoded ASCII string."""
+        buf = ct.create_string_buffer(max_bytes)
+        ret_count = ct.c_uint32(0)
+        status = dll_visa32.viRead(self.session, buf, max_bytes, ct.byref(ret_count))
+        if status < 0:
+            raise RuntimeError(f"viRead failed: {status}")
+        return buf.raw[:ret_count.value].decode('ascii')
+
+    def visa_set_termchar(self, char_code: int, enabled: bool = True):
+        """Set the VISA termination character and enable/disable it."""
+        dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR, char_code)
+        dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR_EN, 1 if enabled else 0)
+
+    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback):
+        """Execute a CV sweep via raw SCPI with per-point streaming.
+
+        Uses FMT 5,0 (comma terminator) + XE and reads five FMT5 tokens per point:
+        Time, Para1, Para2, OscLevel, DCBias.
+
+        Args:
+            cmu_channel: CMU channel number.
+            cmu_mode: IMP mode code (e.g. 100 for Cp-G).
+            meas_range: Measurement range (0 = auto).
+            expected_points: Number of sweep steps to read.
+            callback: Called as callback(step, dc_bias_v, para1, para2, time_s, s1, s2)
+                      after each step completes.
+        """
+        # Set comma-terminated format, timestamp, monitor
+        self.visa_write("FMT 5,0\n")
+        self.visa_write("TSC 1\n")
+        self.visa_write("LMN 1\n")
+        # Measurement mode = CV DC bias sweep
+        self.visa_write(f"MM 18,{cmu_channel}\n")
+        self.visa_write(f"IMP {cmu_mode}\n")
+        meas_range_int = int(meas_range) if meas_range == int(meas_range) else meas_range
+        self.visa_write(f"RC {cmu_channel},{meas_range_int}\n")
+        # Reset timestamp and trigger
+        self.visa_write("TSR\n")
+
+        # Set VISA termination character to comma (ASCII 44)
+        self.visa_set_termchar(44, True)
+
+        try:
+            self.visa_write("XE\n")
+            def _read_token():
+                return _parse_fmt5_item(self.visa_read(64))
+
+            for step in range(expected_points):
+                # MM18 + LMN1 order: Time, Para1, Para2, Osc, DCBias.
+                _ts, _tc, time_type, time_s = _read_token()
+                p1_status, _c1, _t1, para1 = _read_token()
+                p2_status, _c2, _t2, para2 = _read_token()
+                _os, _oc, _ot, _ov = _read_token()
+                _ds, _dc, _dt, dc_bias_v = _read_token()
+
+                if time_type != 'T':
+                    raise RuntimeError(
+                        f"Unexpected CV stream layout at step {step}: first token type={time_type!r}, expected 'T'"
+                    )
+
+                callback(
+                    step,
+                    dc_bias_v,
+                    para1,
+                    para2,
+                    time_s,
+                    _parse_scpi_status(p1_status),
+                    _parse_scpi_status(p2_status),
+                )
+        finally:
+            # Restore normal termination (newline)
+            self.visa_set_termchar(10, True)
+
     def close(self):
         # Close WGFMU session first if it was used
         if self._wgfmu is not None:
@@ -1280,7 +1416,7 @@ class WGFMUSession:
         if address is not None:
             ret = dll_wgfmu.WGFMU_openSession(address.encode())
             self._check_ret(ret, "WGFMU open session")
-        ret = dll_wgfmu.WGFMU_initialize()
+        ret = dll_wgfmu.WGFMU_clear()
         self._check_ret(ret, "WGFMU initialize")
 
     def _get_error_summary(self) -> str | None:
@@ -1337,6 +1473,10 @@ class WGFMUSession:
     def clear(self):
         ret = dll_wgfmu.WGFMU_clear()
         self._check_ret(ret, "WGFMU clear")
+        
+    def initialize(self):
+        ret = dll_wgfmu.WGFMU_initialize()
+        self._check_ret(ret, "WGFMU initialize")
 
     def connect(self, channel_id: int):
         ret = dll_wgfmu.WGFMU_connect(channel_id)

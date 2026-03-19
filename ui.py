@@ -38,6 +38,42 @@ from procedures.pund_fatigue import PUNDFatigueProcedure
 from tooltip_helper import attach_tooltip
 from plot_manager import PlotManager, PlotSpec
 
+# --- CV Sweep type options ---
+CV_SWEEP_TYPES = [
+    ('single',    'Single (Start → Stop)'),
+    ('double',    'Double (Start → Stop → Start)'),
+    ('butterfly', 'Butterfly (0 → Vmax → Vmin → 0)'),
+]
+
+# --- Generic SI-prefix helpers ---
+_SI_PREFIXES = {
+    'T': 1e12, 'G': 1e9, 'M': 1e6, 'k': 1e3, 'K': 1e3,
+    'm': 1e-3, 'u': 1e-6, '\u03bc': 1e-6, 'n': 1e-9, 'p': 1e-12,
+}
+
+
+def parse_si_value(text: str) -> float:
+    """Parse a numeric string with an optional SI prefix, e.g. '100k' → 100000.0."""
+    text = text.strip()
+    if not text:
+        raise ValueError("Empty value")
+    if text[-1] in _SI_PREFIXES:
+        return float(text[:-1]) * _SI_PREFIXES[text[-1]]
+    return float(text)
+
+
+def parse_si_list(text: str) -> list:
+    """Parse comma-separated SI-prefixed values, e.g. '100k, 1M' → [100000.0, 1000000.0]."""
+    return [parse_si_value(part) for part in text.split(',') if part.strip()]
+
+
+def format_si_value(value: float) -> str:
+    """Format a float with the largest clean SI prefix, e.g. 1000000.0 → '1M'."""
+    for suffix, mult in [('T', 1e12), ('G', 1e9), ('M', 1e6), ('k', 1e3)]:
+        if value >= mult and value % mult == 0:
+            return f"{value / mult:g}{suffix}"
+    return f"{value:g}"
+
 
 class MainUI:
     def __init__(self, root):
@@ -139,14 +175,14 @@ class MainUI:
             'CVSweep': [
                 ('gpib_address', 'GPIB Address', str),
                 ('cmu_channel', 'CMU Channel', 'cmu_channel'),
-                ('double_sweep', 'Double Sweep (return)', bool),
+                ('sweep_type', 'Sweep Type', 'cv_sweep_type'),
                 ('cmu_mode', 'C-V Measurement Output', 'cmu_mode'),
                 ('start_bias', 'Start Bias (V)', float),
                 ('stop_bias', 'Stop Bias (V)', float),
                 ('points', 'Points', int),
                 ('measurement_range', 'MFCMU Measurement Range', 'cmu_sweep_range'),
                 ('ac_level_mv', 'AC Level (mV)', float),
-                ('frequency_hz', 'Frequency (Hz)', float),
+                ('frequencies', 'Frequencies (e.g. 100k, 1M)', str),
                 ('integration_mode', 'Integration Mode', 'cmu_integration_mode'),
                 ('integration_value', 'Integration Value (manual/PLC)', int),
                 ('hold_time', 'Hold Time (s)', float),
@@ -223,14 +259,14 @@ class MainUI:
             'CVSweep': {
                 'gpib_address': 'GPIB0::17::INSTR',
                 'cmu_channel': -1,
-                'double_sweep': False,
+                'sweep_type': 'single',
                 'cmu_mode': 101,
                 'start_bias': -2.0,
                 'stop_bias': 2.0,
                 'points': 101,
                 'measurement_range': 0.0,
                 'ac_level_mv': 30.0,
-                'frequency_hz': 1e5,
+                'frequencies': '100k',
                 'integration_mode': 0,
                 'integration_value': 1,
                 'hold_time': 0.0,
@@ -743,6 +779,12 @@ class MainUI:
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in WGFMU_MEASURE_CURRENT_RANGES], state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, cast)
+            elif cast == 'cv_sweep_type':
+                label_val = next((lbl for v, lbl in CV_SWEEP_TYPES if v == val), CV_SWEEP_TYPES[0][1])
+                var = tk.StringVar(value=label_val)
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in CV_SWEEP_TYPES], state="readonly")
+                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, cast)
             else:
                 var = tk.StringVar(value=str(val))
                 entry = ttk.Entry(self.params_frame, textvariable=var)
@@ -839,6 +881,8 @@ class MainUI:
                     settings[key] = WGFMU_CHANNEL_MAP.get(var.get(), var.get())
                 elif cast == 'wgfmu_current_range':
                     settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_CURRENT_RANGES)
+                elif cast == 'cv_sweep_type':
+                    settings[key] = self.lookup_range_value(var.get(), CV_SWEEP_TYPES)
                 elif cast is int:
                     settings[key] = int(float(var.get()))
                 elif cast is float:
@@ -1260,14 +1304,18 @@ class MainUI:
     def _bind_cv_range_filter(self):
         """Filter CMU range options based on frequency limits from the MFCMU table."""
         range_item = self.param_vars.get('measurement_range')
-        freq_item = self.param_vars.get('frequency_hz')
+        freq_item = self.param_vars.get('frequencies')
         if not range_item or not freq_item:
             return
         range_var, _ = range_item
         freq_var, _ = freq_item
 
         def refresh(*_args):
-            opts = self._cv_range_options_for_freq(freq_var.get())
+            try:
+                first_freq = parse_si_value(str(freq_var.get()).split(',')[0])
+            except Exception:
+                first_freq = 100000.0
+            opts = self._cv_range_options_for_freq(first_freq)
             combo = None
             for child in self.params_frame.winfo_children():
                 if isinstance(child, ttk.Combobox) and child.cget('textvariable') == str(range_var):
