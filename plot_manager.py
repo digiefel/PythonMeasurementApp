@@ -1,8 +1,16 @@
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Iterable, Tuple
 
 import tkinter as tk
+
+# matplotlib's twinx() shares the x-axis transform between ax and ax2.
+# autoscale_view() propagates xlim through the shared transform, causing
+# _invalidate_internal() to recurse through the transform parent tree.
+# Each series (line) added to ax2 deepens that tree; with 6+ series the
+# default limit of 1000 is exceeded.  10000 is enough for typical usage.
+sys.setrecursionlimit(10000)
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -49,6 +57,7 @@ class PlotManager:
         self._animated: List[Artist] = []
         self._last_limits = None
         self._full_draw_pending = False
+        self._in_draw_event = False
         if self.use_blit:
             self.canvas.mpl_connect("draw_event", self._on_draw)
 
@@ -95,7 +104,6 @@ class PlotManager:
 
         # Full draw so the background (including legend) is captured on draw_event.
         self._request_full_draw()
-        self._last_limits = self._capture_limits()
 
     def append_point(self, x: float, y: float, series_label: str = "Data"):
         """
@@ -198,7 +206,6 @@ class PlotManager:
             # Legend changed layout; force full draw so background is updated.
             self._bg = None
             self._request_full_draw()
-            self._last_limits = self._capture_limits()
 
     # ------------------------------------------------------------------
     # Internal helpers: blitting (BlitManager logic)
@@ -212,15 +219,13 @@ class PlotManager:
         if self._full_draw_pending:
             return  # one is already queued
         self._full_draw_pending = True
-
-        def _do_draw():
-            # This runs once after Tk gets back to the event loop.
-            self._full_draw_pending = False
-            # Background and limits will be updated in _on_draw via draw_event.
-            self.canvas.draw_idle()
-
-        # Use after_idle to mirror Tk's own delayed drawing model.
-        self.root.after_idle(_do_draw)
+        # Invalidate background immediately so no blit uses stale axes/legend.
+        self._bg = None
+        # draw_idle has its own internal after_idle guard; call it directly.
+        # _full_draw_pending is cleared inside _on_draw (after _bg is captured)
+        # so there is never a window where _bg=None and _full_draw_pending=False,
+        # which would cascade into repeated full draws via _blit_update's fallback.
+        self.canvas.draw_idle()
 
 
     def _add_animated(self, art: Artist) -> None:
@@ -231,15 +236,28 @@ class PlotManager:
 
     def _on_draw(self, event) -> None:
         """
-        draw_event callback: copy the full-figure background and draw
-        all animated artists once. This synchronizes background capture
-        exactly with Matplotlib's drawing.
+        draw_event callback: capture the full-figure background, then blit
+        animated artists via the standard restore→draw→blit sequence.
+
+        _full_draw_pending is cleared here (after _bg is set), not in the
+        draw_idle caller, so there is never a window where _bg is None and
+        _full_draw_pending is False — that window would cascade into repeated
+        full draws through _blit_update's _bg-is-None fallback path.
         """
         cv = self.canvas
         if event is not None and event.canvas is not cv:
             return
-        self._bg = cv.copy_from_bbox(self.fig.bbox)
-        self._draw_animated()
+        if self._in_draw_event:
+            return
+        self._in_draw_event = True
+        try:
+            self._bg = cv.copy_from_bbox(self.fig.bbox)
+            self._last_limits = self._capture_limits()
+        finally:
+            self._full_draw_pending = False
+            self._in_draw_event = False
+        # Show current animated artists with a clean blit now that bg is fresh.
+        self._blit_update()
 
     def _draw_animated(self) -> None:
         for a in self._animated:
@@ -248,13 +266,13 @@ class PlotManager:
     def _blit_update(self) -> None:
         cv = self.canvas
         if self._bg is None:
-            # If we missed a draw_event for some reason, synthesize one.
-            self._on_draw(None)
-        else:
-            cv.restore_region(self._bg)
-            self._draw_animated()
-            cv.blit(self.fig.bbox)
-        cv.flush_events()
+            # Don't synthesize draw work here; request a normal full draw to
+            # establish a fresh background in a safe Tk draw cycle.
+            self._request_full_draw()
+            return
+        cv.restore_region(self._bg)
+        self._draw_animated()
+        cv.blit(self.fig.bbox)
 
     # ------------------------------------------------------------------
     # Internal helpers: autoscaling + redraw policy
@@ -272,11 +290,15 @@ class PlotManager:
             self._request_full_draw()
             return
 
+        # Never blit while a full draw is queued; that causes stale-background
+        # artifacts (axes/legend ghosting) and can cascade into draw churn.
+        if self._full_draw_pending:
+            return
+
         new_limits = self._capture_limits()
         if self._last_limits is None or self._limits_changed(new_limits, self._last_limits):
             # Axis limits changed significantly: full draw → new background.
             self._request_full_draw()
-            self._last_limits = self._capture_limits()
         else:
             # Fast path: blit only the animated artists (lines).
             self._blit_update()
