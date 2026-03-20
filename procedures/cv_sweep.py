@@ -49,8 +49,89 @@ class CVSweepProcedure(MeasurementProcedure):
         self.hold_time = float(settings.get("hold_time", 0.0))
         self.delay_time = float(settings.get("delay_time", 0.0))
         self.second_delay = float(settings.get("second_delay", 0.0))
+        self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
+        self.require_cmu_calibration = bool(settings.get("require_cmu_calibration", False))
 
         self._validate_settings()
+
+    @staticmethod
+    def _freq_key(freq_hz: float) -> str:
+        return f"{float(freq_hz):.12g}"
+
+    def _entry_freq_keys(self, entry: dict) -> set[str]:
+        if not isinstance(entry, dict):
+            return set()
+        by_freq = entry.get("results_by_frequency", {})
+        if isinstance(by_freq, dict) and by_freq:
+            keys = set()
+            for fk in by_freq.keys():
+                try:
+                    keys.add(self._freq_key(float(fk)))
+                except Exception:
+                    continue
+            return keys
+        freq_hz = entry.get("frequency_hz")
+        if freq_hz is None:
+            return set()
+        try:
+            return {self._freq_key(float(freq_hz))}
+        except Exception:
+            return set()
+
+    def _phase_entry_valid(self, entry: dict) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        result = entry.get("result")
+        if isinstance(result, dict):
+            try:
+                return int(result.get("result", 0)) == 0
+            except Exception:
+                return False
+        return bool(result)
+
+    def _calibration_gaps(self):
+        """Return missing calibration coverage by type for current channel/frequencies."""
+        channel_data = self.cmu_calibration.get(str(self.cmu_channel), {})
+        selected_keys = {self._freq_key(f) for f in self.frequencies}
+
+        missing = {
+            "open": set(selected_keys),
+            "short": set(selected_keys),
+            "load": set(selected_keys),
+            "phase": not self._phase_entry_valid(channel_data.get("phase")),
+        }
+
+        for corr_type in ("open", "short", "load"):
+            present = self._entry_freq_keys(channel_data.get(corr_type, {}))
+            missing[corr_type] = selected_keys - present
+
+        return missing
+
+    def _report_calibration_coverage(self):
+        missing = self._calibration_gaps()
+        msgs = []
+        for corr_type in ("open", "short", "load"):
+            miss = missing[corr_type]
+            if not miss:
+                continue
+            freq_list = sorted(float(k) for k in miss)
+            labels = ", ".join(self._freq_label(f) for f in freq_list)
+            msgs.append(f"{corr_type}: [{labels}]")
+        if missing["phase"]:
+            msgs.append("phase: missing")
+
+        if not msgs:
+            self.log(f"CMU calibration coverage OK on channel {self.cmu_channel}.")
+            return
+
+        joined = "; ".join(msgs)
+        if self.require_cmu_calibration:
+            raise ValueError(
+                f"Missing required CMU calibration on channel {self.cmu_channel}: {joined}"
+            )
+        self.log(
+            f"Warning: incomplete CMU calibration coverage on channel {self.cmu_channel}: {joined}"
+        )
 
     @staticmethod
     def _parse_frequencies(text):
@@ -132,6 +213,7 @@ class CVSweepProcedure(MeasurementProcedure):
         return series_labels, styles, secondary_series
 
     def run(self, b1500: B1500Session, device):
+        self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
         primary_label = format_cmu_component_label(primary_name)
         monitor_label = format_cmu_component_label(monitor_name)

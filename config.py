@@ -109,7 +109,24 @@ class Config:
         self.save()
 
     def get_cmu_calibration(self) -> dict:
-        return self.data.get('cmu_calibration', {}) or {}
+        calib = self.data.get('cmu_calibration', {}) or {}
+        if isinstance(calib, dict) and calib:
+            return calib
+
+        # Backward compatibility: older files stored CMU calibration under
+        # procedures.CVSweep._cmu_calibration.
+        legacy = (
+            self.data.get('procedures', {})
+            .get('CVSweep', {})
+            .get('_cmu_calibration', {})
+            or {}
+        )
+        if isinstance(legacy, dict) and legacy:
+            self.data['cmu_calibration'] = deepcopy(legacy)
+            self.save()
+            return self.data['cmu_calibration']
+
+        return {}
 
     def set_cmu_calibration(self, calibration: dict):
         self.data['cmu_calibration'] = deepcopy(calibration or {})

@@ -958,7 +958,7 @@ class MainUI:
             btn = tk.Button(
                 section,
                 text=label,
-                width=8,
+                width=5,
                 command=lambda c=cal_type: self._on_cv_calibration_button(c),
                 bg="#f2a0a0",
                 activebackground="#e38f8f",
@@ -1325,15 +1325,12 @@ class MainUI:
         channel_name = self._get_cmu_channel_name(channel)
         lines = [f"{channel_name}"]
 
-        # Show selected frequencies once above the transposed coefficient table.
+        # Keep selected frequencies for table columns, but don't render a
+        # separate frequency summary line in the main readout.
         try:
             _, selected_freqs_hz = self._get_cv_channel_and_frequencies()
-            selected_labels = [f"{format_si_value(f)}Hz" for f in selected_freqs_hz]
-            chunk = 6
-            for i in range(0, len(selected_labels), chunk):
-                lines.append("F:" + ", ".join(selected_labels[i:i + chunk]))
         except Exception:
-            lines.append("Frequencies: n/a")
+            selected_freqs_hz = []
 
         # Compact per-frequency coefficient table.
         # Only populate the pair that corresponds to the calibration actually run:
@@ -1387,8 +1384,18 @@ class MainUI:
                     if freq_hz is not None:
                         _merge_coeff_for_type(freq_hz, coeffs)
 
-        if coeff_by_freq:
-            sorted_freqs = sorted(coeff_by_freq.keys())
+        # Table columns should follow currently selected frequencies. If none are
+        # available (e.g. invalid frequency field), fall back to stored frequencies.
+        table_freqs = [float(f) for f in selected_freqs_hz] if selected_freqs_hz else sorted(coeff_by_freq.keys())
+        # Ensure selected frequencies appear even if not calibrated yet.
+        for f in table_freqs:
+            coeff_by_freq.setdefault(
+                float(f),
+                {"Go": None, "Bo": None, "Rs": None, "Xs": None, "Rl": None, "Xl": None},
+            )
+
+        if table_freqs:
+            sorted_freqs = [float(f) for f in table_freqs]
 
             def _fmt(v):
                 return "-" if v is None else format_si_compact_0(v)

@@ -360,6 +360,9 @@ class MeasurementRunner:
         for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
             if key not in settings and key in self.config.data:
                 settings[key] = self.config.data.get(key)
+        # Inject global CMU calibration into runtime settings so procedures can
+        # consume a single settings payload without reaching back into config.
+        settings['cmu_calibration'] = self.config.get_cmu_calibration()
         if not chip_id:
             raise ValueError("Chip ID is required to run a procedure.")
 
