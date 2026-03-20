@@ -8,6 +8,241 @@
     "asu_path_mode": 1,
     "asu_range_mode": null,
     "devices_csv_path": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\saved_configs\\devices.csv",
+    "cmu_calibration": {
+        "7": {
+            "open": {
+                "timestamp": "2026-03-20T11:53:10",
+                "frequencies_hz": [
+                    1000.0,
+                    10000.0,
+                    100000.0,
+                    1000000.0
+                ],
+                "results_by_frequency": {
+                    "1000": {
+                        "channel": 7,
+                        "corr_type": 1,
+                        "frequency_hz": 1000.0,
+                        "mode": 100,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 0.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 0,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 1,
+                            "frequency_hz": 1000.0,
+                            "open_r": 2.240982e-11,
+                            "open_i": 3.769339e-10,
+                            "short_r": 0.7468863,
+                            "short_i": 0.2138832,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "1000.000,+2.240982E-11,+3.769339E-10,+7.468863E-01,+2.138832E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "10000": {
+                        "channel": 7,
+                        "corr_type": 1,
+                        "frequency_hz": 10000.0,
+                        "mode": 100,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 0.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 0,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 4,
+                            "frequency_hz": 10000.0,
+                            "open_r": -2.88336e-10,
+                            "open_i": 8.221495e-10,
+                            "short_r": 0.9588382,
+                            "short_i": 0.1230486,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "10000.000,-2.883360E-10,+8.221495E-10,+9.588382E-01,+1.230486E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "100000": {
+                        "channel": 7,
+                        "corr_type": 1,
+                        "frequency_hz": 100000.0,
+                        "mode": 100,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 0.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 0,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 7,
+                            "frequency_hz": 100000.0,
+                            "open_r": 1.131737e-09,
+                            "open_i": 1.172603e-08,
+                            "short_r": 1.032724,
+                            "short_i": 0.6294551,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "100000.000,+1.131737E-09,+1.172603E-08,+1.032724E+00,+6.294551E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "1000000": {
+                        "channel": 7,
+                        "corr_type": 1,
+                        "frequency_hz": 1000000.0,
+                        "mode": 100,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 0.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 0,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 10,
+                            "frequency_hz": 1000000.0,
+                            "open_r": 2.337173e-08,
+                            "open_i": 6.038766e-08,
+                            "short_r": 1.597554,
+                            "short_i": 5.166456,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "1000000.000,+2.337173E-08,+6.038766E-08,+1.597554E+00,+5.166456E+00,+5.000000E+01,+0.000000E+00"
+                        }
+                    }
+                }
+            },
+            "phase": {
+                "timestamp": "2026-03-20T11:52:38",
+                "result": {
+                    "channel": 7,
+                    "mode": 1,
+                    "result": 0,
+                    "adj_query": "0"
+                }
+            },
+            "short": {
+                "timestamp": "2026-03-20T11:54:21",
+                "frequencies_hz": [
+                    1000.0,
+                    10000.0,
+                    100000.0,
+                    1000000.0
+                ],
+                "results_by_frequency": {
+                    "1000": {
+                        "channel": 7,
+                        "corr_type": 2,
+                        "frequency_hz": 1000.0,
+                        "mode": 400,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 50.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 1,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 1,
+                            "frequency_hz": 1000.0,
+                            "open_r": -2.117872e-10,
+                            "open_i": 1.55072e-10,
+                            "short_r": 0.7744232,
+                            "short_i": 0.2072844,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "1000.000,-2.117872E-10,+1.550720E-10,+7.744232E-01,+2.072844E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "10000": {
+                        "channel": 7,
+                        "corr_type": 2,
+                        "frequency_hz": 10000.0,
+                        "mode": 400,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 50.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 1,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 4,
+                            "frequency_hz": 10000.0,
+                            "open_r": 4.124401e-10,
+                            "open_i": 1.40886e-09,
+                            "short_r": 0.9576722,
+                            "short_i": 0.1204592,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "10000.000,+4.124401E-10,+1.408860E-09,+9.576722E-01,+1.204592E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "100000": {
+                        "channel": 7,
+                        "corr_type": 2,
+                        "frequency_hz": 100000.0,
+                        "mode": 400,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 50.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 1,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 7,
+                            "frequency_hz": 100000.0,
+                            "open_r": 6.90554e-09,
+                            "open_i": 1.006209e-08,
+                            "short_r": 1.016265,
+                            "short_i": 0.6326694,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "100000.000,+6.905540E-09,+1.006209E-08,+1.016265E+00,+6.326694E-01,+5.000000E+01,+0.000000E+00"
+                        }
+                    },
+                    "1000000": {
+                        "channel": 7,
+                        "corr_type": 2,
+                        "frequency_hz": 1000000.0,
+                        "mode": 400,
+                        "primary_reference": 0.0,
+                        "secondary_reference": 50.0,
+                        "result": 0,
+                        "corr_state": {
+                            "open": 1,
+                            "short": 1,
+                            "load": 0
+                        },
+                        "coefficients": {
+                            "index": 10,
+                            "frequency_hz": 1000000.0,
+                            "open_r": 2.337173e-08,
+                            "open_i": 6.038766e-08,
+                            "short_r": 1.560153,
+                            "short_i": 5.193166,
+                            "load_r": 50.0,
+                            "load_i": 0.0,
+                            "raw": "1000000.000,+2.337173E-08,+6.038766E-08,+1.560153E+00,+5.193166E+00,+5.000000E+01,+0.000000E+00"
+                        }
+                    }
+                }
+            }
+        }
+    },
     "procedures": {
         "RVSweep": {
             "rv_start": 0.1,
@@ -64,15 +299,15 @@
         "CVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
             "cmu_channel": 7,
-            "sweep_type": "single",
-            "cmu_mode": 103,
-            "start_bias": -2.0,
-            "stop_bias": 2.0,
+            "sweep_type": "double",
+            "cmu_mode": 100,
+            "start_bias": 2.0,
+            "stop_bias": -3.0,
             "points": 101,
             "measurement_range": 0.0,
             "ac_level_mv": 30.0,
-            "frequencies": "10k",
-            "integration_mode": 2,
+            "frequencies": "1k, 10k, 100k 1M",
+            "integration_mode": 0,
             "integration_value": 5,
             "hold_time": 0.0,
             "delay_time": 0.0,
@@ -80,20 +315,21 @@
         }
     },
     "last_selection": {
+        "chip_id": "",
         "site": "VI",
         "subsite": "30um",
-        "device": "C1",
+        "device": "C4",
         "procedure": "CVSweep",
         "set_home_before_run": true,
-        "chip": "RuO2test_A8",
-        "selected_devices": [],
-        "temp_comp_x_um_per_c": "-0.284",
-        "temp_comp_y_um_per_c": "1.435",
-        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": false,
         "temperature_mode": "Sweep",
         "temperature_setpoint_c": "",
         "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30"
+        "temperature_wait_after_s": "30",
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
+        "chip": "RuO2test_A8",
+        "selected_devices": []
     }
 }
