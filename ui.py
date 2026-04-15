@@ -15,7 +15,8 @@ from ui_device_selection import DeviceSelectionDialog
 
 from config import Config
 from runner import MeasurementRunner
-from bindings import (
+from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH
+from instrumentio.constants import (
     SMU_CHANNEL_MAP,
     WGFMU_CHANNEL_MAP,
     B1500_VOLTAGE_RANGES,
@@ -26,9 +27,9 @@ from bindings import (
     B1500_CMU_SWEEP_RANGES,
     WGFMU_MEASURE_VOLTAGE_RANGES,
     WGFMU_MEASURE_CURRENT_RANGES,
-    B1500Session,
-    get_cmu_mode_name,
 )
+from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
+from instrumentio.sessions import B1500Session
 from procedures.base import MeasurementAbortRequested
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
@@ -36,6 +37,7 @@ from procedures.oxide_breakdown import OxideBreakdownProcedure
 from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
+from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
 from plot_manager import PlotManager, PlotSpec
 
@@ -1273,7 +1275,7 @@ class MainUI:
                 b1500 = self.runner.get_b1500(gpib_address)
                 b1500.set_timeout(120000)
                 b1500.enable_error_detect(True)
-                b1500.set_switch(B1500Session.CH_ALL, False)
+                b1500.set_switch(B1500_CH_ALL, False)
                 b1500.set_switch(channel, True)
                 b1500.force_cmu_ac_level(channel, ac_level_v)
 
@@ -1728,15 +1730,16 @@ class MainUI:
         dt = info.get("data_type")
         status = info.get("status")
         desc = info.get("desc", "")
-        if ch is None or ch == B1500Session.CH_NOCH:
+        if ch is None or ch == B1500_CH_NOCH:
             ch_label = "N/A"
-        elif ch == B1500Session.CH_ALL:
+        elif ch == B1500_CH_ALL:
             ch_label = "ALL"
         else:
             ch_label = self.lookup_smu_label(ch)
-        dt_desc = B1500Session.describe_data_type_short(dt) if dt is not None else "T?"
+        dt_desc = describe_data_type_short(dt) if dt is not None else "T?"
         label = f"{ch_label} {dt_desc} 0x{status:X}"
-        tooltip = f"{ch_label} | {B1500Session.describe_data_type(dt)} | {desc} (0x{status:X})"
+        tooltip_type = describe_data_type(dt) if dt is not None else "Type ?"
+        tooltip = f"{ch_label} | {tooltip_type} | {desc} (0x{status:X})"
         return label, tooltip
 
     # Live plotting helpers wired via MeasurementRunner callbacks

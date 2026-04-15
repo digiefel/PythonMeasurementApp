@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import os
 import threading
 from datetime import datetime
-from bindings import B1500Session
+from instrumentio.sessions import B1500Session
 
 class MeasurementAbortRequested(Exception):
     """Custom exception to indicate measurement abortion."""

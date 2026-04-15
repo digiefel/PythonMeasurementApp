@@ -1,7 +1,20 @@
 import os
 
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
-from bindings import B1500Session, SMU_CHANNEL_MAP
+from instrumentio.constants import SMU_CHANNEL_MAP
+from instrumentio.codes import (
+    B1500_AUTO_RANGE,
+    B1500_CH_ALL,
+    B1500_CH_NOCH,
+    B1500_IM_MODE,
+    B1500_LAST_START,
+    B1500_STOP_DISABLE,
+    B1500_SWP_VF_DBLLIN,
+    B1500_SWP_VF_SGLLIN,
+    B1500_VM_MODE,
+)
+from instrumentio.descriptors import describe_status_bits
+from instrumentio.sessions import B1500Session
 
 
 class OxideBreakdownProcedure(MeasurementProcedure):
@@ -23,7 +36,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         self.v_max = settings.get('v_max', 15.0)
         self.points = max(1, int(float(settings.get('points', 75))))
         self.current_compliance = float(settings.get('current_compliance', 1e-3))
-        self.current_range = float(settings.get('current_range', B1500Session.AUTO_RANGE))
+        self.current_range = float(settings.get('current_range', B1500_AUTO_RANGE))
         self.double_sweep = bool(settings.get('double_sweep', True))
 
         # Timing controls (optional; default to immediate sweep)
@@ -49,7 +62,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             b1500.set_timeout(10000)
             b1500.enable_error_detect(True)
             # Do not abort the sweep on compliance; hold final level at end.
-            b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_START)
+            b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_START)
 
             results = self.perform_breakdown_sweep(b1500, device)
 
@@ -79,17 +92,17 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         self.check_stop(b1500)
 
         # make sure that all channels are open unless otherwise configured
-        b1500.set_switch(b1500.CH_ALL, False)
+        b1500.set_switch(B1500_CH_ALL, False)
         # Enable SMUs
         b1500.set_switch(high, True)
         b1500.set_switch(low, True)
         # use the other SMUs to sense voltage (i.e. force zero current)
         if sense_high is not None:
             b1500.set_switch(sense_high, True)
-            b1500.force_current(sense_high, 0.0, B1500Session.AUTO_RANGE)
+            b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
         if sense_low is not None:
             b1500.set_switch(sense_low, True)
-            b1500.force_current(sense_low, 0.0, B1500Session.AUTO_RANGE)
+            b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
 
         # Apply ASU config if present
         self.check_stop(b1500)
@@ -108,11 +121,11 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         b1500.force_voltage(low, 0.0, self.current_compliance)
 
         # Program voltage sweep on high terminal
-        sweep_mode = B1500Session.SWP_VF_DBLLIN if self.double_sweep else B1500Session.SWP_VF_SGLLIN
+        sweep_mode = B1500_SWP_VF_DBLLIN if self.double_sweep else B1500_SWP_VF_SGLLIN
         b1500.set_iv_sweep(
             high,
             sweep_mode,
-            B1500Session.AUTO_RANGE,
+            B1500_AUTO_RANGE,
             self.start_voltage,
             self.v_max,
             self.points,
@@ -143,16 +156,16 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
         # Begin sweep with streaming readout
         channels = [high, low]
-        modes = [B1500Session.IM_MODE, B1500Session.IM_MODE]
+        modes = [B1500_IM_MODE, B1500_IM_MODE]
         ranges = [self.current_range, self.current_range]
         if sense_high is not None:
             channels.append(sense_high)
-            modes.append(B1500Session.VM_MODE)
-            ranges.append(B1500Session.AUTO_RANGE)
+            modes.append(B1500_VM_MODE)
+            ranges.append(B1500_AUTO_RANGE)
         if sense_low is not None:
             channels.append(sense_low)
-            modes.append(B1500Session.VM_MODE)
-            ranges.append(B1500Session.AUTO_RANGE)
+            modes.append(B1500_VM_MODE)
+            ranges.append(B1500_AUTO_RANGE)
 
         self.check_stop(b1500)
 
@@ -187,7 +200,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 key = (channel, data_type, status)
                 if key not in nonzero_statuses:
                     nonzero_statuses.add(key)
-                    desc = B1500Session.describe_status_bits(status)
+                    desc = describe_status_bits(status)
                     runner.report_status({
                         "channel": channel,
                         "data_type": data_type,
@@ -207,7 +220,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 elif channel == sense_low:
                     sense_low_voltages.append(value)
             elif data_type == 4:  # source output (voltage)
-                if channel in (high, b1500.CH_NOCH, b1500.CH_ALL) and len(v_source_values) < max_points:
+                if channel in (high, B1500_CH_NOCH, B1500_CH_ALL) and len(v_source_values) < max_points:
                     v_source_values.append(value)
                     v_source_status.append(status)
             elif data_type == 5:  # timestamp

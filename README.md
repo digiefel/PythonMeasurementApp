@@ -250,7 +250,7 @@ class B1500Session:
             pass
 ```
 
-Full implementation in `bindings.py`.
+Full implementation in `instrumentio/sessions.py` and `instrumentio/bindings.py`.
 
 ### WGFMU Bindings (WGFMU.dll)
 Based on `WGFMU.cs` DllImport:
@@ -305,7 +305,7 @@ Full implementation in `bindings.py`.
 In `rv_sweep.py`:
 
 ```python
-from bindings import B1500Session, WGFMUSession
+from instrumentio.sessions import B1500Session, WGFMUSession
 
 class RVSweepProcedure(MeasurementProcedure):
     def run(self, device, runner):

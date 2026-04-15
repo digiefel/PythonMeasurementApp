@@ -1,5 +1,20 @@
 from procedures.base import MeasurementProcedure
-from bindings import B1500Session, get_cmu_mode_name, get_cmu_mode_components, format_cmu_component_label
+from instrumentio.codes import (
+    B1500_AUTO_RANGE,
+    B1500_CH_ALL,
+    B1500_CMUM_CP_D,
+    B1500_LAST_STOP,
+    B1500_STOP_DISABLE,
+    B1500_SWP_VF_DBLLIN,
+    B1500_SWP_VF_SGLLIN,
+)
+from instrumentio.descriptors import (
+    describe_status_bits,
+    format_cmu_component_label,
+    get_cmu_mode_components,
+    get_cmu_mode_name,
+)
+from instrumentio.sessions import B1500Session
 
 
 class CVSweepProcedure(MeasurementProcedure):
@@ -23,7 +38,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
         self.gpib_address = settings.get("gpib_address", "GPIB0::17::INSTR")
         self.cmu_channel = int(settings.get("cmu_channel", -1))
-        self.cmu_mode = int(settings.get("cmu_mode", B1500Session.CMUM_CP_D))
+        self.cmu_mode = int(settings.get("cmu_mode", B1500_CMUM_CP_D))
 
         # Backward compat: old configs have double_sweep + frequency_hz
         if 'sweep_type' not in settings and 'double_sweep' in settings:
@@ -39,7 +54,7 @@ class CVSweepProcedure(MeasurementProcedure):
         self.start_bias = float(settings.get("start_bias", -2.0))
         self.stop_bias = float(settings.get("stop_bias", 2.0))
         self.points = max(1, int(float(settings.get("points", 101))))
-        self.measurement_range = float(settings.get("measurement_range", B1500Session.AUTO_RANGE))
+        self.measurement_range = float(settings.get("measurement_range", B1500_AUTO_RANGE))
 
         self.ac_level_mv = float(settings.get("ac_level_mv", 30.0))
         self.ac_level = self.ac_level_mv / 1000.0
@@ -229,7 +244,7 @@ class CVSweepProcedure(MeasurementProcedure):
         b1500.reset()
         b1500.set_timeout(10000)
         b1500.enable_error_detect(True)
-        b1500.stop_mode(B1500Session.STOP_DISABLE, B1500Session.LAST_STOP)
+        b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
 
         results = self.perform_cv_sweep(b1500, device, primary_name, monitor_name, primary_label, monitor_label)
 
@@ -273,7 +288,7 @@ class CVSweepProcedure(MeasurementProcedure):
         all_results = []
 
         try:
-            b1500.set_switch(B1500Session.CH_ALL, False)
+            b1500.set_switch(B1500_CH_ALL, False)
             b1500.set_switch(self.cmu_channel, True)
             b1500.set_cmu_integ(self.integration_mode, self.integration_value)
             b1500.force_cmu_ac_level(self.cmu_channel, self.ac_level)
@@ -295,11 +310,11 @@ class CVSweepProcedure(MeasurementProcedure):
 
         finally:
             try:
-                b1500.zero_output(B1500Session.CH_ALL)
+                b1500.zero_output(B1500_CH_ALL)
             except Exception as e:
                 self.log(f"Warning: failed to zero outputs after C-V sweep: {e}")
             try:
-                b1500.set_switch(B1500Session.CH_ALL, False)
+                b1500.set_switch(B1500_CH_ALL, False)
             except Exception as e:
                 self.log(f"Warning: failed to open switches after C-V sweep: {e}")
 
@@ -315,7 +330,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
     def _run_standard_sweep(self, b1500, p_series, m_series, nonzero_statuses):
         """Single or double linear sweep with per-point live SCPI streaming."""
-        mode = B1500Session.SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500Session.SWP_VF_SGLLIN
+        mode = B1500_SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500_SWP_VF_SGLLIN
         expected = self._expected_points()
         rows = []
 
@@ -348,7 +363,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
             b1500.reset_timestamp()
             b1500.set_cv(
-                self.cmu_channel, B1500Session.SWP_VF_SGLLIN,
+                self.cmu_channel, B1500_SWP_VF_SGLLIN,
                 seg_start, seg_stop, npts,
                 hold=hold, delay=self.delay_time, second_delay=self.second_delay,
             )
@@ -371,11 +386,11 @@ class CVSweepProcedure(MeasurementProcedure):
             seen.add((self.cmu_channel, 8, s1))
             self.runner.report_status({
                 "channel": self.cmu_channel, "data_type": 8, "status": s1,
-                "desc": B1500Session.describe_status_bits(s1),
+                "desc": describe_status_bits(s1),
             })
         if s2 and (self.cmu_channel, 9, s2) not in seen:
             seen.add((self.cmu_channel, 9, s2))
             self.runner.report_status({
                 "channel": self.cmu_channel, "data_type": 9, "status": s2,
-                "desc": B1500Session.describe_status_bits(s2),
+                "desc": describe_status_bits(s2),
             })

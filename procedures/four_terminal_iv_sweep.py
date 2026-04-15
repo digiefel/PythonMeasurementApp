@@ -1,5 +1,15 @@
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
-from bindings import B1500Session, SMU_CHANNEL_MAP
+from instrumentio.constants import SMU_CHANNEL_MAP
+from instrumentio.codes import (
+    B1500_AUTO_RANGE,
+    B1500_CH_ALL,
+    B1500_CH_NOCH,
+    B1500_IM_MODE,
+    B1500_VM_MODE,
+    B1500_SWP_IF_SGLLIN,
+)
+from instrumentio.descriptors import describe_status_bits
+from instrumentio.sessions import B1500Session
 
 class FourTerminalIVProcedure(MeasurementProcedure):
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
@@ -105,8 +115,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Hold the return SMU at 0 V with a safe current compliance
         b1500.force_voltage(return_channel, 0.0, self.current_compliance)
-        b1500.force_current(sense_high, 0.0, B1500Session.AUTO_RANGE)
-        b1500.force_current(sense_low, 0.0, B1500Session.AUTO_RANGE)
+        b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
+        b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
 
         # Generate current sweep vector (inclusive of stop)
         if self.points < 2:
@@ -120,8 +130,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         # Program the sweep on the source channel
         b1500.set_iv_sweep(
             source_channel,
-            B1500Session.SWP_IF_SGLLIN,
-            B1500Session.AUTO_RANGE,
+            B1500_SWP_IF_SGLLIN,
+            B1500_AUTO_RANGE,
             self.start_current,
             self.stop_current,
             self.points,
@@ -134,8 +144,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Configure multi-channel measurement and run sweepMiv to capture data
         channels = [source_channel, sense_high, return_channel, sense_low]
-        modes = [B1500Session.IM_MODE, B1500Session.VM_MODE, B1500Session.IM_MODE, B1500Session.VM_MODE]
-        ranges = [B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE, B1500Session.AUTO_RANGE]
+        modes = [B1500_IM_MODE, B1500_VM_MODE, B1500_IM_MODE, B1500_VM_MODE]
+        ranges = [B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE]
 
         self.check_stop(b1500)
 
@@ -168,7 +178,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                 key = (channel, data_type, status)
                 if key not in nonzero_statuses:
                     nonzero_statuses.add(key)
-                    desc = B1500Session.describe_status_bits(status)
+                    desc = describe_status_bits(status)
                     runner.report_status({
                         "channel": channel,
                         "data_type": data_type,
@@ -180,7 +190,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                     data_by_ch[channel].append(value)
                     status_by_ch[channel].append(status)
             elif data_type in (3, 4):  # source output data
-                if channel not in (source_channel, b1500.CH_NOCH, b1500.CH_ALL):
+                if channel not in (source_channel, B1500_CH_NOCH, B1500_CH_ALL):
                     continue
                 source_values.append(value)
                 source_status.append(status)
@@ -202,8 +212,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Once we exit the loop, the sweep is done
         # We can shut down the source
-        b1500.zero_output(B1500Session.CH_ALL)
-        b1500.set_switch(B1500Session.CH_ALL, False)
+        b1500.zero_output(B1500_CH_ALL)
+        b1500.set_switch(B1500_CH_ALL, False)
 
         results = []
         point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))

@@ -4,7 +4,8 @@ import atexit
 from typing import Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementAbortRequested
-from bindings import B1500Session
+from instrumentio.codes import B1500_CH_ALL
+from instrumentio.sessions import B1500Session
 from prober import ProberController
 
 
@@ -407,8 +408,8 @@ class MeasurementRunner:
             raise # things will be cleaned up in safe_stop
         except Exception as e:
             try:
-                self.b1500.zero_output(B1500Session.CH_ALL)
-                self.b1500.set_switch(B1500Session.CH_ALL, False)
+                self.b1500.zero_output(B1500_CH_ALL)
+                self.b1500.set_switch(B1500_CH_ALL, False)
             except Exception:
                 pass
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
