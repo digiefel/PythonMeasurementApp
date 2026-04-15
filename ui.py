@@ -254,6 +254,22 @@ class MainUI:
                 ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
                 ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
             ],
+            'WGFMU Sampling': [
+                ('gpib_address', 'GPIB Address', str),
+                ('channel_1', 'WGFMU Channel 1', 'wgfmu_channel'),
+                ('channel_2', 'WGFMU Channel 2', 'wgfmu_channel'),
+                ('force_voltage_1', 'WGFMU Force Voltage Ch1 List (V, comma-separated)', str),
+                ('force_voltage_2', 'WGFMU Force Voltage Ch2 List (V, comma-separated)', str),
+                ('smu_channel_list_1', 'SMU Channel List 1 (comma-separated)', str),
+                ('smu_channel_list_2', 'SMU Channel List 2 (comma-separated)', str),
+                ('smu_voltage_1', 'SMU Voltage List 1 (V, comma-separated)', str),
+                ('smu_voltage_2', 'SMU Voltage List 2 (V, comma-separated)', str),
+                ('hold_time_s', 'Hold Time Before Sampling (s)', float),
+                ('sampling_rate_hz', 'Sampling Rate (Hz)', float),
+                ('total_samples', 'Total Samples', int),
+                ('meas_range_1', 'Current Range Ch1', 'wgfmu_current_range'),
+                ('meas_range_2', 'Current Range Ch2', 'wgfmu_current_range'),
+            ],
         }
         self.procedure_defaults = {
             'RVSweep': {
@@ -336,6 +352,22 @@ class MainUI:
                 'invert_polarity': False,
                 'points_per_decade': 10,
                 'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
+                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
+            },
+            'WGFMU Sampling': {
+                'gpib_address': 'GPIB0::17::INSTR',
+                'channel_1': 101,
+                'channel_2': 102,
+                'force_voltage_1': '0.1',
+                'force_voltage_2': '0.1',
+                'smu_channel_list_1': 'SMU1',
+                'smu_channel_list_2': 'SMU2',
+                'smu_voltage_1': '0.0',
+                'smu_voltage_2': '0.0',
+                'hold_time_s': 0.0,
+                'sampling_rate_hz': 1e4,
+                'total_samples': 100000,
+                'meas_range_1': WGFMU_MEASURE_CURRENT_RANGES[0][0],
                 'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
             },
         }
@@ -1495,6 +1527,7 @@ class MainUI:
             'CVSweep': CVSweepProcedure,
             'PUND': PUNDProcedure,
             'PUNDFatigue': PUNDFatigueProcedure,
+            'WGFMU Sampling': WGFMUSamplingProcedure,
         }[proc_name]
         settings = self.collect_settings()
         # Cache current settings/selection in memory only to avoid overwriting config files on run
