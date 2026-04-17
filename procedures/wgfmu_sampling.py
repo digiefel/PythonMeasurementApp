@@ -2,6 +2,7 @@ import math
 import time
 from itertools import product
 
+from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
@@ -326,19 +327,14 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             )
 
         runner = self.runner
-        runner.start_live_plot(
-            title=f'WGFMU Sampling - {device.name}',
-            xlabel='Time (s)',
-            ylabel='Current (A)',
-            series_label=None,
-            series_labels=['I1(t)', '-I2(t)'],
-            styles={
-                'I1(t)': {'color': 'C0'},
-                '-I2(t)': {'color': 'C1'},
-            },
-            secondary_series=[],
-        )
-        runner.set_plot_limits(xlim=(0.0, sampling_duration_s))
+        runner.configure_plot(f'WGFMU Sampling - {device.name}', [
+            PlotDef("samp", xlabel="Time (s)", ylabels=("Current (A)",),
+                    xlim=(0.0, sampling_duration_s),
+                    elements=[
+                        Curve("I1", color="C0", legend_label="I1(t)"),
+                        Curve("I2", color="C1", legend_label="-I2(t)"),
+                    ]),
+        ])
 
         wgfmu = b1500.wgfmu
         ts = self.get_run_timestamp()
@@ -452,7 +448,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                             self._push_plot_sample(t_val, i1, i2, plot_state, plot_i1, plot_i2)
 
                         if plot_i1 or plot_i2:
-                            runner.append_plot_points({'I1(t)': plot_i1, '-I2(t)': plot_i2})
+                            runner.plot.append_batch({'I1': plot_i1, 'I2': plot_i2})
                         next_index = read_until
                         last_progress_time = time.monotonic()
                         continue
@@ -484,7 +480,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 tail_i2 = []
                 self._flush_plot_bucket(plot_state, tail_i1, tail_i2)
                 if tail_i1 or tail_i2:
-                    runner.append_plot_points({'I1(t)': tail_i1, '-I2(t)': tail_i2})
+                    runner.plot.append_batch({'I1': tail_i1, 'I2': tail_i2})
 
                 if next_index < self.total_samples:
                     self.log(
@@ -514,7 +510,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             )
 
             plot_filename = f"{base}_plot.png"
-            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 
             self.log(
                 f"WGFMU Sampling complete: {len(csv_rows)} samples captured "

@@ -1,5 +1,6 @@
 import os
 
+from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from instrumentio.constants import SMU_CHANNEL_MAP
 from instrumentio.codes import (
@@ -75,7 +76,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 add_timestamp=False
             )
             plot_filename = f'{base}_plot.png'
-            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'Oxide breakdown sweep completed for {device.name}')
         except Exception as e:
             self.log(f'Error during oxide breakdown sweep: {str(e)}')
@@ -138,21 +139,16 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
-        runner.start_live_plot(
-            title=f'Oxide Breakdown - {device.name}',
-            xlabel='Voltage (V)',
-            ylabel='Current (A)',
-            series_label=None,
-            series_labels=['$I_+(V)$', '$-I_-(V)$'],
-            styles={
-                '$I_+(V)$': {'color': 'C0'},
-                '$-I_-(V)$': {'color': 'C1'},
-                'log(I)': {'color': 'k', 'linestyle': 'dashed'}
-            },
-            secondary_series=['log(I)'],
-            secondary_ylabel='log(I) (A)',
-            secondary_yscale='log'
-        )
+        runner.configure_plot(f'Oxide Breakdown - {device.name}', [
+            PlotDef("bd", xlabel="Voltage (V)",
+                    ylabels=("Current (A)", "log |I| (A)"),
+                    yscales=("linear", "log"),
+                    elements=[
+                        Curve("I_pos", color="C0", legend_label="I+(V)"),
+                        Curve("I_neg", color="C1", legend_label="-I-(V)"),
+                        Curve("log_I", color="k", line_style="dash", yaxis=1, legend_label="log(I)"),
+                    ]),
+        ])
 
         # Begin sweep with streaming readout
         channels = [high, low]
@@ -231,8 +227,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 v_val = v_source_values[plotted] if plotted < len(v_source_values) else voltages[plotted]
                 ip_val = high_currents[plotted]
                 in_val = low_currents[plotted]
-                runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-                runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
+                runner.plot.append_point("I_pos", v_val, ip_val)
+                runner.plot.append_point("I_neg", v_val, -in_val)
                 plotted += 1
 
             if eod or plotted >= max_points:
@@ -243,14 +239,14 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
             ip_val = high_currents[idx]
             in_val = low_currents[idx]
-            runner.add_live_point(v_val, ip_val, '$I_+(V)$')
-            runner.add_live_point(v_val, -in_val, '$-I_-(V)$')
+            runner.plot.append_point("I_pos", v_val, ip_val)
+            runner.plot.append_point("I_neg", v_val, -in_val)
 
         # Add log-magnitude series once, at the end, in one shot
         floor = 1e-15
         xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
         ys = [max(abs(high_currents[idx]), floor) for idx in range(min(len(high_currents), max_points))]
-        runner.add_live_series(xs, ys, 'log(I)')
+        runner.plot.append_many("log_I", xs, ys)
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))

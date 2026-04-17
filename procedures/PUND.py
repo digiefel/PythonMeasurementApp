@@ -1,5 +1,6 @@
 import time
 import numpy as np
+from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
@@ -178,7 +179,7 @@ class PUNDProcedure(MeasurementProcedure):
 			xlim = (0, pattern_duration)
 			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
 
-			# Build styles with color gradient for each rep
+			# Build Curve elements with color gradient for each rep
 			# Blues for voltage, oranges for current
 			max_reps_to_plot = min(self.repetition_count, 50)
 			step = max(1, self.repetition_count // max_reps_to_plot)
@@ -186,28 +187,26 @@ class PUNDProcedure(MeasurementProcedure):
 			if (self.repetition_count - 1) not in reps_to_plot:
 				reps_to_plot.append(self.repetition_count - 1)
 
-			styles = {}
-			secondary_labels = []
+			elements = []
 			for idx, rep in enumerate(reps_to_plot):
 				intensity = 0.2 + 0.7 * (idx / max(1, len(reps_to_plot) - 1))
-				v_label = f'V (rep {rep+1})' if rep == 0 or rep == self.repetition_count - 1 else f'_V_{rep}'
-				i_label = f'I (rep {rep+1})' if rep == 0 or rep == self.repetition_count - 1 else f'_I_{rep}'
-				styles[v_label] = {'color': (0, 0, intensity), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
-				styles[i_label] = {'color': (intensity, 0.3 * intensity, 0), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
-				secondary_labels.append(i_label)
+				show = (rep == 0 or rep == self.repetition_count - 1)
+				v_legend = f"V (rep {rep+1})" if show else ""
+				i_legend = f"I (rep {rep+1})" if show else ""
+				elements.append(Curve(f"V_{rep}", color=(0, 0, intensity), line_width=0.8,
+				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
+				elements.append(Curve(f"I_{rep}", color=(intensity, 0.3 * intensity, 0), line_width=0.8,
+				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
 
 			# Initialize live overlay plot
 			runner = self.runner
-			runner.start_live_plot(
-				title=f'PUND Overlay - {device.name}',
-				xlabel='Time (s)',
-				ylabel='Voltage (V)',
-				series_label=None,
-				styles=styles,
-				secondary_series=secondary_labels,
-				secondary_ylabel='Current (μA)',
-			)
-			runner.set_plot_limits(xlim=xlim, ylim=ylim)
+			runner.configure_plot(f'PUND Overlay - {device.name}', [
+				PlotDef("pund", xlabel="Time (s)",
+				        ylabels=("Voltage (V)", "Current (μA)"),
+				        xlim=xlim,
+				        ylims=(ylim, None),
+				        elements=elements),
+			])
 
 			self.check_stop(b1500)
 			wgfmu.execute()
@@ -259,13 +258,11 @@ class PUNDProcedure(MeasurementProcedure):
 					# Build batch update for all reps
 					batch_update = {}
 					for rep_idx, batch_data in rep_batches.items():
-						v_label = f'V (rep {rep_idx+1})' if rep_idx == 0 or rep_idx == self.repetition_count - 1 else f'_V_{rep_idx}'
-						i_label = f'I (rep {rep_idx+1})' if rep_idx == 0 or rep_idx == self.repetition_count - 1 else f'_I_{rep_idx}'
-						batch_update[v_label] = batch_data['v']
-						batch_update[i_label] = batch_data['i']
+						batch_update[f"V_{rep_idx}"] = batch_data['v']
+						batch_update[f"I_{rep_idx}"] = batch_data['i']
 
 					if batch_update:
-						runner.append_plot_points(batch_update)
+						runner.plot.append_batch(batch_update)
 
 					plotted_count = available
 
@@ -281,7 +278,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 			# Finalize and save overlay plot
 			plot_filename = f'{base}_overlay.png'
-			runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+			runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 		finally:
 			try:
 				wgfmu.clear()

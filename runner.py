@@ -1,12 +1,15 @@
 import os.path
 import time
 import atexit
-from typing import Optional, Dict, Any, Callable
+from typing import TYPE_CHECKING, Optional, Dict, Any
 import threading
 from procedures.base import MeasurementAbortRequested
 from instrumentio.codes import B1500_CH_ALL
 from instrumentio.sessions import B1500Session
 from prober import ProberController
+
+if TYPE_CHECKING:
+    from plotting import PlotBridge, PlotDef
 
 
 class MeasurementRunner:
@@ -15,12 +18,7 @@ class MeasurementRunner:
     def __init__(self, config):
         self.config = config
         self.log_callback = None
-        self.plot_start_callback = None
-        self.plot_point_callback = None
-        self.plot_finalize_callback = None
-        self.plot_series_callback = None
-        self.plot_limits_callback = None
-        self.plot_append_callback = None
+        self.plot: PlotBridge | None = None
         self.status_callback = None
         self.contact_state_callback = None
         self.light_state_callback = None
@@ -234,38 +232,13 @@ class MeasurementRunner:
                 self.log(f"Warning: Z compensation update failed: {e}")
         return reached
 
-    def start_live_plot(self, title: str, xlabel: str, ylabel: str, series_label: str = "Data", styles: dict = None, secondary_series: list = None, secondary_ylabel: str = None, secondary_yscale: str = None, series_labels: list = None):
-        """Notify UI to initialize/clear the live plot."""
-        if self.plot_start_callback:
-            if self.current_temp_c is not None:
-                title = f"{title} ({self.current_temp_c + 273.15:.0f}K)"
-            labels = series_labels if series_labels is not None else ([series_label] if series_label else [])
-            self.plot_start_callback(title, xlabel, ylabel, series_label, styles or {}, secondary_series or [], secondary_ylabel, secondary_yscale, labels)
-
-    def add_live_point(self, x, y, series_label: str = "Data"):
-        """Send a single data point to the UI plot."""
-        if self.plot_point_callback:
-            self.plot_point_callback(x, y, series_label)
-
-    def add_live_series(self, xs, ys, series_label: str = "Data"):
-        """Send a full series to the UI plot in one update."""
-        if self.plot_series_callback:
-            self.plot_series_callback(xs, ys, series_label)
-
-    def set_plot_limits(self, xlim=None, ylim=None, y2lim=None):
-        """Set fixed axis limits on the live plot."""
-        if self.plot_limits_callback:
-            self.plot_limits_callback(xlim, ylim, y2lim)
-
-    def append_plot_points(self, points: dict):
-        """Append multiple points to multiple series in one batched update."""
-        if self.plot_append_callback:
-            self.plot_append_callback(points)
-
-    def finalize_plot(self, filename: str | None, output_root: str, output_relative: str, fallback_root: str):
-        """Tell UI to persist the current plot image using root+relative with fallback root."""
-        if self.plot_finalize_callback:
-            self.plot_finalize_callback(filename, output_root, output_relative, fallback_root)
+    def configure_plot(self, title: str, plots: list[PlotDef]) -> None:
+        """Configure the figure with temperature appended to the title if available."""
+        if self.plot is None:
+            return
+        if self.current_temp_c is not None:
+            title = f"{title} ({self.current_temp_c + 273.15:.0f}K)"
+        self.plot.configure(title, plots)
     def report_status(self, status_info: Optional[Dict[str, Any]]):
         """
         Surface measurement/driver status (non-zero codes) to the UI.

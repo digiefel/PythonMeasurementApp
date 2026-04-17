@@ -10,6 +10,8 @@ from instrumentio.codes import (
 )
 from instrumentio.descriptors import describe_status_bits
 from instrumentio.sessions import B1500Session
+from plotting import PlotDef, Curve, LinearFit
+from plotting import linear_fit
 
 class FourTerminalIVProcedure(MeasurementProcedure):
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
@@ -73,7 +75,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                           ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
                           add_timestamp=False)
             plot_filename = f'{base}_plot.png'
-            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'4-Terminal I-V sweep completed for {device.name}')
 
         except Exception as e:
@@ -149,15 +151,14 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
-        # Initialize live plot
-        runner.start_live_plot(
-            title=f'4-Terminal I-V - {device.name}',
-            xlabel='Current (A)',
-            ylabel='Voltage (V)',
-            series_label='V(I)',
-            styles={'V(I)': {'marker': 'x'}, 'R_fit': {'marker': None, 'color': 'C1'}},
-            secondary_series=[]
-        )
+        runner.configure_plot(f'4-Terminal I-V - {device.name}', [
+            PlotDef("iv", xlabel="Current (A)", ylabels=("Voltage (V)",),
+                    elements=[
+                        Curve("V_I", mode="scatter", marker="x", color="C0", legend_label="V(I)"),
+                        LinearFit("V_I", color="C1",
+                                  legend_label_template="R = {slope:.4g} Ω  (R² = {r_squared:.4f})"),
+                    ]),
+        ])
 
         # Start streaming for live plot updates and full capture
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
@@ -202,8 +203,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             while plotted < paired:
                 idx = plotted
                 v_diff = data_by_ch[sense_high][idx] - data_by_ch[sense_low][idx]
-                current_set = data_by_ch[source_channel][idx]
-                runner.add_live_point(current_points[idx], v_diff, 'V(I)')
+                runner.plot.append_point("V_I", current_points[idx], v_diff)
                 plotted += 1
 
             # Stop if we received all expected points or instrument signaled end
@@ -217,23 +217,6 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         results = []
         point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
-        # Compute a simple linear regression V = R*I + b for the differential voltage
-        if point_count >= 2:
-            currents = data_by_ch[source_channel][:point_count]
-            voltages = [data_by_ch[sense_high][i] - data_by_ch[sense_low][i] for i in range(point_count)]
-            mean_i = sum(currents) / point_count
-            mean_v = sum(voltages) / point_count
-            num = sum((currents[i] - mean_i) * (voltages[i] - mean_v) for i in range(point_count))
-            den = sum((currents[i] - mean_i) ** 2 for i in range(point_count))
-            slope = num / den if den != 0 else None
-            intercept = mean_v - (slope * mean_i) if slope is not None else None
-            if slope is not None:
-                x_min, x_max = min(currents), max(currents)
-                y_min = slope * x_min + (intercept or 0.0)
-                y_max = slope * x_max + (intercept or 0.0)
-                label = f'R_fit={slope/1e3:.2f} kΩ'
-                runner.add_live_point(x_min, y_min, label)
-                runner.add_live_point(x_max, y_max, label)
         for i in range(point_count):
             current_set = data_by_ch[source_channel][i]
             v_high = data_by_ch[sense_high][i]

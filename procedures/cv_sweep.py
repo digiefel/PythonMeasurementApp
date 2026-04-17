@@ -1,3 +1,4 @@
+from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
@@ -210,23 +211,6 @@ class CVSweepProcedure(MeasurementProcedure):
             (vmin, 0.0,  raw[2]),
         ]
 
-    def _build_plot_series(self, primary_label, monitor_label):
-        """Return (series_labels, styles, secondary_series) for start_live_plot."""
-        series_labels = []
-        styles = {}
-        secondary_series = []
-        colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
-        for i, freq in enumerate(self.frequencies):
-            color = colors[i % len(colors)]
-            tag = self._freq_label(freq)
-            p_lbl = f"{primary_label} @ {tag}"
-            m_lbl = f"{monitor_label} @ {tag}"
-            series_labels.extend([p_lbl, m_lbl])
-            styles[p_lbl] = {"color": color, "linestyle": "-"}
-            styles[m_lbl] = {"color": color, "linestyle": "--"}
-            secondary_series.append(m_lbl)
-        return series_labels, styles, secondary_series
-
     def run(self, b1500: B1500Session, device):
         self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
@@ -266,23 +250,25 @@ class CVSweepProcedure(MeasurementProcedure):
             add_timestamp=False,
         )
         plot_filename = f"{base}_plot.png"
-        self.runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+        self.runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
         self.log(f"C-V sweep completed for {device.name}")
 
     def perform_cv_sweep(self, b1500: B1500Session, device, primary_name, monitor_name, primary_label, monitor_label):
         self.check_stop(b1500)
 
-        series_labels, styles, secondary_series = self._build_plot_series(primary_label, monitor_label)
-        self.runner.start_live_plot(
-            title=f"C-V Sweep - {device.name}",
-            xlabel="Bias (V)",
-            ylabel=primary_label,
-            series_label=None,
-            series_labels=series_labels,
-            styles=styles,
-            secondary_series=secondary_series,
-            secondary_ylabel=monitor_label,
-        )
+        elements = []
+        for i, freq in enumerate(self.frequencies):
+            color = f'C{i % 10}'
+            tag = self._freq_label(freq)
+            elements.append(Curve(f"p_{tag}", color=color, line_style="solid",
+                                  legend_label=f"{primary_label} @ {tag}"))
+            elements.append(Curve(f"m_{tag}", color=color, line_style="dash", yaxis=1,
+                                  legend_label=f"{monitor_label} @ {tag}"))
+
+        self.runner.configure_plot(f"C-V Sweep - {device.name}", [
+            PlotDef("cv", xlabel="Bias (V)", ylabels=(primary_label, monitor_label),
+                    elements=elements),
+        ])
 
         nonzero_statuses = set()
         all_results = []
@@ -297,13 +283,13 @@ class CVSweepProcedure(MeasurementProcedure):
                 self.check_stop(b1500)
                 b1500.set_cmu_freq(self.cmu_channel, freq)
                 tag = self._freq_label(freq)
-                p_series = f"{primary_label} @ {tag}"
-                m_series = f"{monitor_label} @ {tag}"
+                p_source = f"p_{tag}"
+                m_source = f"m_{tag}"
 
                 if self.sweep_type == 'butterfly':
-                    rows = self._run_butterfly_sweep(b1500, p_series, m_series, nonzero_statuses)
+                    rows = self._run_butterfly_sweep(b1500, p_source, m_source, nonzero_statuses)
                 else:
-                    rows = self._run_standard_sweep(b1500, p_series, m_series, nonzero_statuses)
+                    rows = self._run_standard_sweep(b1500, p_source, m_source, nonzero_statuses)
 
                 for row in rows:
                     all_results.append([freq] + row)
@@ -328,7 +314,7 @@ class CVSweepProcedure(MeasurementProcedure):
         self.log(f"Collected {len(all_results)} C-V data points")
         return all_results
 
-    def _run_standard_sweep(self, b1500, p_series, m_series, nonzero_statuses):
+    def _run_standard_sweep(self, b1500, p_source, m_source, nonzero_statuses):
         """Single or double linear sweep with per-point live SCPI streaming."""
         mode = B1500_SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500_SWP_VF_SGLLIN
         expected = self._expected_points()
@@ -343,15 +329,15 @@ class CVSweepProcedure(MeasurementProcedure):
 
         def on_point(_, source_v, para1, para2, time_s, s1, s2):
             self.check_stop(b1500)
-            self.runner.add_live_point(source_v, para1, p_series)
-            self.runner.add_live_point(source_v, para2, m_series)
+            self.runner.plot.append_point(p_source, source_v, para1)
+            self.runner.plot.append_point(m_source, source_v, para2)
             self._report_status(nonzero_statuses, s1, s2)
             rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 
         b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, expected, on_point)
         return rows
 
-    def _run_butterfly_sweep(self, b1500, p_series, m_series, nonzero_statuses):
+    def _run_butterfly_sweep(self, b1500, p_source, m_source, nonzero_statuses):
         """Three-segment butterfly sweep (0→Vmax→Vmin→0) with per-point live SCPI streaming."""
         segments = self._compute_butterfly_segments()
         rows = []
@@ -372,8 +358,8 @@ class CVSweepProcedure(MeasurementProcedure):
                 if _skip and step == 0:
                     return
                 self.check_stop(b1500)
-                self.runner.add_live_point(source_v, para1, p_series)
-                self.runner.add_live_point(source_v, para2, m_series)
+                self.runner.plot.append_point(p_source, source_v, para1)
+                self.runner.plot.append_point(m_source, source_v, para2)
                 self._report_status(nonzero_statuses, s1, s2)
                 rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 

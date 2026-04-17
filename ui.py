@@ -8,8 +8,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
 from typing import Optional
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
 
@@ -39,7 +37,7 @@ from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
-from plot_manager import PlotManager, PlotSpec
+from plotting import PlotBridge
 
 # --- CV Sweep type options ---
 CV_SWEEP_TYPES = [
@@ -113,13 +111,9 @@ class MainUI:
         self.config = Config('global_config.json', 'TASE_devices.csv')
         self.runner = MeasurementRunner(self.config)
         self.runner.log_callback = self._post_log
-        self.runner.plot_start_callback = self._post_plot_start
-        self.runner.plot_point_callback = self._post_plot_point
-        self.runner.plot_series_callback = self._post_plot_series
-        self.runner.plot_finalize_callback = self._post_plot_finish
-        self.runner.plot_limits_callback = self._post_plot_limits
-        self.runner.plot_append_callback = self._post_plot_append
         self.runner.status_callback = self._post_status
+        self.plot_bridge = PlotBridge()
+        self.runner.plot = self.plot_bridge
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
@@ -130,13 +124,12 @@ class MainUI:
         self.selected_device_names = set()
 
         self.root.title("Python Measurement App")
-        self.root.geometry("1400x900")
-        for col, weight in enumerate((1, 1, 2)):
+        self.root.geometry("900x900")
+        for col, weight in enumerate((1, 1)):
             self.root.grid_columnconfigure(col, weight=weight)
         self.root.grid_rowconfigure(0, weight=3)
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_rowconfigure(2, weight=1)
-        self.root.grid_columnconfigure(2, weight=2)
 
         # GUI state
         self.site_var = tk.StringVar()
@@ -505,12 +498,6 @@ class MainUI:
         self.params_frame.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
         self.params_frame.grid_columnconfigure(0, weight=1)
         self.params_frame.grid_columnconfigure(1, weight=1)
-
-        # Matplotlib figure embedded in Tk (managed by PlotManager)
-        self.plot = PlotManager(self.root)
-        self.canvas_widget = self.plot.canvas_widget
-        self.canvas_widget.grid(row=0, column=2, rowspan=1, padx=8, pady=8, sticky="nsew")
-        self.canvas_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
 
         # Prober controls (bottom left)
         prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
@@ -1680,24 +1667,6 @@ class MainUI:
     def _post_status(self, info: Optional[dict]):
         self._post(self.show_status, info)
 
-    def _post_plot_start(self, *args, **kwargs):
-        self._post(self.start_plot, *args, **kwargs)
-
-    def _post_plot_point(self, *args, **kwargs):
-        self._post(self.add_plot_point, *args, **kwargs)
-
-    def _post_plot_series(self, *args, **kwargs):
-        self._post(self.add_plot_series, *args, **kwargs)
-
-    def _post_plot_finish(self, *args, **kwargs):
-        self._post(self.finish_plot, *args, **kwargs)
-
-    def _post_plot_limits(self, *args, **kwargs):
-        self._post(self.set_plot_limits, *args, **kwargs)
-
-    def _post_plot_append(self, *args, **kwargs):
-        self._post(self.append_plot_points, *args, **kwargs)
-
     def _set_running_state(self, running: bool):
         """Toggle Run/Stop button appearance and command."""
         if running:
@@ -1774,54 +1743,6 @@ class MainUI:
         tooltip_type = describe_data_type(dt) if dt is not None else "Type ?"
         tooltip = f"{ch_label} | {tooltip_type} | {desc} (0x{status:X})"
         return label, tooltip
-
-    # Live plotting helpers wired via MeasurementRunner callbacks
-    def start_plot(self, title, xlabel, ylabel, series_label="Data", styles=None, secondary_series=None, secondary_ylabel=None, secondary_yscale=None, series_labels=None):
-        spec = PlotSpec(
-            title=title,
-            xlabel=xlabel,
-            ylabel=ylabel,
-            primary_series=series_label or "Data",
-            styles=styles or {},
-            secondary_series=secondary_series or [],
-            secondary_ylabel=secondary_ylabel,
-            secondary_yscale=secondary_yscale,
-            initial_series=series_labels if series_labels is not None else ([series_label] if series_label else []),
-        )
-        self.plot.start(spec)
-
-    def add_plot_point(self, x, y, series_label="Data"):
-        self.plot.append_point(x, y, series_label)
-
-    def add_plot_series(self, xs, ys, series_label="Data"):
-        self.plot.add_series(xs, ys, series_label)
-
-    def set_plot_limits(self, xlim=None, ylim=None, y2lim=None):
-        self.plot.set_limits(xlim, ylim, y2lim)
-
-    def append_plot_points(self, points: dict):
-        self.plot.append_points(points)
-
-    def finish_plot(self, filename: str | None, output_root: str, output_relative: str, fallback_root: str):
-        if not filename:
-            self.plot.finish(None)
-            return
-        primary_path = os.path.join(output_root, output_relative, filename)
-        try:
-            os.makedirs(os.path.dirname(primary_path), exist_ok=True)
-            self.plot.finish(primary_path)
-            self.log(f'Plot saved to {primary_path}')
-        except Exception as e:
-            fallback_path = os.path.join(fallback_root, output_relative, filename)
-            try:
-                os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
-                self.log(f"Warning: plot save failed ({e}); retrying at {fallback_path}")
-                self.plot.finish(fallback_path)
-                self.log(f'Plot saved to fallback {fallback_path}')
-            except Exception as e2:
-                self.log(f"Plot fallback save failed: {e2}")
-                self.runner.safe_stop()
-                raise
 
     # Helpers
     def lookup_smu_label(self, value):
@@ -1922,6 +1843,7 @@ class MainUI:
         self.runner.safe_stop()
         if self._run_thread and self._run_thread.is_alive():
             self._run_thread.join(timeout=10)
+        self.plot_bridge.shutdown()
         self.root.destroy()
 
     def apply_last_selection(self, last_sel):

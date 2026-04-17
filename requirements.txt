@@ -2,3 +2,6 @@ pyvisa
 pandas
 matplotlib
 sentio-prober-control
+dearpygui
+scipy
+numpy

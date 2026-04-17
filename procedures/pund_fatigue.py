@@ -6,6 +6,7 @@ Optionally measures at N points (linear or log spaced) throughout the run.
 """
 import time
 import numpy as np
+from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
@@ -262,7 +263,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			runner = self.runner
 			base = self.format_filename("PUND_Fatigue", device.name)
 			
-			# Build styles with logarithmic color gradient for each measured cycle
+			# Build Curve elements with logarithmic color gradient for each measured cycle
 			# Blues for voltage, oranges for current
 			max_cycles_to_plot = min(len(measure_cycles), 50)
 			step_plot = max(1, len(measure_cycles) // max_cycles_to_plot)
@@ -274,46 +275,33 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			max_cycle = measure_cycles[-1] if measure_cycles else 1
 			log_max = np.log10(max(max_cycle, 1))
 
-			styles = {}
-			secondary_labels = []
-			meas_idx_to_labels = {}  # Map meas_idx -> (v_label, i_label)
+			elements = []
+			meas_idx_to_sources = {}  # meas_idx -> (v_source, i_source)
 			for plot_idx, meas_idx in enumerate(cycles_to_plot_idx):
 				cycle_num = measure_cycles[meas_idx]
-				# Logarithmic intensity based on cycle number
 				log_cycle = np.log10(max(cycle_num, 1))
 				intensity = 0.2 + 0.7 * (log_cycle / max(log_max, 1))
-				
-				# Label first and last cycle, hide others in legend
-				if meas_idx == 0:
-					v_label = f'V (cycle {cycle_num})'
-					i_label = f'I (cycle {cycle_num})'
-				elif meas_idx == len(measure_cycles) - 1:
-					v_label = f'V (cycle {cycle_num})'
-					i_label = f'I (cycle {cycle_num})'
-				else:
-					v_label = f'_V_{cycle_num}'
-					i_label = f'_I_{cycle_num}'
-				
-				meas_idx_to_labels[meas_idx] = (v_label, i_label)
-				styles[v_label] = {'color': (0, 0, intensity), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
-				styles[i_label] = {'color': (intensity, 0.3 * intensity, 0), 'marker': None, 'linestyle': '-', 'linewidth': 0.8}
-				secondary_labels.append(i_label)
+				show = (meas_idx == 0 or meas_idx == len(measure_cycles) - 1)
+				v_legend = f"V (cycle {cycle_num})" if show else ""
+				i_legend = f"I (cycle {cycle_num})" if show else ""
+				elements.append(Curve(f"V_{cycle_num}", color=(0, 0, intensity), line_width=0.8,
+				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
+				elements.append(Curve(f"I_{cycle_num}", color=(intensity, 0.3 * intensity, 0), line_width=0.8,
+				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
+				meas_idx_to_sources[meas_idx] = (f"V_{cycle_num}", f"I_{cycle_num}")
 
 			# Calculate expected limits for the overlay plot
 			v_margin = self.vmax * 0.1
 			xlim = (0, pattern_duration)
 			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
 
-			runner.start_live_plot(
-				title=f'PUND Fatigue Overlay - {device.name}',
-				xlabel='Time (s)',
-				ylabel='Voltage (V)',
-				series_label=None,
-				styles=styles,
-				secondary_series=secondary_labels,
-				secondary_ylabel='Current (μA)',
-			)
-			runner.set_plot_limits(xlim=xlim, ylim=ylim)
+			runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
+				PlotDef("pund_fat", xlabel="Time (s)",
+				        ylabels=("Voltage (V)", "Current (μA)"),
+				        xlim=xlim,
+				        ylims=(ylim, None),
+				        elements=elements),
+			])
 
 			# Poll for data and plot live
 			STATUS_COMPLETED = 10000
@@ -359,13 +347,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 					# Build batch update for all cycles
 					batch_update = {}
 					for meas_idx, batch_data in cycle_batches.items():
-						if meas_idx in meas_idx_to_labels:
-							v_label, i_label = meas_idx_to_labels[meas_idx]
-							batch_update[v_label] = batch_data['v']
-							batch_update[i_label] = batch_data['i']
+						if meas_idx in meas_idx_to_sources:
+							v_source, i_source = meas_idx_to_sources[meas_idx]
+							batch_update[v_source] = batch_data['v']
+							batch_update[i_source] = batch_data['i']
 
 					if batch_update:
-						runner.append_plot_points(batch_update)
+						runner.plot.append_batch(batch_update)
 
 					plotted_count = available
 					self.check_stop(b1500)
@@ -397,7 +385,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			# Finalize and save the overlay plot
 			if measure_cycles:
 				plot_filename = f'{base}_overlay.png'
-				runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+				runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 
 			self.log(f"PUND Fatigue complete: {self.cycle_count:.2e} cycles, {len(measure_cycles)} measurements")
 

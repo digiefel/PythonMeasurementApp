@@ -3,6 +3,7 @@ import time
 import numpy as np
 import pyvisa
 from procedures.base import MeasurementProcedure
+from plotting import PlotDef, Curve
 
 class RVSweepProcedure(MeasurementProcedure):
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
@@ -38,13 +39,10 @@ class RVSweepProcedure(MeasurementProcedure):
             # Initialize results storage
             results = []
 
-            # Initialize live plot
-            runner.start_live_plot(
-                title=f'RV Sweep - {device.name}',
-                xlabel='Voltage (V)',
-                ylabel='Current (A)',
-                series_label='I(V)'
-            )
+            runner.configure_plot(f'RV Sweep - {device.name}', [
+                PlotDef("rv", xlabel="Voltage (V)", ylabels=("Current (A)",),
+                        elements=[Curve("I_V", legend_label="I(V)")]),
+            ])
 
             # Perform measurements for each voltage level
             for i, voltage in enumerate(rv_vector):
@@ -56,7 +54,7 @@ class RVSweepProcedure(MeasurementProcedure):
                 # Perform the measurement
                 current = self.perform_measurement(instr, voltage)
                 results.append([voltage, current])
-                runner.add_live_point(voltage, current, 'I(V)')
+                runner.plot.append_point("I_V", voltage, current)
 
                 # Small delay between measurements
                 time.sleep(0.01)
@@ -65,7 +63,7 @@ class RVSweepProcedure(MeasurementProcedure):
             base = self.format_filename("RVSweep", device.name)
             self.save_data(results, f'{base}.csv', ['Voltage_V', 'Current_A'], add_timestamp=False)
             plot_filename = f'{base}_plot.png'
-            runner.finalize_plot(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'RV sweep completed for {device.name}')
 
         except Exception as e:
