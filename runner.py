@@ -1,3 +1,4 @@
+import os
 import os.path
 import time
 import atexit
@@ -5,7 +6,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any
 import threading
 from procedures.base import MeasurementAbortRequested
 from instrumentio.codes import B1500_CH_ALL
-from instrumentio.sessions import B1500Session
+from instrumentio.bridge import RemoteB1500Session
 from prober import ProberController
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ class MeasurementRunner:
         self.temp_phase_cb = None
         self.temp_sample_cb = None
         self.temp_device_done_cb = None
-        self.b1500: B1500Session
+        self.b1500: RemoteB1500Session
         self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
         self.current_site = None
@@ -49,11 +50,11 @@ class MeasurementRunner:
         else:
             print("Warning: No log callback registered. Message:", msg)
 
-    def get_b1500(self, address: str) -> B1500Session:
+    def get_b1500(self, address: str) -> RemoteB1500Session:
         """Get or create the B1500 session."""
         if not getattr(self, 'b1500', None):
             self.log(f'Opening B1500 session at {address}')
-            self.b1500 = B1500Session(address)
+            self.b1500 = RemoteB1500Session(address)
         return self.b1500
 
     
@@ -179,11 +180,14 @@ class MeasurementRunner:
 
     def _apply_z_compensation(self, temp_c: float):
         """Apply Z compensation once after temperature convergence."""
-        comp_z = self.temp_comp_coeffs_xyz[2]
+        comp_z = self.temp_comp_coeffs_xyz[2] or 0.0
         if comp_z == 0.0:
             return
         (base_contact, base_sep, base_over, base_hover) = self._ensure_base_z_heights(temp_c)
-        delta_t = temp_c - self.temp_ref_c
+        temp_ref_c = self.temp_ref_c
+        if temp_ref_c is None:
+            raise RuntimeError("Temperature reference not set before Z compensation.")
+        delta_t = temp_c - temp_ref_c
         dz = -comp_z * delta_t
         target_contact = base_contact + dz
         target_sep = base_sep + dz
@@ -213,8 +217,10 @@ class MeasurementRunner:
     def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, wait_time_s: float = 0.0, poll_s: float = 1.0, timeout_s: float = 900.0) -> bool:
         self.check_stop("Stop requested before temperature wait")
         sample_cb = None
-        if self.temp_sample_cb and self._current_temp_step is not None:
-            sample_cb = lambda ts, temp: self.temp_sample_cb(ts, temp, self._current_temp_step, "poll")
+        temp_sample_cb = self.temp_sample_cb
+        current_step = self._current_temp_step
+        if temp_sample_cb is not None and current_step is not None:
+            sample_cb = lambda ts, temp: temp_sample_cb(ts, temp, current_step, "poll")
         reached = self.prober_ctrl.wait_until_temp(
             target_c,
             tol_c,
@@ -253,9 +259,14 @@ class MeasurementRunner:
         self.check_stop("Stop requested before move")
         temp = self.prober_get_temp()
         comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
+        comp_x = comp_x or 0.0
+        comp_y = comp_y or 0.0
         if self.temp_ref_c is None:
             self.temp_ref_c = temp
-        delta_t = temp - self.temp_ref_c
+        temp_ref_c = self.temp_ref_c
+        if temp_ref_c is None:
+            raise RuntimeError("Temperature reference not set before device move.")
+        delta_t = temp - temp_ref_c
         # Home shifts (comp * dT)
         dx = comp_x * delta_t
         dy = comp_y * delta_t

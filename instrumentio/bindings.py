@@ -8,6 +8,21 @@ Note: Some argtypes may need refinement based on exact VISA types. This is a gen
 """
 
 import ctypes as ct
+import os
+import platform
+
+
+def _load_dll(env_var: str, default_path: str):
+    path = os.environ.get(env_var, default_path)
+    if platform.system() != "Windows":
+        return None
+    loader = getattr(ct, "WinDLL", None)
+    if loader is None:
+        return None
+    try:
+        return loader(path)
+    except OSError:
+        return None
 
 
 # Define VISA types (from vpptype.h)
@@ -27,10 +42,20 @@ ViPReal64 = ct.POINTER(ViReal64)
 ViPReal32 = ct.POINTER(ViReal32)
 ViPSession = ct.POINTER(ViSession)
 
-# Load DLLs
-dll_b1500 = ct.windll.LoadLibrary(r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll")
-dll_wgfmu = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\WGFMU.dll")
-dll_visa32 = ct.windll.LoadLibrary(r"C:\Windows\SysWOW64\visa32.dll")
+# Load DLLs lazily and only on Windows. Importing this module stays safe on
+# systems that cannot load the vendor binaries yet.
+dll_b1500 = _load_dll(
+    "PYMEASUREMENT_B1500_DLL",
+    r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll",
+)
+dll_wgfmu = _load_dll(
+    "PYMEASUREMENT_WGFMU_DLL",
+    r"C:\Windows\SysWOW64\WGFMU.dll",
+)
+dll_visa32 = _load_dll(
+    "PYMEASUREMENT_VISA32_DLL",
+    r"C:\Windows\SysWOW64\visa32.dll",
+)
 
 # VISA attribute constants for SCPI streaming
 VI_ATTR_TERMCHAR = 0x3FFF0018

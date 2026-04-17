@@ -15,7 +15,6 @@ from instrumentio.descriptors import (
     get_cmu_mode_components,
     get_cmu_mode_name,
 )
-from instrumentio.sessions import B1500Session
 
 
 class CVSweepProcedure(MeasurementProcedure):
@@ -211,7 +210,7 @@ class CVSweepProcedure(MeasurementProcedure):
             (vmin, 0.0,  raw[2]),
         ]
 
-    def run(self, b1500: B1500Session, device):
+    def run(self, b1500, device):
         self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
         primary_label = format_cmu_component_label(primary_name)
@@ -253,7 +252,7 @@ class CVSweepProcedure(MeasurementProcedure):
         self.runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
         self.log(f"C-V sweep completed for {device.name}")
 
-    def perform_cv_sweep(self, b1500: B1500Session, device, primary_name, monitor_name, primary_label, monitor_label):
+    def perform_cv_sweep(self, b1500, device, primary_name, monitor_name, primary_label, monitor_label):
         self.check_stop(b1500)
 
         elements = []

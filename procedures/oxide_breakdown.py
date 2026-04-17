@@ -15,7 +15,6 @@ from instrumentio.codes import (
     B1500_VM_MODE,
 )
 from instrumentio.descriptors import describe_status_bits
-from instrumentio.sessions import B1500Session
 
 
 class OxideBreakdownProcedure(MeasurementProcedure):
@@ -53,7 +52,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         # Normalize ASU channel labels to numeric indices
         self.asu_channels = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels]
 
-    def run(self, b1500: B1500Session, device):
+    def run(self, b1500, device):
         runner = self.runner
         self.log(f'Starting Oxide Breakdown sweep on {device.name}')
         try:
@@ -82,7 +81,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             self.log(f'Error during oxide breakdown sweep: {str(e)}')
             raise
 
-    def perform_breakdown_sweep(self, b1500: B1500Session, device):
+    def perform_breakdown_sweep(self, b1500, device):
         """Run a voltage sweep on the high SMU and record voltage/current pairs."""
         runner = self.runner
         high = self.high_channel

@@ -9,7 +9,6 @@ from instrumentio.codes import (
     B1500_SWP_IF_SGLLIN,
 )
 from instrumentio.descriptors import describe_status_bits
-from instrumentio.sessions import B1500Session
 from plotting import PlotDef, Curve, LinearFit
 from plotting import linear_fit
 
@@ -50,7 +49,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
         self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
 
-    def run(self, b1500: B1500Session, device):
+    def run(self, b1500, device):
         runner = self.runner
         self.check_stop(b1500)
 
@@ -82,7 +81,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             self.log(f'Error during 4-terminal I-V sweep: {str(e)}')
             raise
 
-    def perform_iv_sweep(self, b1500: B1500Session, device):
+    def perform_iv_sweep(self, b1500, device):
         """
         Perform the 4-terminal I-V sweep measurement.
         Forces current through force terminals, holds a return SMU at 0 V, and measures voltage on two sense SMUs.

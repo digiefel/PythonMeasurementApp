@@ -27,7 +27,6 @@ from instrumentio.constants import (
     WGFMU_MEASURE_CURRENT_RANGES,
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
-from instrumentio.sessions import B1500Session
 from procedures.base import MeasurementAbortRequested
 from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
@@ -172,7 +171,6 @@ class MainUI:
                 ('pulse_length', 'Pulse Length (s)', float),
                 ('read_bias', 'Read Bias (V)', float),
                 ('set_amplitude', 'Set Amplitude (V)', float),
-                ('mock_mode', 'Mock Mode', bool),
             ],
             'FourTerminalIV': [
                 ('gpib_address', 'GPIB Address', str),
@@ -272,7 +270,6 @@ class MainUI:
                 'pulse_length': 100e-6,
                 'read_bias': 0.3,
                 'set_amplitude': -1.8,
-                'mock_mode': True,
             },
             'FourTerminalIV': {
                 'gpib_address': 'GPIB0::17::INSTR',

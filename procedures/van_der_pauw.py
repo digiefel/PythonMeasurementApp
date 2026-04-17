@@ -9,7 +9,6 @@ from instrumentio.codes import (
     B1500_SWP_IF_SGLLIN,
 )
 from instrumentio.descriptors import describe_status_bits
-from instrumentio.sessions import B1500Session
 from plotting import PlotDef, Curve, LinearFit
 from plotting import linear_fit
 
@@ -55,7 +54,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         self.C_channel = SMU_CHANNEL_MAP.get(str(self.C_channel), self.C_channel)
         self.D_channel = SMU_CHANNEL_MAP.get(str(self.D_channel), self.D_channel)
 
-    def run(self, b1500: B1500Session, device):
+    def run(self, b1500, device):
         runner = self.runner
         self.check_stop(b1500)
 
