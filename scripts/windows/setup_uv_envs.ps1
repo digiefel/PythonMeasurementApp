@@ -37,17 +37,14 @@ function Get-PythonBitness {
 }
 
 function Invoke-Uv {
-    param([string[]]$Args, [string]$Label)
+    param([string[]]$UvArgs, [string]$Label)
     Write-Host "==> $Label"
-    $cmdText = "uv " + ($Args -join " ")
+    $cmdText = "uv " + ($UvArgs -join " ")
     Write-Host "    $cmdText"
-    $output = & uv @Args 2>&1
+    & uv @UvArgs
     $exitCode = $LASTEXITCODE
-    if ($output) {
-        $output | ForEach-Object { Write-Host $_ }
-    }
     if ($exitCode -ne 0) {
-        throw "$Label failed with exit code $exitCode: $cmdText"
+        throw "$Label failed with exit code ${exitCode}: $cmdText"
     }
 }
 
@@ -84,13 +81,13 @@ if ($Recreate) {
 }
 
 if (-not (Test-Path -LiteralPath $mainEnvPath)) {
-    Invoke-Uv -Args @("venv", "--seed", "--python", $python64Resolved, $mainEnvPath) -Label "Create main 64-bit env"
+    Invoke-Uv -UvArgs @("venv", "-p", $python64Resolved, $mainEnvPath) -Label "Create main 64-bit env"
 } else {
     Write-Host "==> Main env already exists: $mainEnvPath"
 }
 
 if (-not (Test-Path -LiteralPath $workerEnvPath)) {
-    Invoke-Uv -Args @("venv", "--seed", "--python", $python32Resolved, $workerEnvPath) -Label "Create worker 32-bit env"
+    Invoke-Uv -UvArgs @("venv", "-p", $python32Resolved, $workerEnvPath) -Label "Create worker 32-bit env"
 } else {
     Write-Host "==> Worker env already exists: $workerEnvPath"
 }
@@ -103,7 +100,7 @@ Assert-File $mainPython "Main env python"
 Assert-File $workerPython "Worker env python"
 Assert-File $mainReq "Main requirements"
 
-Invoke-Uv -Args @("pip", "install", "--python", $mainPython, "-r", $mainReq) -Label "Install main 64-bit packages"
+Invoke-Uv -UvArgs @("pip", "install", "-p", $mainPython, "-r", $mainReq) -Label "Install main 64-bit packages"
 Write-Host "==> Worker env ready: $workerEnvPath"
 
 Write-Host ""
