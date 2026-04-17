@@ -63,8 +63,8 @@ if ($bit32 -ne 32) {
     throw "Python32 is not 32-bit: $python32Resolved ($bit32-bit)"
 }
 
-$mainEnvPath = Join-Path $projectResolved ".venv-main64"
-$workerEnvPath = Join-Path $projectResolved ".venv-worker32"
+$mainEnvPath = Join-Path $projectResolved ".venv"
+$workerEnvPath = Join-Path $projectResolved ".venv32"
 
 if ($Recreate) {
     if (Test-Path -LiteralPath $mainEnvPath) {
@@ -91,16 +91,14 @@ if (-not (Test-Path -LiteralPath $workerEnvPath)) {
 
 $mainPython = Join-Path $mainEnvPath "Scripts\python.exe"
 $workerPython = Join-Path $workerEnvPath "Scripts\python.exe"
-$mainReq = Join-Path $projectResolved "requirements.main64.txt"
-$workerReq = Join-Path $projectResolved "requirements.worker32.txt"
+$mainReq = Join-Path $projectResolved "requirements.txt"
 
 Assert-File $mainPython "Main env python"
 Assert-File $workerPython "Worker env python"
 Assert-File $mainReq "Main requirements"
-Assert-File $workerReq "Worker requirements"
 
 Invoke-Uv -Args @("pip", "install", "--python", $mainPython, "-r", $mainReq) -Label "Install main 64-bit packages"
-Invoke-Uv -Args @("pip", "install", "--python", $workerPython, "-r", $workerReq) -Label "Install worker 32-bit packages"
+Write-Host "==> Worker env ready: $workerEnvPath"
 
 Write-Host ""
 Write-Host "Setup complete."
@@ -108,4 +106,4 @@ Write-Host "Main env python  : $mainPython"
 Write-Host "Worker env python: $workerPython"
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "1) Run UI with bridge: .\\scripts\\windows\\run_ui_bridge.ps1 -WorkerPython $workerPython"
+Write-Host "1) Activate .venv and run: python ui.py"

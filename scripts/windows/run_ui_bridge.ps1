@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$WorkerPython,
+    [string]$WorkerPython = "",
 
     [string]$B1500Dll = "",
 
@@ -12,10 +11,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\.." )).Path
-$mainPython = Join-Path $projectRoot ".venv-main64\Scripts\python.exe"
+$mainPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path -LiteralPath $mainPython)) {
     throw "Main env not found. Run scripts/windows/setup_uv_envs.ps1 first."
+}
+
+if ([string]::IsNullOrWhiteSpace($WorkerPython)) {
+    $WorkerPython = Join-Path $projectRoot ".venv32\Scripts\python.exe"
 }
 
 if (-not (Test-Path -LiteralPath $WorkerPython)) {

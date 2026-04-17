@@ -40,6 +40,42 @@ PythonMeasurementApp/
 
 Install: `pip install -r requirements.txt`
 
+## Windows uv Setup (.venv + .venv32)
+
+This project targets Windows for real instrument DLL execution. Use split environments:
+- Main env (64-bit): `.venv` (run the UI from here)
+- Worker env (32-bit): `.venv32` (auto-started by the bridge)
+
+### 1) Create both environments with uv
+
+From the project root on Windows PowerShell:
+
+```powershell
+.\scripts\windows\setup_uv_envs.ps1 `
+    -Python64 "C:\Path\To\Python311-x64\python.exe" `
+    -Python32 "C:\Path\To\Python311-x86\python.exe"
+```
+
+This creates:
+- `.venv`
+- `.venv32`
+
+and installs main app dependencies from:
+- `requirements.txt`
+
+### 2) Run UI normally
+
+```powershell
+.\.venv\Scripts\activate
+python ui.py
+```
+
+When started this way, the bridge automatically launches worker Python from:
+- `.venv32\Scripts\python.exe`
+
+Optional override if you want a different worker interpreter:
+- `PYMEASUREMENT_BRIDGE_WORKER_PYTHON`
+
 ## How to Run
 1. Prepare one or more device CSV files (columns: `Site,Subsite,Device,X,Y`).
 2. Run `python ui.py` to launch GUI.

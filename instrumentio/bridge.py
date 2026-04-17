@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import multiprocessing as mp
 import queue
+import subprocess
 import time
 import traceback
 import uuid
+from pathlib import Path
 from typing import Callable
 
 
@@ -22,6 +24,51 @@ def _make_envelope(cmd: str, payload: dict) -> dict:
         "req_id": uuid.uuid4().hex,
         "payload": payload,
     }
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _default_worker_python() -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    python_name = "python.exe" if os.name == "nt" else "python"
+    return _project_root() / ".venv32" / scripts_dir / python_name
+
+
+def _resolve_worker_python() -> str:
+    configured = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_PYTHON")
+    candidate = Path(configured).expanduser() if configured else _default_worker_python()
+    candidate = candidate.resolve()
+    if not candidate.is_file():
+        if configured:
+            raise FileNotFoundError(
+                "PYMEASUREMENT_BRIDGE_WORKER_PYTHON does not exist: "
+                f"{candidate}"
+            )
+        raise FileNotFoundError(
+            "Bridge worker python not found at default path: "
+            f"{candidate}. Create .venv32 and run the app from .venv."
+        )
+    return str(candidate)
+
+
+def _assert_worker_is_32bit(worker_python: str) -> None:
+    try:
+        out = subprocess.check_output(
+            [worker_python, "-c", "import struct; print(struct.calcsize('P') * 8)"],
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Failed to verify worker python bitness: {worker_python}") from exc
+
+    bits = out.strip().splitlines()[0] if out.strip() else ""
+    if bits != "32":
+        raise RuntimeError(
+            "Bridge worker python must be 32-bit, got "
+            f"{bits or 'unknown'}-bit: {worker_python}"
+        )
 
 
 def _worker_main(cmd_queue: mp.Queue, rsp_queue: mp.Queue) -> None:
@@ -116,17 +163,8 @@ class RemoteB1500Session:
     """Proxy for a B1500 session running in a worker process."""
 
     def __init__(self, address: str):
-        worker_python = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_PYTHON")
-        if not worker_python:
-            raise RuntimeError(
-                "PYMEASUREMENT_BRIDGE_WORKER_PYTHON must be set to the 32-bit worker python executable"
-            )
-        worker_python = os.path.abspath(worker_python)
-        if not os.path.isfile(worker_python):
-            raise FileNotFoundError(
-                "PYMEASUREMENT_BRIDGE_WORKER_PYTHON does not exist: "
-                f"{worker_python}"
-            )
+        worker_python = _resolve_worker_python()
+        _assert_worker_is_32bit(worker_python)
         ctx = mp.get_context("spawn")
         ctx_set_executable = getattr(ctx, "set_executable", None)
         if callable(ctx_set_executable):
