@@ -5,9 +5,12 @@
 ### `plot_elements.py`
 
 Dataclass definitions shared by both processes:
-- `PlotDef`
-- `Curve`, `Histogram`, `LinearFit`, `HLine`, `VLine`
-- `DataSource` (holds `.x` and `.y` lists, with `append` for scalar or array)
+
+- `PlotDef` — subplot position, axes, elements list
+- `AxisDef` — label, scale, limits (used within PlotDef)
+- `Curve`, `Histogram`, `LinearFit`, `HLine`, `VLine` — visual elements
+- `DataSource` — holds `.x` and `.y` lists with `append_point`, `append_many`, `append_pairs`, `clear`
+- `LinearFitResult` — `slope`, `intercept`, `r_squared`
 
 ### `stats.py`
 
@@ -15,163 +18,210 @@ Shared statistical functions. Single implementation used by both the viewer
 (for live overlays) and procedures (for computed results).
 
 - `linear_fit(x, y) -> LinearFitResult` (wraps `scipy.stats.linregress`)
-- `LinearFitResult` dataclass with `slope`, `intercept`, `r_squared`
 
 ### `plot_bridge.py`
 
-Main-process proxy. Holds local data sources and the queue.
+Main-process proxy. Holds local data sources and manages IPC.
 
 ```
 class PlotBridge:
-    _queue: multiprocessing.Queue
-    _process: multiprocessing.Process
+    _cmd_queue: Queue (maxsize=512)
+    _rsp_queue: Queue (maxsize=256)
+    _process: Process
     _sources: dict[str, DataSource]
+    _pending: dict[str, list]         # per-source delta buffers
+    _flush_timer: threading.Timer     # 30 Hz flush cadence
 
-    configure(title, plots)      # serialize PlotDefs + elements onto queue
-    append(source, x, y)         # store locally + send to viewer
-    append(data_dict)            # batch form: {"source": (xs, ys), ...}
-    save(filename, ...)          # send save command; main process does makedirs
-    source(name) -> DataSource   # return local copy for procedure to read
-    shutdown()                   # send quit + join process
+    configure(title, plots)
+    append_point(source, x, y)
+    append_many(source, xs, ys)
+    append_batch(data)
+    set_limits(plot_id, xlim, ylims)
+    save_png(filename, output_root, output_relative, fallback_root, timeout_s)
+    source(name) -> DataSource
+    shutdown(timeout_s)
 ```
 
-Uses `multiprocessing.get_context("spawn")` for queue and process creation.
-`_send` helper checks `_process.is_alive()` and uses `put_nowait`.
+Uses `multiprocessing.get_context("spawn")`.
 
-### `viewer.py`
+Delta coalescing: appends buffer into `_pending`. A 30 Hz flush merges all
+pending deltas into a single `append_batch` command. If `cmd_queue` is full,
+deltas stay buffered; next flush retries.
 
-Separate-process PyQtGraph application.
+### `viewer_dpg.py`
+
+Separate-process DearPyGui application.
 
 ```
-def viewer_main(queue):
-    app = QApplication(sys.argv)
-    window = PlotViewer(queue)
-    window.show()
-    app.exec()
-
-class PlotViewer(QMainWindow):
-    - Central widget with QGridLayout
-    - One PlotPanel per PlotDef
-    - QTimer(16ms) polls queue, drains all messages per tick
-    - Dispatches: configure, append, save, quit
-    - Dark theme, crosshair, grid enabled by default
-    - Window geometry persisted via QSettings
-
-class PlotPanel:
-    - Wraps a pg.PlotWidget
-    - Manages N y-axes (ViewBox per additional axis, linked x)
-    - Holds element instances (curves, histograms, fits)
-    - Handles resize synchronization for multi-axis
+def viewer_main(cmd_queue, rsp_queue):
+    dpg.create_context()
+    dpg.create_viewport(title="Plot Viewer")
+    viewer = PlotViewer(cmd_queue, rsp_queue)
+    dpg.setup_dearpygui()
+    dpg.show_viewport()
+    while dpg.is_dearpygui_running():
+        viewer.poll_queue()
+        dpg.render_dearpygui_frame()
+    dpg.destroy_context()
 ```
 
-Element handling in the viewer:
+Layout:
+- One top-level window per figure.
+- Grid layout from PlotDef row/col/rowspan/colspan.
+- Each PlotDef produces one ImPlot widget with up to 3 y-axes.
 
-| Element | On configure | On data append |
+Element rendering:
+
+| Element | On configure | On data update |
 |---------|-------------|----------------|
-| Curve | Create `PlotDataItem`, add to target ViewBox | `setData(xs, ys)` |
-| Histogram | Create `BarGraphItem` | Recompute bins from y-values, update bars |
-| LinearFit | Create `PlotDataItem` + `TextItem` | Recompute `stats.linear_fit`, update line endpoints + label text |
-| HLine | Create `InfiniteLine(angle=0)` | (static) |
-| VLine | Create `InfiniteLine(angle=90)` | (static) |
+| Curve (line) | `dpg.add_line_series` | `dpg.set_value` with updated arrays |
+| Curve (scatter) | `dpg.add_scatter_series` | `dpg.set_value` with updated arrays |
+| Curve (line_scatter) | Both series bound to same source | Both updated |
+| Histogram | `dpg.add_bar_series` | Recompute `numpy.histogram`, update bars |
+| LinearFit | `dpg.add_line_series` + `dpg.add_plot_annotation` | Recompute `stats.linear_fit`, update endpoints + text |
+| HLine | `dpg.add_line_series` (2-point) | Recompute when axis limits change |
+| VLine | `dpg.add_line_series` (2-point) | Recompute when axis limits change |
 
-### Queue message protocol
+### `dpg_style.py`
 
-All messages are plain dicts (pickle-serializable).
+Color/linestyle/marker translation and theme constants.
 
-```python
-# configure
-{"cmd": "configure", "title": str, "plots": list[PlotDef]}
+Colors:
+- `"C0"`-`"C9"` -> hex map matching matplotlib's default cycle -> RGBA int tuples.
+- `"k"`, `"r"`, `"b"`, `"g"` -> RGBA.
+- `(r, g, b)` float (0-1) -> `(int(r*255), int(g*255), int(b*255), 255)`.
+- Hex strings -> parsed to RGBA.
 
-# append (single source)
-{"cmd": "append", "source": str, "x": scalar_or_list, "y": scalar_or_list}
+Linestyles (emulated via segmented polyline):
+- `"solid"` -> direct
+- `"dash"` -> segmented with gaps
+- `"dot"` -> short segments with gaps
+- `"dash_dot"` -> alternating segments
 
-# append (batch)
-{"cmd": "append_batch", "data": {"source": (xs, ys), ...}}
+Dark theme applied as constants at startup.
 
-# save
-{"cmd": "save", "path": str}
+### `dpg_export.py`
 
-# quit
-{"cmd": "quit"}
-```
+Framebuffer capture and PNG file validation.
+
+Save flow:
+1. Receive `save_png` command.
+2. Render one frame to ensure state is current.
+3. Capture framebuffer to target path.
+4. Validate file exists and size > 0.
+5. Send ack or error on `rsp_queue`.
 
 ## Files to modify
 
 ### `runner.py`
 
-- Remove all 6 `plot_*_callback` attributes and their invocation methods.
+- Remove all 6 `plot_*_callback` attributes and their invocation methods
+  (`start_live_plot`, `add_live_point`, `add_live_series`, `set_plot_limits`,
+  `append_plot_points`, `finalize_plot`).
 - Add `self.plot: PlotBridge` attribute (set by UI at init).
-- The temperature-in-title logic moves into `configure` (runner appends temp to title
-  before forwarding).
+- Temperature-in-title logic moves into a helper that wraps `configure`
+  (runner appends temp to title before forwarding).
 
 ### `ui.py`
 
-- Remove: `from matplotlib.figure import Figure`, `from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg`, `from plot_manager import PlotManager, PlotSpec`.
-- Remove: PlotManager instantiation (line 510), canvas grid placement (lines 511-513), column 2 weight (lines 134, 139).
-- Remove: all `_post_plot_*` wrappers, `start_plot`, `add_plot_point`, `add_plot_series`, `set_plot_limits`, `append_plot_points`.
+- Remove: `from matplotlib.figure import Figure`,
+  `from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg`,
+  `from plot_manager import PlotManager, PlotSpec`.
+- Remove: PlotManager instantiation (line 510), canvas grid placement (lines 511-513),
+  column 2 weight (lines 134, 139).
+- Remove: all `_post_plot_*` wrappers, `start_plot`, `add_plot_point`, `add_plot_series`,
+  `set_plot_limits`, `append_plot_points`, `finish_plot`.
 - Add: `from plot_bridge import PlotBridge`.
-- Add: `self.plot_bridge = PlotBridge()` in `__init__`.
-- Add: `self.runner.plot = self.plot_bridge` in `__init__`.
-- Modify `finish_plot` to use `self.plot_bridge.save(...)`. Keep directory-creation
-  and fallback logic in `ui.py` (runs on Tk thread for safe `self.log()` calls).
+- Add: `self.plot_bridge = PlotBridge()` and `self.runner.plot = self.plot_bridge` in `__init__`.
 - Add: `self.plot_bridge.shutdown()` in `_on_close`.
 - Shrink window geometry (no embedded plot canvas).
 
 ### `procedures/*.py`
 
 All procedures switch from runner callback API to `runner.plot.*`.
-Changes are mechanical: replace `runner.start_live_plot(...)` with `runner.plot.configure(...)`,
-`runner.add_live_point(...)` with `runner.plot.append(...)`, etc.
+
+Migration mapping:
+- `runner.start_live_plot(...)` -> `runner.plot.configure(...)`
+- `runner.add_live_point(x, y, label)` -> `runner.plot.append_point(source, x, y)`
+- `runner.add_live_series(xs, ys, label)` -> `runner.plot.append_many(source, xs, ys)`
+- `runner.append_plot_points(dict)` -> `runner.plot.append_batch(...)`
+- `runner.set_plot_limits(...)` -> `runner.plot.set_limits(plot_id, ...)`
+- `runner.finalize_plot(...)` -> `runner.plot.save_png(...)`
+
+Procedure-specific notes:
+- `oxide_breakdown`: log(I) overlay becomes Curve source on yaxis=1 with log scale.
+- `four_terminal_iv_sweep` / `van_der_pauw`: fit overlay becomes LinearFit element.
+- `PUND` / `pund_fatigue`: hidden legend names become `show_in_legend=False`.
+- `wgfmu_sampling`: bucketing stays; route through `append_batch`.
 
 Files: `rv_sweep.py`, `four_terminal_iv_sweep.py`, `oxide_breakdown.py`, `cv_sweep.py`,
 `PUND.py`, `pund_fatigue.py`, `wgfmu_sampling.py`, `van_der_pauw.py`.
 
 ### `requirements.txt`
 
-Add `pyqtgraph` and `PyQt6`. Keep `matplotlib` (used by `ui_temperature.py`).
+Add `dearpygui`. Keep `matplotlib` (used by `ui_temperature.py`).
 
 ## Files to delete
 
 ### `plot_manager.py`
 
-Replaced entirely by the new system.
+Replaced entirely.
 
-## Style translation
+## Implementation phases
 
-The viewer translates matplotlib-compatible color/style values to PyQtGraph equivalents.
+### Phase 1: Contracts and bridge skeleton
+- Dataclasses and stats module.
+- PlotBridge process launch/shutdown.
+- Command envelope and request tracking.
+- Ping and configure handshake.
+- **Accept**: viewer starts and acks ping/configure. Graceful shutdown within timeout.
 
-Colors:
-- `"C0"`-`"C9"` -> hardcoded hex map matching matplotlib's default cycle.
-- `"k"`, `"r"`, `"b"`, `"g"` -> hex values.
-- `(r, g, b)` float tuples (0-1) -> `(int(r*255), int(g*255), int(b*255))`.
-- Hex strings -> pass through.
+### Phase 2: Viewer core and rendering primitives
+- DearPyGui window/grid/plots.
+- Curve, HLine, VLine support.
+- Axis limits and x-link propagation.
+- **Accept**: RV sweep equivalent renders. Fixed limits respected.
 
-Linestyles:
-- `"-"` -> `Qt.PenStyle.SolidLine`
-- `"--"` -> `Qt.PenStyle.DashLine`
-- `":"` -> `Qt.PenStyle.DotLine`
-- `"-."` -> `Qt.PenStyle.DashDotLine`
+### Phase 3: Advanced elements and style parity
+- Histogram, LinearFit.
+- Line style emulation for dash/dot.
+- Legend boolean behavior.
+- **Accept**: WGFMU histogram sidebar updates live. 4-term fit matches offline values.
 
-Markers: PyQtGraph supports `"o"`, `"s"`, `"t"`, `"d"`, `"+"`, `"x"` natively.
+### Phase 4: Save reliability and UI integration
+- save_png ack path.
+- Fallback root handling in main process.
+- ui.py integration and callback removal.
+- **Accept**: Save success confirmed. Forced error produces explicit exception.
 
-## Viewer UX
+### Phase 5: Procedure migration and cleanup
+- All procedures on new API.
+- Remove runner plot callback surface.
+- Remove plot_manager.py.
+- **Accept**: No references to old plotting callbacks. No import of plot_manager.
 
-- Dark background (`pg.setConfigOption("background", "k")`)
-- Crosshair per plot panel with coordinate readout
-- Grid enabled by default
-- Auto-range by default, disabled per-axis when `xlim`/`ylims` are set in PlotDef
-- Right-click context menu (native PyQtGraph: export, transform, auto-range)
-- Window geometry persisted between sessions via `QSettings`
-- `xlink` synchronizes pan/zoom on x-axis between linked plots
+### Phase 6: Verification and hardening
+- Manual verification matrix.
+- Unit tests for bridge/data/stats/style mapper.
+- Performance soak test for high-rate append_batch.
+- **Accept**: All scenarios pass. No queue warnings in nominal runs. Clean shutdown.
 
-## Verification
+## Verification matrix
 
-1. RV sweep: single curve in viewer window, PNG saved.
-2. 4-term IV: scatter + live fit line updating as points stream in.
-3. Oxide breakdown: dual y-axis (linear + log), three series.
-4. CV sweep: multiple frequencies, correct colors, dual axis.
-5. PUND / PUND fatigue: color gradient series, bulk data, preset limits.
-6. WGFMU: curve + live histogram sidebar updating together.
-7. Close viewer mid-measurement: measurement continues.
-8. Close main app: viewer terminates.
-9. Crosshair, grid, auto-range, x-axis linking all functional.
+Functional:
+1. RV sweep: single curve, PNG saved.
+2. 4-term IV: scatter + live fit line updating as points stream.
+3. Oxide breakdown: dual-axis with log current trace.
+4. CV sweep: multiple frequencies with paired styles.
+5. PUND: overlay with first/last legend labels only.
+6. PUND fatigue: overlay with cycle-selection plotting.
+7. WGFMU: curve + histogram sidebar co-update.
+
+Resilience:
+1. Close viewer during active measurement: measurement continues.
+2. Save timeout: explicit TimeoutError with req_id.
+3. Main app close: viewer exits, resources released.
+4. Queue saturation: no measurement-thread blocking.
+
+Numerical consistency:
+- `stats.linear_fit` in viewer equals procedure post-processing for same source.
