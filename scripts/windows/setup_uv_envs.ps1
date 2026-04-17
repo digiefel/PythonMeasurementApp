@@ -39,9 +39,15 @@ function Get-PythonBitness {
 function Invoke-Uv {
     param([string[]]$Args, [string]$Label)
     Write-Host "==> $Label"
-    & uv @Args
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Label failed with exit code $LASTEXITCODE"
+    $cmdText = "uv " + ($Args -join " ")
+    Write-Host "    $cmdText"
+    $output = & uv @Args 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($output) {
+        $output | ForEach-Object { Write-Host $_ }
+    }
+    if ($exitCode -ne 0) {
+        throw "$Label failed with exit code $exitCode: $cmdText"
     }
 }
 
@@ -78,13 +84,13 @@ if ($Recreate) {
 }
 
 if (-not (Test-Path -LiteralPath $mainEnvPath)) {
-    Invoke-Uv -Args @("venv", "--python", $python64Resolved, $mainEnvPath) -Label "Create main 64-bit env"
+    Invoke-Uv -Args @("venv", "--seed", "--python", $python64Resolved, $mainEnvPath) -Label "Create main 64-bit env"
 } else {
     Write-Host "==> Main env already exists: $mainEnvPath"
 }
 
 if (-not (Test-Path -LiteralPath $workerEnvPath)) {
-    Invoke-Uv -Args @("venv", "--python", $python32Resolved, $workerEnvPath) -Label "Create worker 32-bit env"
+    Invoke-Uv -Args @("venv", "--seed", "--python", $python32Resolved, $workerEnvPath) -Label "Create worker 32-bit env"
 } else {
     Write-Host "==> Worker env already exists: $workerEnvPath"
 }
