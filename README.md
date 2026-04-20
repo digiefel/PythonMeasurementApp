@@ -23,7 +23,7 @@ PythonMeasurementApp/
 ├── ui.py                  # Main Tkinter GUI
 ├── procedures/
 │   ├── base.py            # Abstract MeasurementProcedure class
-│   └── rv_sweep.py        # Example concrete procedure (RVSweepProcedure)
+│   └── cv_sweep.py        # Example concrete procedure
 ├── requirements.txt       # Dependencies: pyvisa, pandas
 ├── devices.csv            # Sample device config (Site, Subsite, Device, X, Y)
 ├── global_config.json     # Auto-generated global settings (GPIB, output dir, procedure settings)
@@ -103,8 +103,8 @@ Optional override if you want a different worker interpreter:
 - `log(message)`: Logs with timestamp.
 - `save_data(data, filename, headers)`: Saves CSV.
 
-### procedures/rv_sweep.py (Example)
-- `RVSweepProcedure`: Inherits from base.
+### procedures/cv_sweep.py (Example)
+- `CVSweepProcedure`: Inherits from base.
 - `run(device)`: Implements measurement logic using bindings to B1500/WGFMU.
 
 ### runner.py
@@ -343,7 +343,7 @@ In `rv_sweep.py`:
 ```python
 from instrumentio.sessions import B1500Session, WGFMUSession
 
-class RVSweepProcedure(MeasurementProcedure):
+class CVSweepProcedure(MeasurementProcedure):
     def run(self, device, runner):
         b1500 = B1500Session()
         wgfmu = WGFMUSession()
@@ -352,9 +352,8 @@ class RVSweepProcedure(MeasurementProcedure):
         wgfmu.create_pattern("pulse", 0)
         # ... add vectors
         wgfmu.execute()
-        # Save WGFMU data
-        # Then B1500 IV
-        b1500.force_voltage(1, bias)  # Assume channel 1
+        # Then B1500 CV
+        ...
         # Measure and save
         b1500.close()
 ```

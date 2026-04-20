@@ -28,7 +28,6 @@ from instrumentio.constants import (
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
 from procedures.base import MeasurementAbortRequested
-from procedures.rv_sweep import RVSweepProcedure
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.oxide_breakdown import OxideBreakdownProcedure
 from procedures.cv_sweep import CVSweepProcedure
@@ -167,14 +166,6 @@ class MainUI:
 
         # Procedure field definitions (label, type)
         self.procedure_fields = {
-            'RVSweep': [
-                ('rv_start', 'RV Start (V)', float),
-                ('rv_stop', 'RV Stop (V)', float),
-                ('rv_step', 'RV Step (V)', float),
-                ('pulse_length', 'Pulse Length (s)', float),
-                ('read_bias', 'Read Bias (V)', float),
-                ('set_amplitude', 'Set Amplitude (V)', float),
-            ],
             'FourTerminalIV': [
                 ('gpib_address', 'GPIB Address', str),
                 ('force_high_channel', 'Force High SMU', 'smu'),
@@ -266,14 +257,6 @@ class MainUI:
             ],
         }
         self.procedure_defaults = {
-            'RVSweep': {
-                'rv_start': 0.1,
-                'rv_stop': 2.0,
-                'rv_step': 0.1,
-                'pulse_length': 100e-6,
-                'read_bias': 0.3,
-                'set_amplitude': -1.8,
-            },
             'FourTerminalIV': {
                 'gpib_address': 'GPIB0::17::INSTR',
                 'force_high_channel': 4,
@@ -1527,7 +1510,6 @@ class MainUI:
             return
 
         proc_class = {
-            'RVSweep': RVSweepProcedure,
             'FourTerminalIV': FourTerminalIVProcedure,
             'OxideBreakdown': OxideBreakdownProcedure,
             'CVSweep': CVSweepProcedure,
