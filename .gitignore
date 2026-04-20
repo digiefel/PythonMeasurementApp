@@ -1,7 +1,6 @@
 __pycache__
 .venv
-.venv-main64
-.venv-worker32
+.venv32
 .vscode
 
 test_output
