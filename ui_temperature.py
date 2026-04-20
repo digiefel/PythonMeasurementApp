@@ -35,12 +35,15 @@ class TemperatureUI:
         self.temp_tracker = TempTracker(self.log)
         self._poll_job = None
         self._run_active = False
+        self._prober_available = False
 
         # Widgets (set in build_panel)
         self.profile_fig: Optional[Figure] = None
         self.profile_ax = None
         self.profile_canvas = None
         self.profile_widget = None
+        self.temp_frame = None
+        self.temp_enable_cb = None
         self.mode_cb = None
         self.setpoint_entry = None
         self.sweep_entry = None
@@ -51,30 +54,30 @@ class TemperatureUI:
 
     # --- UI construction ---
     def build_panel(self, parent_frame: ttk.Frame):
-        temp_enable_cb = ttk.Checkbutton(parent_frame, text="Temperature", variable=self.enabled_var, command=self._toggle_controls)
-        temp_frame = ttk.LabelFrame(parent_frame, labelwidget=temp_enable_cb)
-        temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
-        temp_frame.grid_columnconfigure(0, weight=1)
-        temp_frame.grid_columnconfigure(1, weight=1)
+        self.temp_enable_cb = ttk.Checkbutton(parent_frame, text="Temperature", variable=self.enabled_var, command=self._toggle_controls)
+        self.temp_frame = ttk.LabelFrame(parent_frame, labelwidget=self.temp_enable_cb)
+        self.temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
+        self.temp_frame.grid_columnconfigure(0, weight=1)
+        self.temp_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(temp_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=2, pady=2)
-        self.mode_cb = ttk.Combobox(temp_frame, textvariable=self.mode_var, values=["Setpoint", "Sweep"], state="readonly")
+        ttk.Label(self.temp_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=2, pady=2)
+        self.mode_cb = ttk.Combobox(self.temp_frame, textvariable=self.mode_var, values=["Setpoint", "Sweep"], state="readonly")
         self.mode_cb.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.mode_cb.bind('<<ComboboxSelected>>', lambda e=None: self._toggle_controls())
-        self.setpoint_entry_label = ttk.Label(temp_frame, text="Setpoint (C)")
+        self.setpoint_entry_label = ttk.Label(self.temp_frame, text="Setpoint (C)")
         self.setpoint_entry_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
-        self.setpoint_entry = ttk.Entry(temp_frame, textvariable=self.setpoint_var)
+        self.setpoint_entry = ttk.Entry(self.temp_frame, textvariable=self.setpoint_var)
         self.setpoint_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        self.sweep_entry_label = ttk.Label(temp_frame, text="Sweep list (C)")
+        self.sweep_entry_label = ttk.Label(self.temp_frame, text="Sweep list (C)")
         self.sweep_entry_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
-        self.sweep_entry = ttk.Entry(temp_frame, textvariable=self.sweep_var)
+        self.sweep_entry = ttk.Entry(self.temp_frame, textvariable=self.sweep_var)
         self.sweep_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        ttk.Label(temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
-        self.wait_entry = ttk.Entry(temp_frame, textvariable=self.wait_var)
+        ttk.Label(self.temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
+        self.wait_entry = ttk.Entry(self.temp_frame, textvariable=self.wait_var)
         self.wait_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        self.set_button = ttk.Button(temp_frame, text="Set Temperature", command=self._set_temperature_now)
+        self.set_button = ttk.Button(self.temp_frame, text="Set Temperature", command=self._set_temperature_now)
         self.set_button.grid(row=5, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
-        temp_row = ttk.Frame(temp_frame)
+        temp_row = ttk.Frame(self.temp_frame)
         temp_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 0))
         for c in range(4):
             temp_row.grid_columnconfigure(c, weight=1)
@@ -90,7 +93,7 @@ class TemperatureUI:
         self.profile_ax.tick_params(axis='both', labelsize=7)
         self.profile_ax.spines["top"].set_visible(False)
         self.profile_ax.spines["right"].set_visible(False)
-        self.profile_canvas = FigureCanvasTkAgg(self.profile_fig, master=temp_frame)
+        self.profile_canvas = FigureCanvasTkAgg(self.profile_fig, master=self.temp_frame)
         self.profile_widget = self.profile_canvas.get_tk_widget()
         self.profile_widget.grid(row=7, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 2))
         self.profile_fig.patch.set_alpha(0)
@@ -101,7 +104,33 @@ class TemperatureUI:
         self.sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())
         self._toggle_controls()
         self._update_sweep_plot()
-        return temp_frame
+        return self.temp_frame
+
+    def set_prober_available(self, available: bool):
+        self._prober_available = bool(available)
+        if not self._prober_available:
+            self.enabled_var.set(False)
+        self._toggle_controls()
+
+    def _set_section_enabled(self, section, enabled: bool):
+        if section is None:
+            return
+        for child in section.winfo_children():
+            self._set_widget_enabled(child, enabled)
+            self._set_section_enabled(child, enabled)
+
+    @staticmethod
+    def _set_widget_enabled(widget, enabled: bool):
+        desired = tk.NORMAL if enabled else tk.DISABLED
+        try:
+            widget.configure(state=desired)
+            return
+        except Exception:
+            pass
+        try:
+            widget.state(["!disabled"] if enabled else ["disabled"])
+        except Exception:
+            pass
 
     # --- Run lifecycle ---
     def collect_run_inputs(self) -> Optional[tuple]:
@@ -117,6 +146,9 @@ class TemperatureUI:
             return None
         temps = []
         if enabled:
+            if not self._prober_available:
+                messagebox.showerror("Temperature", "Temperature control requires a connected prober.")
+                return None
             try:
                 if mode == "Setpoint":
                     temps = [float(self.setpoint_var.get())]
@@ -171,12 +203,19 @@ class TemperatureUI:
 
     def _toggle_controls(self):
         enabled = self.enabled_var.get()
+        effective_enabled = enabled and self._prober_available
+        self._set_section_enabled(self.temp_frame, self._prober_available)
+        if self.temp_frame is not None:
+            title = "Temperature" if self._prober_available else "Temperature (Unavailable)"
+            self.temp_frame.configure(text=title)
         mode = self.mode_var.get()
         if mode not in ("Setpoint", "Sweep"):
             mode = "Setpoint"
             self.mode_var.set(mode)
-        mode_state = "readonly" if enabled else "disabled"
-        entry_state = "normal" if enabled else "disabled"
+        mode_state = "readonly" if effective_enabled else "disabled"
+        entry_state = "normal" if effective_enabled else "disabled"
+        if self.temp_enable_cb is not None:
+            self.temp_enable_cb.configure(state="normal" if self._prober_available else "disabled")
         self.mode_cb.configure(state=mode_state)
         if mode == "Setpoint":
             self.setpoint_entry_label.grid()
@@ -193,14 +232,17 @@ class TemperatureUI:
             self.setpoint_entry.grid_remove()
             self.setpoint_entry.configure(state="disabled")
         self.wait_entry.configure(state=entry_state)
-        self.set_button.configure(state="normal" if enabled else "disabled")
-        if enabled:
+        self.set_button.configure(state="normal" if effective_enabled else "disabled")
+        if effective_enabled:
             self._start_polling(self._safe_poll_interval())
             self._update_sweep_plot()
         else:
             self._stop_polling()
 
     def _set_temperature_now(self):
+        if not self._prober_available:
+            messagebox.showerror("Temperature", "Temperature control requires a connected prober.")
+            return
         mode = self.mode_var.get()
         if mode not in ("Setpoint", "Sweep"):
             mode = "Setpoint"
@@ -229,9 +271,14 @@ class TemperatureUI:
         interval_ms = max(int(poll_interval_s * 1000), 250)
 
         def poll():
-            temp = self.runner.prober_get_temp()
-            state = self.runner.get_thermo_state()
-            setpoint = self.runner.get_temp_setpoint()
+            try:
+                temp = self.runner.prober_get_temp()
+                state = self.runner.get_thermo_state()
+                setpoint = self.runner.get_temp_setpoint()
+            except Exception:
+                temp = None
+                state = "error"
+                setpoint = None
             if temp is None:
                 self.value_var.set("N/A")
                 color = "red"

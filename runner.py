@@ -2,7 +2,7 @@ import os
 import os.path
 import time
 import atexit
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 import threading
 from procedures.base import MeasurementAbortRequested
 from instrumentio.codes import B1500_CH_ALL
@@ -18,16 +18,16 @@ class MeasurementRunner:
 
     def __init__(self, config):
         self.config = config
-        self.log_callback = None
+        self.log_callback: Optional[Callable[[str], None]] = None
         self.plot: PlotBridge | None = None
-        self.status_callback = None
-        self.contact_state_callback = None
-        self.light_state_callback = None
+        self.status_callback: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None
+        self.contact_state_callback: Optional[Callable[[bool], None]] = None
+        self.light_state_callback: Optional[Callable[[bool], None]] = None
         self._last_status_message = None
-        self.temp_step_started_cb = None
-        self.temp_phase_cb = None
-        self.temp_sample_cb = None
-        self.temp_device_done_cb = None
+        self.temp_step_started_cb: Optional[Callable[[int], None]] = None
+        self.temp_phase_cb: Optional[Callable[[str, int], None]] = None
+        self.temp_sample_cb: Optional[Callable[[float, float, int, str], None]] = None
+        self.temp_device_done_cb: Optional[Callable[[float, int, int, int], None]] = None
         self.b1500: RemoteB1500Session
         self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
@@ -88,15 +88,28 @@ class MeasurementRunner:
             self.log(f"Stop request: {context}")
             raise MeasurementAbortRequested(context or "Stop requested")
 
+    def is_prober_available(self) -> bool:
+        return getattr(self.prober_ctrl, "prober", None) is not None
+
     # --- Prober wrappers ---
     def set_subsite_origin(self, x_offset: float, y_offset: float):
+        if not self.is_prober_available():
+            self.log("No prober connected: cannot set subsite origin.")
+            return False
         self.prober_ctrl.set_subsite_origin(x_offset, y_offset)
         self.subsite_origin = self.prober_ctrl.subsite_origin
+        return True
 
     def prober_go_home(self):
+        if not self.is_prober_available():
+            self.log("No prober connected: cannot go home.")
+            return False
         self.prober_ctrl.go_home()
+        return True
 
     def prober_contact(self):
+        if not self.is_prober_available():
+            return False
         self.check_stop("Stop requested before prober contact")
         ok = self.prober_ctrl.contact()
         if ok and self.contact_state_callback:
@@ -107,6 +120,8 @@ class MeasurementRunner:
         return ok
 
     def prober_separation(self):
+        if not self.is_prober_available():
+            return False
         ok = self.prober_ctrl.separation()
         if ok and self.contact_state_callback:
             try:
@@ -116,9 +131,13 @@ class MeasurementRunner:
         return ok
 
     def prober_read_position(self):
+        if not self.is_prober_available():
+            return None
         return self.prober_ctrl.read_position()
 
     def prober_toggle_light(self):
+        if not self.is_prober_available():
+            return None
         state = self.prober_ctrl.toggle_scope_light()
         if state is not None and self.light_state_callback:
             try:
@@ -128,6 +147,8 @@ class MeasurementRunner:
         return state
 
     def prober_set_light(self, light_on: bool):
+        if not self.is_prober_available():
+            return None
         state = self.prober_ctrl.set_scope_light(light_on)
         if state is not None and self.light_state_callback:
             try:
@@ -137,22 +158,32 @@ class MeasurementRunner:
         return state
 
     def get_chuck_height(self) -> Optional[float]:
+        if not self.is_prober_available():
+            return None
         return self.prober_ctrl.get_chuck_height()
 
     def get_temp_setpoint(self) -> Optional[float]:
+        if not self.is_prober_available():
+            return None
         return self.prober_ctrl.get_temp_setpoint()
 
     def get_thermo_state(self) -> Optional[str]:
+        if not self.is_prober_available():
+            return None
         return self.prober_ctrl.get_thermo_state()
 
     # --- Temperature control ---
     def prober_set_temp(self, temp_c: float):
+        if not self.is_prober_available():
+            raise RuntimeError("Temperature control requires a connected prober.")
         ok = self.prober_ctrl.set_temp(temp_c)
         if ok:
             self._record_temp_setpoint(temp_c)
         return ok
 
     def prober_get_temp(self) -> float:
+        if not self.is_prober_available():
+            raise RuntimeError("Prober temperature unavailable: no prober connected.")
         temp = self.prober_ctrl.get_temp()
         self.current_temp_c = temp
         if temp is None:
@@ -215,6 +246,8 @@ class MeasurementRunner:
                 self.log(f"Temp setpoint cb error: {e}")
 
     def prober_wait_until_temp(self, target_c: float, tol_c: float = 0.5, wait_time_s: float = 0.0, poll_s: float = 1.0, timeout_s: float = 900.0) -> bool:
+        if not self.is_prober_available():
+            raise RuntimeError("Temperature wait requires a connected prober.")
         self.check_stop("Stop requested before temperature wait")
         sample_cb = None
         temp_sample_cb = self.temp_sample_cb
@@ -256,20 +289,29 @@ class MeasurementRunner:
             self.status_callback(status_info)
 
     def move_to_device(self, device):
+        if not self.is_prober_available():
+            raise RuntimeError("Device move requires a connected prober.")
         self.check_stop("Stop requested before move")
-        temp = self.prober_get_temp()
         comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
         comp_x = comp_x or 0.0
         comp_y = comp_y or 0.0
-        if self.temp_ref_c is None:
-            self.temp_ref_c = temp
-        temp_ref_c = self.temp_ref_c
-        if temp_ref_c is None:
-            raise RuntimeError("Temperature reference not set before device move.")
-        delta_t = temp - temp_ref_c
-        # Home shifts (comp * dT)
-        dx = comp_x * delta_t
-        dy = comp_y * delta_t
+        uses_temp_comp = (comp_x != 0.0) or (comp_y != 0.0)
+        temp = None
+        delta_t = None
+        if uses_temp_comp:
+            temp = self.prober_get_temp()
+            if self.temp_ref_c is None:
+                self.temp_ref_c = temp
+            temp_ref_c = self.temp_ref_c
+            if temp_ref_c is None:
+                raise RuntimeError("Temperature reference not set before device move.")
+            delta_t = temp - temp_ref_c
+            # Home shifts (comp * dT)
+            dx = comp_x * delta_t
+            dy = comp_y * delta_t
+        else:
+            dx = 0.0
+            dy = 0.0
         origin_x, origin_y = self.prober_ctrl.subsite_origin if self.prober_ctrl.subsite_origin else (0.0, 0.0)
         target_x = origin_x + device.x + dx
         target_y = origin_y + device.y + dy
@@ -288,6 +330,8 @@ class MeasurementRunner:
     
     def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, proc_class, settings, devices_to_run, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
+        if not self.is_prober_available():
+            raise RuntimeError("Temperature sweep requires a connected prober.")
         try:
             for idx, target in enumerate(temp_list_c):
                 self._current_temp_step = idx
@@ -367,20 +411,22 @@ class MeasurementRunner:
             self,
             fallback_root
         )
+        has_prober = self.is_prober_available()
         self.check_stop("Stop requested before device move")
-        self.move_to_device(device)
-        # Ensure contact right before measurement
-        contact_ok = self.prober_contact()
-        if not contact_ok:
-            self.log("Warning: Failed to establish contact before measurement")
-        else:
-            delay_s = max(float(self.CONTACT_LIGHTS_OFF_DELAY_S), 0.0)
-            if delay_s > 0:
-                self.log(f"Contact established. Waiting {delay_s:.1f}s before turning scope light off.")
-                if self.stop_event.wait(delay_s):
-                    self.check_stop("Stop requested during post-contact light delay")
-            self.prober_set_light(False)
-            self.log("Scope light off. Starting measurement.")
+        if has_prober:
+            self.move_to_device(device)
+            # Ensure contact right before measurement
+            contact_ok = self.prober_contact()
+            if not contact_ok:
+                self.log("Warning: Failed to establish contact before measurement")
+            else:
+                delay_s = max(float(self.CONTACT_LIGHTS_OFF_DELAY_S), 0.0)
+                if delay_s > 0:
+                    self.log(f"Contact established. Waiting {delay_s:.1f}s before turning scope light off.")
+                    if self.stop_event.wait(delay_s):
+                        self.check_stop("Stop requested during post-contact light delay")
+                self.prober_set_light(False)
+                self.log("Scope light off. Starting measurement.")
         self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:
@@ -399,4 +445,5 @@ class MeasurementRunner:
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
         # Move out of contact after completion
-        self.prober_separation()
+        if has_prober:
+            self.prober_separation()

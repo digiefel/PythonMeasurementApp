@@ -117,6 +117,9 @@ class MainUI:
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
         self._prober_warning_shown = False
+        self.prober_available = False
+        self.prober_frame = None
+        self.device_selection_button = None
         # Keep CMU mode labels sourced from shared bindings metadata.
         self.cmu_mode_options = [(code, get_cmu_mode_name(code)) for code, _ in B1500_CMU_MEASUREMENT_MODES]
         # Selected devices for custom runs (device names)
@@ -383,6 +386,9 @@ class MainUI:
         self._finish_prober_initialization(available, error_message)
 
     def _finish_prober_initialization(self, available: bool, error_message: str | None):
+        self.prober_available = bool(available)
+        self.temp_ui.set_prober_available(self.prober_available)
+        self._apply_prober_availability_ui()
         if not available:
             self.position_var.set("Prober unavailable")
             if error_message:
@@ -397,8 +403,45 @@ class MainUI:
 
         self._init_contact_state()
 
+    def _apply_prober_availability_ui(self):
+        self._set_section_enabled(self.prober_frame, self.prober_available)
+        if self.prober_frame is not None:
+            title = "Prober Control" if self.prober_available else "Prober Control (Unavailable)"
+            self.prober_frame.configure(text=title)
+        self.set_home_check.configure(state=(tk.NORMAL if self.prober_available else tk.DISABLED))
+        if self.device_selection_button is not None:
+            self.device_selection_button.configure(state=(tk.NORMAL if self.prober_available else tk.DISABLED))
+        if not self.prober_available:
+            self.set_home_var.set(False)
+            self.selected_device_names.clear()
+            self._set_contact_state(False)
+            self.position_var.set("Prober unavailable")
+        self._update_selected_devices_label()
+
+    def _set_section_enabled(self, section, enabled: bool):
+        if section is None:
+            return
+        for child in section.winfo_children():
+            self._set_widget_enabled(child, enabled)
+            self._set_section_enabled(child, enabled)
+
+    @staticmethod
+    def _set_widget_enabled(widget, enabled: bool):
+        desired = tk.NORMAL if enabled else tk.DISABLED
+        try:
+            widget.configure(state=desired)
+            return
+        except Exception:
+            pass
+        try:
+            widget.state(["!disabled"] if enabled else ["disabled"])
+        except Exception:
+            pass
+
     def _init_contact_state(self):
         """Query prober for actual contact status and update button accordingly."""
+        if not self.prober_available:
+            return
         try:
             height = self.runner.get_chuck_height()
             if height is not None:
@@ -464,7 +507,8 @@ class MainUI:
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
         self.asu_range_check.grid(row=8, column=1, sticky="w", pady=2)
 
-        ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
+        self.set_home_check.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
@@ -472,7 +516,8 @@ class MainUI:
         device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
-        ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.device_selection_button = ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection)
+        self.device_selection_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.selected_devices_label = ttk.Label(device_sel_frame, text="")
         self.selected_devices_label.grid(row=0, column=1, sticky="w", padx=(4, 0))
 
@@ -497,19 +542,22 @@ class MainUI:
         self.params_frame.grid_columnconfigure(1, weight=1)
 
         # Prober controls (bottom left)
-        prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
-        prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
+        self.prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
+        self.prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         for c in range(2):
-            prober_frame.grid_columnconfigure(c, weight=1)
-        self.contact_button = tk.Button(prober_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
+            self.prober_frame.grid_columnconfigure(c, weight=1)
+        self.contact_button = tk.Button(self.prober_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
         self.contact_button.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
-        self.light_button = tk.Button(prober_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
+        self.light_button = tk.Button(self.prober_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
         self.light_button.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
-        ttk.Button(prober_frame, text="Go To Device", command=self.prober_go_to_device).grid(row=1, column=0, sticky="ew", padx=4, pady=2)
-        ttk.Button(prober_frame, text="Set Reference to Device", command=self.prober_set_reference).grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        ttk.Button(prober_frame, text="Read Position", command=self.read_position).grid(row=2, column=0, sticky="ew", padx=4, pady=2)
-        ttk.Label(prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
-        comp_frame = ttk.Frame(prober_frame)
+        self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
+        self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
+        self.set_reference_button = ttk.Button(self.prober_frame, text="Set Reference to Device", command=self.prober_set_reference)
+        self.set_reference_button.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
+        self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
+        ttk.Label(self.prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+        comp_frame = ttk.Frame(self.prober_frame)
         comp_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(8, 2))
         for c in range(3):
             comp_frame.grid_columnconfigure(c, weight=1)
@@ -633,6 +681,9 @@ class MainUI:
 
     def _update_selected_devices_label(self):
         """Update the label showing how many devices are selected."""
+        if not self.prober_available:
+            self.selected_devices_label.config(text="Disabled (no prober)")
+            return
         count = len(self.selected_device_names)
         if count == 0:
             self.selected_devices_label.config(text="")
@@ -643,6 +694,8 @@ class MainUI:
 
     def open_device_selection(self):
         """Open the device selection dialog."""
+        if not self.prober_available:
+            return
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         if not subsite or not subsite.devices:
@@ -655,66 +708,24 @@ class MainUI:
         
         # Get current prober position
         prober_pos = None
-        try:
-            pos = self.runner.prober_read_position()
-            if pos:
-                origin = self.runner.prober_ctrl.subsite_origin
-                
-                if set_home_checked and device:
-                    # Simulate what will happen when "set subsite origin at start" runs:
-                    # new_origin = current_abs_pos - device_offset
-                    # After that, prober_rel = current_abs_pos - new_origin = device_offset
-                    # 
-                    # But we need to show where the prober CURRENTLY is relative to devices.
-                    # If prober is at absolute pos P and we're about to set origin O = P - device_offset,
-                    # then after origin is set: prober_rel = P - O = device_offset
-                    # 
-                    # So if the prober is currently at the device we're setting origin to,
-                    # the prober_rel will equal that device's coordinates.
-                    # 
-                    # Formula: new_prober_rel = abs_pos - (abs_pos - device_offset) = device_offset
-                    # But abs_pos is NOT the device position necessarily - user might be anywhere.
-                    # 
-                    # Let's compute where prober will appear relative to device coordinates:
-                    # If current origin exists: abs_pos = origin + current_rel
-                    # New origin = abs_pos - device_offset
-                    # New rel = abs_pos - new_origin = abs_pos - (abs_pos - device_offset) = device_offset
-                    # 
-                    # Wait, that's wrong. The new origin is set based on WHERE the prober is NOW,
-                    # offset by the selected device's coords. So:
-                    # new_origin = abs_pos - selected_device_offset
-                    # new_rel_for_any_device = abs_pos - new_origin = selected_device_offset
-                    #
-                    # This means: after setting origin, the prober will appear at coordinates
-                    # equal to the selected device's offset. If prober is at D4 and we set origin
-                    # to D4, prober will show at D4's coords (-480, 480).
-                    #
-                    # But this only works if the prober IS at the selected device. If prober is
-                    # elsewhere, we need: new_rel = abs_pos - new_origin = abs_pos - (abs_pos - device_offset) = device_offset
-                    # Hmm, that still gives device_offset regardless of where prober is. That's wrong.
-                    #
-                    # Let me re-read set_subsite_origin:
-                    # subsite_origin = current_pos - device_offset
-                    # This means: "the origin point is at (current_pos - device_offset)"
-                    # Then when we want to go to a device: target = origin + device_coords
-                    # 
-                    # For current prober position: prober_rel = current_pos - origin
-                    #                            = current_pos - (current_pos - device_offset) 
-                    #                            = device_offset
-                    #
-                    # So the prober's new relative position = the device offset used to set origin.
-                    # This is correct - if you set origin while at D4, you're saying "I'm at D4".
+        if self.prober_available:
+            try:
+                pos = self.runner.prober_read_position()
+                if pos:
+                    origin = self.runner.prober_ctrl.subsite_origin
                     
-                    prober_pos = (device.x, device.y)
-                elif origin:
-                    # Origin already set, compute relative position
-                    prober_pos = (pos[0] - origin[0], pos[1] - origin[1])
-                else:
-                    # No origin set and not simulating - show absolute position
-                    # This won't align with device coords but shows raw prober position
-                    prober_pos = pos
-        except Exception as e:
-            self.log(f"Could not read prober position: {e}")
+                    if set_home_checked and device:
+                        
+                        prober_pos = (device.x, device.y)
+                    elif origin:
+                        # Origin already set, compute relative position
+                        prober_pos = (pos[0] - origin[0], pos[1] - origin[1])
+                    else:
+                        # No origin set and not simulating - show absolute position
+                        # This won't align with device coords but shows raw prober position
+                        prober_pos = pos
+            except Exception as e:
+                self.log(f"Could not read prober position: {e}")
         
         # Open the dialog
         dialog = DeviceSelectionDialog(
@@ -726,6 +737,8 @@ class MainUI:
         
         # Set up refresh callback
         def refresh_prober():
+            if not self.prober_available:
+                return
             try:
                 pos = self.runner.prober_read_position()
                 if pos:
@@ -1491,18 +1504,27 @@ class MainUI:
         self.update_global_asu_from_ui()
         chip_id = self.chip_var.get().strip()
         if not chip_id:
-            tk.messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
+            messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
             return
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
-        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
-        if not all([site, subsite, device]):
-            self.log("Select site, subsite, and device before running.")
+        if site is None:
+            self.log("Select a valid site before running.")
+            return
+        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None)
+        if subsite is None:
+            self.log("Select a valid subsite before running.")
+            return
+        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None)
+        if device is None:
+            self.log("Select a valid device before running.")
             return
         temp_info = self.temp_ui.collect_run_inputs()
         if temp_info is None:
             return
         temp_enabled, temp_list, wait_after, temp_mode = temp_info
+        if temp_enabled and not self.prober_available:
+            messagebox.showerror("Temperature", "Temperature control requires a connected prober.")
+            return
 
         proc_class = {
             'RVSweep': RVSweepProcedure,
@@ -1520,7 +1542,7 @@ class MainUI:
         set_home = self.set_home_var.get()
         
         # Determine which devices to run (always a list)
-        if self.selected_device_names:
+        if self.prober_available and self.selected_device_names:
             # Use selected devices (in their original order from subsite)
             devices_to_run = [d for d in subsite.devices if d.name in self.selected_device_names]
         else:
@@ -1538,8 +1560,11 @@ class MainUI:
             self.temp_ui.stop_run()
         def target():
             if set_home:
-                self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
-                self.runner.set_subsite_origin(device.x, device.y)
+                if self.prober_available:
+                    self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
+                    self.runner.set_subsite_origin(device.x, device.y)
+                else:
+                    self._post_log("No prober connected: skipping subsite origin setup.")
             try:
                 if temp_enabled:
                     self.runner.run_temperature_sweep(
@@ -1580,6 +1605,8 @@ class MainUI:
 
     # --- Prober control handlers ---
     def prober_set_reference(self):
+        if not self.prober_available:
+            return
         # get current device position as dx, dy
         # set home position to -dx, -dy
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
@@ -1592,6 +1619,8 @@ class MainUI:
         self.runner.set_subsite_origin(device.x, device.y)
 
     def prober_go_to_device(self):
+        if not self.prober_available:
+            return
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
@@ -1609,6 +1638,8 @@ class MainUI:
             messagebox.showerror("Prober move", str(e))
 
     def toggle_contact(self):
+        if not self.prober_available:
+            return
         in_contact = self.prober_contact_state.get()
         if in_contact:
             self.prober_separation()
@@ -1626,6 +1657,9 @@ class MainUI:
             self._set_contact_state(False)
 
     def read_position(self):
+        if not self.prober_available:
+            self.position_var.set("Prober unavailable")
+            return
         pos = self.runner.prober_read_position()
         if pos:
             x, y = pos
@@ -1634,6 +1668,8 @@ class MainUI:
             self.position_var.set("X=-- , Y=--")
 
     def toggle_prober_light(self):
+        if not self.prober_available:
+            return
         state = self.runner.prober_toggle_light()
         if state is None:
             self.log("Could not toggle scope light.")
