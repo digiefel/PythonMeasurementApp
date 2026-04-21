@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 class MeasurementRunner:
     CONTACT_LIGHTS_OFF_DELAY_S = 1.0
+    CONTACT_HEIGHT_THRESHOLD_UM = -1.0
+    XY_MOVE_TOLERANCE_UM = 0.5
 
     def __init__(self, config):
         self.config = config
@@ -41,6 +43,7 @@ class MeasurementRunner:
         self.temp_ref_c: Optional[float] = None
         # Baseline Z heights and reference temperature (captured once at first convergence)
         self.temp_comp_ref_z_heights = None  # (contact, separation, overtravel, hover)
+        self.auto_separation_after_measurement = True
         self.stop_event = threading.Event()
         atexit.register(self.safe_stop)
     
@@ -157,10 +160,14 @@ class MeasurementRunner:
                 self.log(f"Light state cb error: {e}")
         return state
 
-    def get_chuck_height(self) -> Optional[float]:
-        if not self.is_prober_available():
-            return None
-        return self.prober_ctrl.get_chuck_height()
+    def get_chuck_height(self) -> float:
+        height = self.prober_ctrl.get_chuck_height()
+        if height is None:
+            raise RuntimeError("Could not read chuck height.")
+        return height
+
+    def prober_is_in_contact(self) -> bool:
+        return self.get_chuck_height() >= self.CONTACT_HEIGHT_THRESHOLD_UM
 
     def get_temp_setpoint(self) -> Optional[float]:
         if not self.is_prober_available():
@@ -288,45 +295,64 @@ class MeasurementRunner:
         if self.status_callback:
             self.status_callback(status_info)
 
-    def move_to_device(self, device):
-        if not self.is_prober_available():
-            raise RuntimeError("Device move requires a connected prober.")
-        self.check_stop("Stop requested before move")
+    def _compute_target_xy(self, device) -> tuple[float, float]:
+        """Compute temperature-compensated XY target for a device."""
         comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
         comp_x = comp_x or 0.0
         comp_y = comp_y or 0.0
-        uses_temp_comp = (comp_x != 0.0) or (comp_y != 0.0)
-        temp = None
-        delta_t = None
-        if uses_temp_comp:
+        dx, dy = 0.0, 0.0
+        if comp_x != 0.0 or comp_y != 0.0:
             temp = self.prober_get_temp()
             if self.temp_ref_c is None:
-                self.temp_ref_c = temp
-            temp_ref_c = self.temp_ref_c
-            if temp_ref_c is None:
                 raise RuntimeError("Temperature reference not set before device move.")
-            delta_t = temp - temp_ref_c
-            # Home shifts (comp * dT)
+            delta_t = temp - self.temp_ref_c
             dx = comp_x * delta_t
             dy = comp_y * delta_t
-        else:
-            dx = 0.0
-            dy = 0.0
-        origin_x, origin_y = self.prober_ctrl.subsite_origin if self.prober_ctrl.subsite_origin else (0.0, 0.0)
-        target_x = origin_x + device.x + dx
-        target_y = origin_y + device.y + dy
+            self.log(
+                f'[temp_comp] {device.name}: dT={delta_t:.2f}C at {temp:.2f}C '
+                f'(ref {self.temp_ref_c:.2f}C), comp=({dx:.3f}um, {dy:.3f}um)'
+            )
+        origin_x, origin_y = self.prober_ctrl.subsite_origin or (0.0, 0.0)
+        return origin_x + device.x + dx, origin_y + device.y + dy
+
+    def move_to_device(self, device):
+        """Move chuck XY to a device. Raises on failure."""
+        if not self.is_prober_available():
+            raise RuntimeError("Device move requires a connected prober.")
+        self.check_stop("Stop requested before move")
+        target_x, target_y = self._compute_target_xy(device)
+        origin_x, origin_y = self.prober_ctrl.subsite_origin or (0.0, 0.0)
         self.log(
             f'Chuck moving to {device.name}: target=({target_x:.2f}um, {target_y:.2f}um) '
-            f'base=({origin_x:.2f}um, {origin_y:.2f}um) dev=({device.x:.2f}um, {device.y:.2f}um) '
-            f'comp=({dx:.3f}um, {dy:.3f}um) at {temp:.2f}C (ref {self.temp_ref_c:.2f}C, dT={delta_t:.2f}C)'
+            f'base=({origin_x:.2f}um, {origin_y:.2f}um)'
         )
-        try:
-            x, y = self.prober_ctrl.move_xy_home(target_x, target_y)
-            self.log(
-                f'Chuck successfully moved to X={x:.1f}um, Y={y:.1f}um'
-            )
-        except Exception as e:
-            self.log(f'Warning: SENTIO move failed: {e}')
+        x, y = self.prober_ctrl.move_xy_home(target_x, target_y)
+        self.log(f'Chuck at X={x:.1f}um, Y={y:.1f}um')
+
+    def _prepare_for_measurement(self, device):
+        """Ensure chuck is at the device and in contact before measuring."""
+        self.check_stop("Stop before device move")
+        target_x, target_y = self._compute_target_xy(device)
+        cur_x, cur_y = self.prober_ctrl.read_position()
+        at_target = (
+            abs(cur_x - target_x) <= self.XY_MOVE_TOLERANCE_UM
+            and abs(cur_y - target_y) <= self.XY_MOVE_TOLERANCE_UM
+        )
+
+        if at_target and self.prober_is_in_contact():
+            self.log(f"Already in contact at {device.name}, skipping move.")
+            return
+
+        if not at_target:
+            self.move_to_device(device)
+
+        if not self.prober_contact():
+            raise RuntimeError("Failed to establish contact before measurement.")
+        delay_s = self.CONTACT_LIGHTS_OFF_DELAY_S
+        if delay_s > 0:
+            self.log(f"Contact established. Waiting {delay_s:.1f}s before scope light off.")
+            if self.stop_event.wait(delay_s):
+                self.check_stop("Stop during post-contact delay")
     
     def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, proc_class, settings, devices_to_run, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
@@ -412,21 +438,10 @@ class MeasurementRunner:
             fallback_root
         )
         has_prober = self.is_prober_available()
-        self.check_stop("Stop requested before device move")
         if has_prober:
-            self.move_to_device(device)
-            # Ensure contact right before measurement
-            contact_ok = self.prober_contact()
-            if not contact_ok:
-                self.log("Warning: Failed to establish contact before measurement")
-            else:
-                delay_s = max(float(self.CONTACT_LIGHTS_OFF_DELAY_S), 0.0)
-                if delay_s > 0:
-                    self.log(f"Contact established. Waiting {delay_s:.1f}s before turning scope light off.")
-                    if self.stop_event.wait(delay_s):
-                        self.check_stop("Stop requested during post-contact light delay")
-                self.prober_set_light(False)
-                self.log("Scope light off. Starting measurement.")
+            self._prepare_for_measurement(device)
+            self.prober_set_light(False)
+            self.log("Scope light off. Starting measurement.")
         self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:
@@ -445,5 +460,5 @@ class MeasurementRunner:
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
         # Move out of contact after completion
-        if has_prober:
+        if has_prober and self.auto_separation_after_measurement:
             self.prober_separation()

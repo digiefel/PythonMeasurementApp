@@ -143,14 +143,10 @@ class ProberController:
             self.log(f'Warning: Separation failed: {e}')
             return False
 
-    def read_position(self):
-        try:
-            prober = self._get()
-            x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
-            return x, y
-        except Exception as e:
-            self.log(f'Warning: Read position failed: {e}')
-            return None
+    def read_position(self) -> tuple[float, float]:
+        prober = self._get()
+        x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
+        return x, y
 
     def get_chuck_height(self) -> Optional[float]:
         try:

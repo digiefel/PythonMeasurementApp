@@ -153,6 +153,7 @@ class MainUI:
         self.status_labels = {}
         # Run options
         self.set_home_var = tk.BooleanVar(value=False)
+        self.auto_separation_var = tk.BooleanVar(value=True)
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.prober_light_state = tk.BooleanVar(value=True)
         self.position_var = tk.StringVar(value="X=-- , Y=--")
@@ -426,9 +427,8 @@ class MainUI:
         if not self.prober_available:
             return
         try:
-            height = self.runner.get_chuck_height()
-            if height is not None:
-                has_contact = height >= -1.0 # contact if Z <= 1um (inverted)
+            has_contact = self.runner.prober_is_in_contact()
+            if has_contact is not None:
                 self._set_contact_state(has_contact)
         except Exception as e:
             self.log(f"Could not read initial contact state: {e}")
@@ -529,8 +529,17 @@ class MainUI:
         self.prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         for c in range(2):
             self.prober_frame.grid_columnconfigure(c, weight=1)
-        self.contact_button = tk.Button(self.prober_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
-        self.contact_button.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
+
+        contact_row_frame = ttk.Frame(self.prober_frame)
+        contact_row_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
+        contact_row_frame.grid_columnconfigure(0, weight=1)
+
+        self.contact_button = tk.Button(contact_row_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
+        self.contact_button.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=0)
+        self.auto_separation_check = ttk.Checkbutton(contact_row_frame, text="", variable=self.auto_separation_var)
+        self.auto_separation_check.grid(row=0, column=1, sticky="w", pady=0)
+        attach_tooltip(self.auto_separation_check, "Auto Separation after measurement")
+
         self.light_button = tk.Button(self.prober_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
         self.light_button.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
@@ -1522,6 +1531,7 @@ class MainUI:
         self.config.data.setdefault('procedures', {})[proc_name] = settings
         self.config.data['last_selection'] = self.build_last_selection()
         set_home = self.set_home_var.get()
+        self.runner.auto_separation_after_measurement = bool(self.auto_separation_var.get())
         
         # Determine which devices to run (always a list)
         if self.prober_available and self.selected_device_names:
@@ -1884,6 +1894,8 @@ class MainUI:
                     self.device_var.set(preferred_dev if preferred_dev in dev_names else dev_names[0])
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
+        if 'auto_separation_after_measurement' in last_sel:
+            self.auto_separation_var.set(bool(last_sel['auto_separation_after_measurement']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
         if 'selected_devices' in last_sel:
@@ -1905,6 +1917,7 @@ class MainUI:
             'device': self.device_var.get(),
             'procedure': self.proc_var.get(),
             'set_home_before_run': self.set_home_var.get(),
+            'auto_separation_after_measurement': self.auto_separation_var.get(),
             'chip': self.chip_var.get(),
             'selected_devices': list(self.selected_device_names),
         }
