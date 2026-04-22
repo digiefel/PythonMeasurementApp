@@ -427,9 +427,7 @@ class MainUI:
         if not self.prober_available:
             return
         try:
-            has_contact = self.runner.prober_is_in_contact()
-            if has_contact is not None:
-                self._set_contact_state(has_contact)
+            self._set_contact_state(self.runner.prober_is_in_contact())
         except Exception as e:
             self.log(f"Could not read initial contact state: {e}")
 
@@ -1579,7 +1577,8 @@ class MainUI:
                 self._post_log(f'Run error: {e}')
                 raise
             finally:
-                self.runner.prober_set_light(True)
+                if self.prober_available:
+                    self.runner.prober_set_light(True)
                 self.runner.stop_event.clear()  # Clear stop flag now that we're done
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
@@ -1652,11 +1651,10 @@ class MainUI:
         if not self.prober_available:
             self.position_var.set("Prober unavailable")
             return
-        pos = self.runner.prober_read_position()
-        if pos:
-            x, y = pos
+        try:
+            x, y = self.runner.prober_read_position()
             self.position_var.set(f"X={x:.1f}um , Y={y:.1f}um")
-        else:
+        except Exception:
             self.position_var.set("X=-- , Y=--")
 
     def toggle_prober_light(self):

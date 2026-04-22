@@ -148,14 +148,12 @@ class ProberController:
         x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
         return x, y
 
-    def get_chuck_height(self) -> Optional[float]:
-        try:
-            prober = self._get()
-            height = prober.get_chuck_z(ZReference.Contact)
-            return height
-        except Exception as e:
-            self.log(f"Warning: Get chuck height failed: {e}")
-            return None
+    def get_chuck_height(self) -> float:
+        prober = self._get()
+        height = prober.get_chuck_z(ZReference.Contact)
+        if height is None:
+            raise RuntimeError("Chuck height read returned None.")
+        return height
 
     def move_xy_home(self, target_x: float, target_y: float):
         prober = self._get()
@@ -164,39 +162,26 @@ class ProberController:
         return prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
 
     # --- Vision helpers ---
-    def set_scope_light(self, light_on: bool, on_level: int = 80) -> Optional[bool]:
-        try:
-            prober = self._get()
-            camera = CameraMountPoint.Scope
-            if not prober.vision.has_camera(camera):
-                self.log("Warning: Scope camera is not available on this prober.")
-                return None
-
-            target = on_level if light_on else 0
-            prober.vision.camera.set_light(camera, target)
-            self._scope_light_on = light_on
-            self.log(f"Scope light {'ON' if light_on else 'OFF'} (level={target}).")
-            return light_on
-        except Exception as e:
-            self.log(f"Warning: Set scope light failed: {e}")
+    def set_scope_light(self, light_on: bool, on_level: int = 80) -> bool | None:
+        prober = self._get()
+        camera = CameraMountPoint.Scope
+        if not prober.vision.has_camera(camera):
             return None
+        target = on_level if light_on else 0
+        prober.vision.camera.set_light(camera, target)
+        self._scope_light_on = light_on
+        self.log(f"Scope light {'ON' if light_on else 'OFF'} (level={target}).")
+        return light_on
 
-    def toggle_scope_light(self, on_level: int = 80) -> Optional[bool]:
-        try:
-            prober = self._get()
-            camera = CameraMountPoint.Scope
-            if not prober.vision.has_camera(camera):
-                self.log("Warning: Scope camera is not available on this prober.")
-                return None
-
-            if self._scope_light_on is None:
-                current = prober.vision.camera.get_light(camera)
-                self._scope_light_on = current > 0.5
-
-            return self.set_scope_light(not self._scope_light_on, on_level)
-        except Exception as e:
-            self.log(f"Warning: Toggle scope light failed: {e}")
+    def toggle_scope_light(self, on_level: int = 80) -> bool | None:
+        prober = self._get()
+        camera = CameraMountPoint.Scope
+        if not prober.vision.has_camera(camera):
             return None
+        if self._scope_light_on is None:
+            current = prober.vision.camera.get_light(camera)
+            self._scope_light_on = current > 0.5
+        return self.set_scope_light(not self._scope_light_on, on_level)
 
     # --- Temperature helpers ---
     def set_temp(self, temp_c: float):
@@ -221,54 +206,30 @@ class ProberController:
             return None
 
     def get_temp_setpoint(self) -> Optional[float]:
-        try:
-            prober = self._get()
-            return prober.status.get_chuck_temp_setpoint()
-        except Exception as e:
-            self.log(f"Warning: Get chuck temperature setpoint failed: {e}")
-            return None
+        prober = self._get()
+        return prober.status.get_chuck_temp_setpoint()
 
     def get_chuck_site_height(self, site: ChuckSite = ChuckSite.Wafer):
         """Return (contact, separation, overtravel, hover) heights for the site."""
-        try:
-            prober = self._get()
-            return prober.get_chuck_site_height(site)
-        except Exception as e:
-            self.log(f"Warning: Get chuck site height failed: {e}")
-            return None
+        prober = self._get()
+        return prober.get_chuck_site_height(site)
 
     def set_chuck_site_height(self, contact: float, separation: float, overtravel_dist: float, hover_gap: float, site: ChuckSite = ChuckSite.Wafer):
         """Set chuck Z positions for the site."""
-        try:
-            prober = self._get()
-            prober.set_chuck_site_height(site, contact, separation, overtravel_dist, hover_gap)
-            return True
-        except Exception as e:
-            self.log(f"Warning: Set chuck site height failed: {e}")
-            return False
+        prober = self._get()
+        prober.set_chuck_site_height(site, contact, separation, overtravel_dist, hover_gap)
 
-    def get_thermo_state(self) -> Optional[str]:
-        try:
-            prober = self._get()
-            state = prober.status.get_chuck_thermo_state()
-            match state:
-                case ThermoChuckState.Heating:
-                    return "heating"
-                case ThermoChuckState.Cooling:
-                    return "cooling"
-                case ThermoChuckState.Controlling:
-                    return "controlling"
-                case ThermoChuckState.Error:
-                    return "error"
-                case ThermoChuckState.Soaking:
-                    return "soaking"
-                case ThermoChuckState.Uncontrolled:
-                    return "uncontrolled"
-                case _:
-                    return "idle"
-        except Exception as e:
-            self.log(f"Warning: Get thermo state failed: {e}")
-            return None
+    def get_thermo_state(self) -> str:
+        prober = self._get()
+        state = prober.status.get_chuck_thermo_state()
+        match state:
+            case ThermoChuckState.Heating:      return "heating"
+            case ThermoChuckState.Cooling:      return "cooling"
+            case ThermoChuckState.Controlling:  return "controlling"
+            case ThermoChuckState.Error:        return "error"
+            case ThermoChuckState.Soaking:      return "soaking"
+            case ThermoChuckState.Uncontrolled: return "uncontrolled"
+            case _:                             return "idle"
 
     def wait_until_temp(
         self,

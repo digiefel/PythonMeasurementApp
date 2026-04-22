@@ -71,8 +71,7 @@ class MeasurementRunner:
         self.log("Stop requested.")
         
         # Separate prober for safety (this is a different bus, OK to call here)
-        has_prober = getattr(self.prober_ctrl, "prober", None) is not None
-        if has_prober:
+        if self.is_prober_available():
             try:
                 separated = self.prober_ctrl.separation()
                 if separated and self.contact_state_callback:
@@ -96,23 +95,10 @@ class MeasurementRunner:
 
     # --- Prober wrappers ---
     def set_subsite_origin(self, x_offset: float, y_offset: float):
-        if not self.is_prober_available():
-            self.log("No prober connected: cannot set subsite origin.")
-            return False
         self.prober_ctrl.set_subsite_origin(x_offset, y_offset)
         self.subsite_origin = self.prober_ctrl.subsite_origin
-        return True
 
-    def prober_go_home(self):
-        if not self.is_prober_available():
-            self.log("No prober connected: cannot go home.")
-            return False
-        self.prober_ctrl.go_home()
-        return True
-
-    def prober_contact(self):
-        if not self.is_prober_available():
-            return False
+    def prober_contact(self) -> bool:
         self.check_stop("Stop requested before prober contact")
         ok = self.prober_ctrl.contact()
         if ok and self.contact_state_callback:
@@ -122,9 +108,7 @@ class MeasurementRunner:
                 self.log(f"Contact state cb error: {e}")
         return ok
 
-    def prober_separation(self):
-        if not self.is_prober_available():
-            return False
+    def prober_separation(self) -> bool:
         ok = self.prober_ctrl.separation()
         if ok and self.contact_state_callback:
             try:
@@ -133,14 +117,10 @@ class MeasurementRunner:
                 self.log(f"Contact state cb error: {e}")
         return ok
 
-    def prober_read_position(self):
-        if not self.is_prober_available():
-            return None
+    def prober_read_position(self) -> tuple[float, float]:
         return self.prober_ctrl.read_position()
 
-    def prober_toggle_light(self):
-        if not self.is_prober_available():
-            return None
+    def prober_toggle_light(self) -> bool | None:
         state = self.prober_ctrl.toggle_scope_light()
         if state is not None and self.light_state_callback:
             try:
@@ -149,9 +129,7 @@ class MeasurementRunner:
                 self.log(f"Light state cb error: {e}")
         return state
 
-    def prober_set_light(self, light_on: bool):
-        if not self.is_prober_available():
-            return None
+    def prober_set_light(self, light_on: bool) -> bool | None:
         state = self.prober_ctrl.set_scope_light(light_on)
         if state is not None and self.light_state_callback:
             try:
@@ -161,22 +139,15 @@ class MeasurementRunner:
         return state
 
     def get_chuck_height(self) -> float:
-        height = self.prober_ctrl.get_chuck_height()
-        if height is None:
-            raise RuntimeError("Could not read chuck height.")
-        return height
+        return self.prober_ctrl.get_chuck_height()
 
     def prober_is_in_contact(self) -> bool:
         return self.get_chuck_height() >= self.CONTACT_HEIGHT_THRESHOLD_UM
 
     def get_temp_setpoint(self) -> Optional[float]:
-        if not self.is_prober_available():
-            return None
         return self.prober_ctrl.get_temp_setpoint()
 
-    def get_thermo_state(self) -> Optional[str]:
-        if not self.is_prober_available():
-            return None
+    def get_thermo_state(self) -> str:
         return self.prober_ctrl.get_thermo_state()
 
     # --- Temperature control ---
