@@ -48,6 +48,14 @@ class LinearFitResult:
     r_squared: float
 
 
+@dataclass(frozen=True)
+class ToolbarButton:
+    """Figure-level toolbar button rendered by the viewer process."""
+    id: str
+    label: str
+    action: str
+
+
 # ---------------------------------------------------------------------------
 # Visual elements — each wraps one ImPlot primitive
 # ---------------------------------------------------------------------------
@@ -83,14 +91,15 @@ class LinearFit:
     source: str
     color: Any = None
     yaxis: int = 0
-    legend_label_template: str = ""     # supports {slope}, {intercept}, {r_squared}
+    legend_label_template: str = ""     # supports {slope}, {intercept}, {r_squared}, {resistance}, {resistance_si}
     show_in_legend: bool = True
 
 
 @dataclass
 class HLine:
     """Horizontal reference line at a fixed y-value."""
-    value: float
+    value: float = 0.0
+    source: str = ""
     color: Any = None
     line_style: str = "solid"
     yaxis: int = 0

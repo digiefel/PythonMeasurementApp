@@ -1,6 +1,7 @@
+import math
 import os
 
-from plotting import PlotDef, Curve
+from plotting import PlotDef, Curve, HLine, LinearFit, linear_fit
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 from instrumentio.constants import SMU_CHANNEL_MAP
 from instrumentio.codes import (
@@ -139,15 +140,51 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         self.check_stop(b1500)
 
         runner.configure_plot(f'Oxide Breakdown - {device.name}', [
-            PlotDef("bd", xlabel="Voltage (V)",
-                    ylabels=("Current (A)", "log |I| (A)"),
-                    yscales=("linear", "log"),
-                    elements=[
-                        Curve("I_pos", color="C0", legend_label="I+(V)"),
-                        Curve("I_neg", color="C1", legend_label="-I-(V)"),
-                        Curve("log_I", color="k", line_style="dash", yaxis=1, legend_label="log(I)"),
-                    ]),
-        ])
+            PlotDef(
+                "iv",
+                row=0,
+                col=0,
+                rowspan=2,
+                title="Current",
+                xlabel="Voltage (V)",
+                ylabels=("Current (A)",),
+                elements=[
+                    Curve("I_pos", color="C0", legend_label="I+(V)"),
+                    Curve("I_neg", color="C1", legend_label="-I-(V)"),
+                    LinearFit(
+                        "I_pos",
+                        color="C3",
+                        legend_label_template="Fit (R={resistance_si})",
+                    ),
+                ],
+            ),
+            PlotDef(
+                "log_i",
+                row=0,
+                col=1,
+                title="log |I|",
+                xlabel="Voltage (V)",
+                ylabels=("log |I| (A)",),
+                yscales=("log",),
+                xlink="iv",
+                elements=[
+                    Curve("log_I", color="C2", legend_label="|I+|(V)"),
+                ],
+            ),
+            PlotDef(
+                "resistance",
+                row=1,
+                col=1,
+                title="Resistance",
+                xlabel="Voltage (V)",
+                ylabels=("Resistance (Ohm)",),
+                xlink="iv",
+                elements=[
+                    Curve("R_fit", color="C3", legend_label="R(V)"),
+                    HLine(source="R_fit", color="C7", legend_label="Latest fit R"),
+                ],
+            ),
+        ], row_ratios=(1.0, 1.0), column_ratios=(2.0, 1.0))
 
         # Begin sweep with streaming readout
         channels = [high, low]
@@ -181,6 +218,7 @@ class OxideBreakdownProcedure(MeasurementProcedure):
         timestamps = []
         plotted = 0
         nonzero_statuses = set()
+        floor = 1e-15
 
         while True:
             try:
@@ -228,6 +266,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
                 in_val = low_currents[plotted]
                 runner.plot.append_point("I_pos", v_val, ip_val)
                 runner.plot.append_point("I_neg", v_val, -in_val)
+                runner.plot.append_point("log_I", v_val, max(abs(ip_val), floor))
+                self._update_resistance_source(runner, v_val)
                 plotted += 1
 
             if eod or plotted >= max_points:
@@ -240,12 +280,8 @@ class OxideBreakdownProcedure(MeasurementProcedure):
             in_val = low_currents[idx]
             runner.plot.append_point("I_pos", v_val, ip_val)
             runner.plot.append_point("I_neg", v_val, -in_val)
-
-        # Add log-magnitude series once, at the end, in one shot
-        floor = 1e-15
-        xs = [v_source_values[idx] if idx < len(v_source_values) else voltages[idx] for idx in range(min(len(high_currents), max_points))]
-        ys = [max(abs(high_currents[idx]), floor) for idx in range(min(len(high_currents), max_points))]
-        runner.plot.append_many("log_I", xs, ys)
+            runner.plot.append_point("log_I", v_val, max(abs(ip_val), floor))
+            self._update_resistance_source(runner, v_val)
 
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
@@ -265,6 +301,20 @@ class OxideBreakdownProcedure(MeasurementProcedure):
 
         self.log(f'Collected {len(results)} oxide breakdown points')
         return results
+
+    def _update_resistance_source(self, runner, voltage: float) -> None:
+        ds = runner.plot.source("I_pos")
+        if len(ds.x) < 2:
+            return
+        try:
+            fit = linear_fit(ds.x, ds.y)
+        except Exception:
+            return
+        if fit.slope == 0.0 or not math.isfinite(fit.slope):
+            return
+        resistance = 1.0 / fit.slope
+        if math.isfinite(resistance):
+            runner.plot.append_point("R_fit", voltage, resistance)
 
     def _build_voltage_vector(self):
         if self.points < 2:

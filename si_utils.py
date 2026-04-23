@@ -1,3 +1,4 @@
+import math
 import re
 
 
@@ -56,3 +57,38 @@ def format_si_compact_0(value: float) -> str:
         if abs_v >= mult:
             return f"{v / mult:.0f}{suffix}"
     return "0"
+
+
+def format_si_compact(value: float, sig_figs: int = 3) -> str:
+    """Format value using SI suffixes with compact significant figures."""
+    try:
+        v = float(value)
+    except Exception:
+        return "0"
+
+    if math.isnan(v):
+        return "nan"
+    if math.isinf(v):
+        return "inf" if v > 0 else "-inf"
+    if v == 0.0:
+        return "0"
+
+    digits = max(int(sig_figs), 1)
+    abs_v = abs(v)
+    scales = [
+        (1e12, 'T'),
+        (1e9, 'G'),
+        (1e6, 'M'),
+        (1e3, 'k'),
+        (1.0, ''),
+        (1e-3, 'm'),
+        (1e-6, 'u'),
+        (1e-9, 'n'),
+        (1e-12, 'p'),
+    ]
+    for mult, suffix in scales:
+        if abs_v >= mult:
+            return f"{v / mult:.{digits}g}{suffix}"
+
+    smallest_mult, smallest_suffix = scales[-1]
+    return f"{v / smallest_mult:.{digits}g}{smallest_suffix}"

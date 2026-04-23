@@ -1,14 +1,41 @@
-"""Color, linestyle, and marker translation for DearPyGui.
-
-Translates matplotlib-style specifications to DearPyGui RGBA tuples and
-ImPlot constants. Applied once during element creation.
-"""
+"""Color and theme helpers for DearPyGui plotting."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import dearpygui.dearpygui as dpg
+
+
+# ---------------------------------------------------------------------------
+# Viewer sizing and styling knobs
+# ---------------------------------------------------------------------------
+
+# These are the primary knobs to change if the viewer feels too small or dense.
+# Keep the viewport footprint stable and scale the content instead.
+VIEWER_VIEWPORT_WIDTH = 960
+VIEWER_VIEWPORT_HEIGHT = 960
+VIEWER_FONT_SCALE = 1.0
+
+UI_WINDOW_PADDING_X = 12
+UI_WINDOW_PADDING_Y = 10
+UI_FRAME_PADDING_X = 10
+UI_FRAME_PADDING_Y = 8
+UI_ITEM_SPACING_X = 10
+UI_ITEM_SPACING_Y = 8
+
+PLOT_PADDING_X = 2
+PLOT_PADDING_Y = 4
+LABEL_PADDING_X = 4
+LABEL_PADDING_Y = 5
+LEGEND_PADDING_X = 4
+LEGEND_PADDING_Y = 5
+FIT_PADDING_X = 0.10
+FIT_PADDING_Y = 0.10
+
+LINE_WEIGHT = 2.75
+MARKER_SIZE = 10.0
+MARKER_WEIGHT = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -110,32 +137,52 @@ def _build_marker_map() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dark theme
+# Viewer theme
 # ---------------------------------------------------------------------------
 
-def apply_dark_theme() -> None:
-    """Apply a dark theme to the DearPyGui application."""
+def apply_plot_theme() -> None:
+    """Apply a neutral plot-first theme and shared plot style defaults.
+
+    To retune the viewer, start with the constants near the top of this file.
+    """
     with dpg.theme() as global_theme:
         with dpg.theme_component(dpg.mvAll):
-            dpg.add_theme_color(dpg.mvThemeCol_WindowBg,       ( 20,  20,  20, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_ChildBg,        ( 25,  25,  25, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_PopupBg,        ( 30,  30,  30, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_Border,         ( 60,  60,  60, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_FrameBg,        ( 40,  40,  40, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_TitleBg,        ( 30,  30,  30, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_TitleBgActive,  ( 50,  50,  50, 255))
-            dpg.add_theme_color(dpg.mvThemeCol_Text,           (220, 220, 220, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_WindowBg,      (242, 244, 247, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_ChildBg,       (242, 244, 247, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_PopupBg,       (255, 255, 255, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_Border,        (206, 212, 218, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_FrameBg,       (255, 255, 255, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_Button,        (224, 229, 236, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (205, 216, 229, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,  (186, 202, 220, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_TitleBg,       (230, 234, 239, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_TitleBgActive, (220, 226, 232, 255))
+            dpg.add_theme_color(dpg.mvThemeCol_Text,          ( 33,  37,  41, 255))
+            dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, UI_WINDOW_PADDING_X, UI_WINDOW_PADDING_Y, category=dpg.mvThemeCat_Core)
+            dpg.add_theme_style(dpg.mvStyleVar_FramePadding, UI_FRAME_PADDING_X, UI_FRAME_PADDING_Y, category=dpg.mvThemeCat_Core)
+            dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, UI_ITEM_SPACING_X, UI_ITEM_SPACING_Y, category=dpg.mvThemeCat_Core)
+
         with dpg.theme_component(dpg.mvPlot):
-            dpg.add_theme_color(dpg.mvPlotCol_PlotBg,          ( 15,  15,  15, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_PlotBorder,      ( 60,  60,  60, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_LegendBg,        ( 30,  30,  30, 200), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_LegendBorder,    ( 80,  80,  80, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_LegendText,      (220, 220, 220, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_TitleText,       (220, 220, 220, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_InlayText,       (220, 220, 220, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_AxisText,        (190, 190, 190, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_color(dpg.mvPlotCol_AxisGrid,        ( 60,  60,  60, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_style(dpg.mvPlotStyleVar_PlotPadding, 10, 10, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_PlotBg,       (255, 255, 255, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_PlotBorder,   (198, 204, 212, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_LegendBg,     (255, 255, 255, 230), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_LegendBorder, (198, 204, 212, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_LegendText,   ( 33,  37,  41, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_TitleText,    ( 33,  37,  41, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_InlayText,    (108, 117, 125, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_AxisText,     ( 73,  80,  87, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_color(dpg.mvPlotCol_AxisGrid,     (222, 226, 230, 255), category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_PlotPadding, PLOT_PADDING_X, PLOT_PADDING_Y, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_LabelPadding, LABEL_PADDING_X, LABEL_PADDING_Y, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_LegendPadding, LEGEND_PADDING_X, LEGEND_PADDING_Y, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_FitPadding, FIT_PADDING_X, FIT_PADDING_Y, category=dpg.mvThemeCat_Plots)
+
+        with dpg.theme_component(dpg.mvLineSeries):
+            dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, LINE_WEIGHT, category=dpg.mvThemeCat_Plots)
+
+        with dpg.theme_component(dpg.mvScatterSeries):
+            dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerSize, MARKER_SIZE, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerWeight, MARKER_WEIGHT, category=dpg.mvThemeCat_Plots)
 
     dpg.bind_theme(global_theme)
 

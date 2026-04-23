@@ -37,6 +37,38 @@ class PlotDef:
 - `ylims` maps 1:1 to `ylabels`. `None` entries mean auto-range.
 - `xlink` references another PlotDef's `id`. Linked plots share pan/zoom on x-axis.
 - `elements` is a list of visual primitives (Curve, Histogram, LinearFit, HLine, VLine).
+- If `xlim`/`ylims` are left as `None`, the viewer live-fits those axes while data is
+  streaming, adds a small margin, and stops live-fitting once the visible limits no
+  longer match the last auto-fit limits it set.
+
+## ToolbarButton
+
+Figure-level toolbar buttons are defined separately from plots.
+
+```python
+@dataclass(frozen=True)
+class ToolbarButton:
+    id: str
+    label: str
+    action: str
+```
+
+- `id` must be unique within a figure.
+- `label` is the button text.
+- `action` is a viewer-side action key such as `"tool:documentation"` or
+  `"tool:metrics"`.
+- The viewer always includes the standard debug/doc buttons. Procedures can append more.
+- For DearPyGui built-in tool windows, these buttons follow the demo style and call
+  `show_tool(...)` once. They do not stay latched on in the viewer.
+
+Built-in action keys:
+- `"tool:documentation"`
+- `"tool:style_editor"`
+- `"tool:debug"`
+- `"tool:about"`
+- `"tool:metrics"`
+- `"tool:font_manager"`
+- `"tool:item_registry"`
 
 ## Elements
 
@@ -53,7 +85,6 @@ class Curve:
     color: ... = None                  # auto-pick if None
     marker: str | None = None          # "o", "x", "s", "t", "d", "+"
     line_style: str = "solid"          # "solid" | "dash" | "dot" | "dash_dot"
-    line_width: float = 1.0
     yaxis: int = 0                     # index into ylabels
     legend_label: str = ""
     show_in_legend: bool = True
@@ -89,32 +120,31 @@ class LinearFit:
     source: str                        # computes fit from this source's (x, y) data
     color: ... = None
     yaxis: int = 0
-    legend_label_template: str = ""    # supports {slope}, {intercept}, {r_squared}
+    legend_label_template: str = ""    # supports {slope}, {intercept}, {r_squared}, {resistance}, {resistance_si}
     show_in_legend: bool = True
 ```
 
 Recomputed using the shared `stats.linear_fit` function.
 The legend label is formatted with current fit parameters on each update.
-Example: `legend_label_template="R = {slope:.4g} Ohm (R^2 = {r_squared:.4f})"`.
-
-Rendered as a fitted line segment spanning the source's x-range,
-plus an annotation text from the formatted template.
+`{resistance_si}` is a compact SI-formatted string such as `1.5GOhm`.
+Example: `legend_label_template="R = {resistance_si} (R^2 = {r_squared:.4f})"`.
 
 ### HLine
 
 ```python
 @dataclass
 class HLine:
-    value: float
+    value: float = 0.0
+    source: str = ""
     color: ... = None
     line_style: str = "solid"
-    line_width: float = 1.0
     yaxis: int = 0
     legend_label: str = ""
     show_in_legend: bool = True
 ```
 
-Rendered as a 2-point line tied to current x-axis limits. Recomputed when limits change.
+Rendered as an ImPlot infinite horizontal reference line.
+If `source` is set, the latest `y` value from that source becomes the current line value.
 
 ### VLine
 
@@ -124,12 +154,11 @@ class VLine:
     value: float
     color: ... = None
     line_style: str = "solid"
-    line_width: float = 1.0
     legend_label: str = ""
     show_in_legend: bool = True
 ```
 
-Rendered as a 2-point line tied to current y-axis limits. Recomputed when limits change.
+Rendered as an ImPlot infinite vertical reference line.
 
 ## API methods
 
@@ -138,12 +167,19 @@ All methods are on `runner.plot` (the `PlotBridge` instance).
 ### configure
 
 ```python
-configure(title: str, plots: list[PlotDef]) -> None
+configure(title: str, plots: list[PlotDef],
+          toolbar_buttons: list[ToolbarButton] | None = None,
+          row_ratios: list[float] | tuple[float, ...] | None = None,
+          column_ratios: list[float] | tuple[float, ...] | None = None) -> None
 ```
 
 Define the figure layout and all visual elements. Clears any previous figure.
 The viewer creates the grid of ImPlot widgets and instantiates render elements.
 Blocks until viewer acknowledges.
+
+- `row_ratios` / `column_ratios` are optional layout weights.
+- They apply to stretched grid columns and to the supported split-span layout used by
+  `OxideBreakdown`.
 
 ### append_point
 
@@ -179,7 +215,7 @@ set_limits(plot_id: str, xlim: tuple[float, float] | None = None,
 ```
 
 Set axis limits dynamically. `ylims` maps y-axis index to `(min, max)`.
-Disables auto-range for the specified axes.
+Disables live-fitting for the specified axes.
 
 ### save_png
 
@@ -243,19 +279,52 @@ Elements accept colors in these formats:
 | RGB int tuple (0-255) | `(128, 0, 204)` |
 | `None` | Auto-picked from default palette |
 
-The viewer's style layer (`dpg_style.py`) translates all formats to DearPyGui RGBA.
+The viewer's style layer (`plotting/style.py`) translates all formats to DearPyGui RGBA.
 
-## Line style emulation
+## Viewer Tuning
 
-ImPlot does not natively support dashed/dotted lines. Dash and dot styles are
-emulated via deterministic segmented-polyline transformation in the style layer.
+The primary viewer size/style knobs live at the top of `plotting/style.py`.
 
-| Style | Rendering |
-|-------|-----------|
-| `"solid"` | Direct ImPlot line |
-| `"dash"` | Segmented polyline with gaps |
-| `"dot"` | Short segments with gaps |
-| `"dash_dot"` | Alternating dash and dot segments |
+- `VIEWER_VIEWPORT_WIDTH` / `VIEWER_VIEWPORT_HEIGHT`: default viewer window size.
+- `VIEWER_FONT_SCALE`: global UI and axis text size.
+- `UI_WINDOW_PADDING_*`: padding inside the viewer window.
+- `UI_FRAME_PADDING_*`: button/input padding.
+- `UI_ITEM_SPACING_*`: spacing between controls.
+- `LINE_WEIGHT`: default line thickness for all line series.
+- `MARKER_SIZE` / `MARKER_WEIGHT`: default scatter marker size and outline thickness.
+- `PLOT_PADDING_*`, `LABEL_PADDING_*`, `LEGEND_PADDING_*`: whitespace inside plots.
+- `FIT_PADDING_*`: default DearPyGui fit padding.
+
+If the viewer feels too small but the outer window is already large enough:
+
+- first increase `VIEWER_FONT_SCALE`
+- then increase `UI_FRAME_PADDING_*`
+- then increase `LINE_WEIGHT` and `MARKER_SIZE`
+
+## Live fitting
+
+The viewer does **not** leave DearPyGui axis `auto_fit=True` during streaming.
+That mode keeps the data glued to the plot bounds and prevents normal panning/zooming.
+
+Instead:
+
+- The viewer mirrors every data source locally.
+- For axes without explicit limits, it computes bounds from the mirrored data.
+- Linear axes get a small additive margin.
+- Log axes get a multiplicative margin in log space.
+- After applying those bounds for the current frame, it releases them with
+  `set_axis_limits_auto(...)` on the next frame so DearPyGui does not continue
+  constraining pan/zoom.
+- If the visible axis limits stop matching the last auto-fit limits the viewer set,
+  live-fitting locks off for that plot until the next `configure(...)`.
+
+This gives streaming follow behavior without fighting manual navigation.
+
+## Line styles
+
+DearPyGui does not expose native dashed/dotted line series in this wrapper.
+`line_style` is stored on the element model for future use, but live curves currently
+render as solid lines.
 
 ## Single source of truth for computations
 

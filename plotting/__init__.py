@@ -9,6 +9,7 @@ Public surface used by procedures and runner:
 from plotting.elements import (
     DataSource,
     LinearFitResult,
+    ToolbarButton,
     PlotDef,
     Curve,
     Histogram,
@@ -29,5 +30,6 @@ __all__ = [
     "VLine",
     "DataSource",
     "LinearFitResult",
+    "ToolbarButton",
     "linear_fit",
 ]

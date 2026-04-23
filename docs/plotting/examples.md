@@ -42,28 +42,49 @@ save_to_csv(resistance=fit.slope, r_squared=fit.r_squared)
 runner.plot.save_png(plot_filename, output_root, output_relative, fallback_root)
 ```
 
-## Oxide breakdown (two y-axes, post-sweep derived series)
+## Oxide breakdown (3 panels, linked x, live fit + resistance)
 
 ```python
 runner.plot.configure(title=f"Oxide Breakdown - {device.name}", plots=[
-    PlotDef("bd", xlabel="Voltage (V)",
-            ylabels=("Current (A)", "log |I| (A)"),
-            yscales=("linear", "log"),
+    PlotDef("iv", row=0, col=0, rowspan=2,
+            title="Current",
+            xlabel="Voltage (V)",
+            ylabels=("Current (A)",),
             elements=[
                 Curve("I_pos", color="C0", legend_label="I+(V)"),
                 Curve("I_neg", color="C1", legend_label="-I-(V)"),
-                Curve("log_I", color="k", line_style="dash", yaxis=1,
-                      legend_label="log(I)"),
+                LinearFit("I_pos", color="C3",
+                          legend_label_template="Fit (R={resistance_si})"),
             ]),
-])
+    PlotDef("log_i", row=0, col=1,
+            title="log |I|",
+            xlabel="Voltage (V)",
+            ylabels=("log |I| (A)",),
+            yscales=("log",),
+            xlink="iv",
+            elements=[
+                Curve("log_I", color="C2", legend_label="|I+|(V)"),
+            ]),
+    PlotDef("resistance", row=1, col=1,
+            title="Resistance",
+            xlabel="Voltage (V)",
+            ylabels=("Resistance (Ohm)",),
+            xlink="iv",
+            elements=[
+                Curve("R_fit", color="C3", legend_label="R(V)"),
+                HLine(source="R_fit", color="C7", legend_label="Latest fit R"),
+            ]),
+], column_ratios=(2.0, 1.0), row_ratios=(1.0, 1.0))
 
 for v, i_hi, i_lo in measurements:
     runner.plot.append_point("I_pos", v, i_hi)
     runner.plot.append_point("I_neg", v, -i_lo)
-
-# compute log magnitude and add as bulk array at the end
-log_vals = [max(abs(i), 1e-15) for i in all_currents]
-runner.plot.append_many("log_I", all_voltages, log_vals)
+    runner.plot.append_point("log_I", v, max(abs(i_hi), 1e-15))
+    ds = runner.plot.source("I_pos")
+    if len(ds.x) >= 2:
+        fit = stats.linear_fit(ds.x, ds.y)
+        if fit.slope != 0:
+            runner.plot.append_point("R_fit", v, 1.0 / fit.slope)
 
 runner.plot.save_png(plot_filename, output_root, output_relative, fallback_root)
 ```
@@ -101,9 +122,9 @@ elements = []
 for i, cyc in enumerate(cycle_indices):
     t = i / max(len(cycle_indices) - 1, 1)
     show = (i == 0 or i == len(cycle_indices) - 1)
-    elements.append(Curve(f"V_{cyc}", color=(0, 0, t), line_width=0.8,
+    elements.append(Curve(f"V_{cyc}", color=(0, 0, t),
                           legend_label=f"V(cyc {cyc})", show_in_legend=show))
-    elements.append(Curve(f"I_{cyc}", color=(t, 0.3 * t, 0), line_width=0.8,
+    elements.append(Curve(f"I_{cyc}", color=(t, 0.3 * t, 0),
                           yaxis=1,
                           legend_label=f"I(cyc {cyc})", show_in_legend=show))
 

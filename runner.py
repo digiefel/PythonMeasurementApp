@@ -10,7 +10,7 @@ from instrumentio.bridge import RemoteB1500Session
 from prober import ProberController
 
 if TYPE_CHECKING:
-    from plotting import PlotBridge, PlotDef
+    from plotting import PlotBridge, PlotDef, ToolbarButton
 
 
 class MeasurementRunner:
@@ -250,13 +250,26 @@ class MeasurementRunner:
                 self.log(f"Warning: Z compensation update failed: {e}")
         return reached
 
-    def configure_plot(self, title: str, plots: list[PlotDef]) -> None:
+    def configure_plot(
+        self,
+        title: str,
+        plots: list[PlotDef],
+        toolbar_buttons: list[ToolbarButton] | None = None,
+        row_ratios: list[float] | tuple[float, ...] | None = None,
+        column_ratios: list[float] | tuple[float, ...] | None = None,
+    ) -> None:
         """Configure the figure with temperature appended to the title if available."""
         if self.plot is None:
             return
         if self.current_temp_c is not None:
             title = f"{title} ({self.current_temp_c + 273.15:.0f}K)"
-        self.plot.configure(title, plots)
+        self.plot.configure(
+            title,
+            plots,
+            toolbar_buttons=toolbar_buttons,
+            row_ratios=row_ratios,
+            column_ratios=column_ratios,
+        )
     def report_status(self, status_info: Optional[Dict[str, Any]]):
         """
         Surface measurement/driver status (non-zero codes) to the UI.

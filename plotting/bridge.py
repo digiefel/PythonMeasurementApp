@@ -16,7 +16,7 @@ from typing import Sequence
 
 import multiprocessing as mp
 
-from plotting.elements import DataSource, PlotDef
+from plotting.elements import DataSource, PlotDef, ToolbarButton
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,14 @@ class PlotBridge:
     # Public API
     # ------------------------------------------------------------------
 
-    def configure(self, title: str, plots: list[PlotDef]) -> None:
+    def configure(
+        self,
+        title: str,
+        plots: list[PlotDef],
+        toolbar_buttons: list[ToolbarButton] | None = None,
+        row_ratios: list[float] | tuple[float, ...] | None = None,
+        column_ratios: list[float] | tuple[float, ...] | None = None,
+    ) -> None:
         """Define figure layout and visual elements. Blocks until viewer acks."""
         self._sources.clear()
         with self._pending_lock:
@@ -75,10 +82,21 @@ class PlotBridge:
 
         for plot_def in plots:
             for elem in plot_def.elements:
-                if hasattr(elem, "source") and elem.source not in self._sources:
-                    self._sources[elem.source] = DataSource()
+                source_name = getattr(elem, "source", "")
+                if source_name and source_name not in self._sources:
+                    self._sources[source_name] = DataSource()
 
-        self._send_and_wait("configure_figure", {"title": title, "plots": plots}, timeout_s=5.0)
+        self._send_and_wait(
+            "configure_figure",
+            {
+                "title": title,
+                "plots": plots,
+                "toolbar_buttons": toolbar_buttons or [],
+                "row_ratios": list(row_ratios or []),
+                "column_ratios": list(column_ratios or []),
+            },
+            timeout_s=5.0,
+        )
 
     def append_point(self, source: str, x: float, y: float) -> None:
         """Append a single point to a named source."""
