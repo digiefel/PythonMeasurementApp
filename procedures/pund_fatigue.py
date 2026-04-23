@@ -284,9 +284,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				show = (meas_idx == 0 or meas_idx == len(measure_cycles) - 1)
 				v_legend = f"V (cycle {cycle_num})" if show else ""
 				i_legend = f"I (cycle {cycle_num})" if show else ""
-				elements.append(Curve(f"V_{cycle_num}", color=(0, 0, intensity), line_width=0.8,
+				elements.append(Curve(f"V_{cycle_num}", color=(0, 0, intensity),
 				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
-				elements.append(Curve(f"I_{cycle_num}", color=(intensity, 0.3 * intensity, 0), line_width=0.8,
+				elements.append(Curve(f"I_{cycle_num}", color=(intensity, 0.3 * intensity, 0),
 				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
 				meas_idx_to_sources[meas_idx] = (f"V_{cycle_num}", f"I_{cycle_num}")
 

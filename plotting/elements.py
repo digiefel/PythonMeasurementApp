@@ -60,7 +60,6 @@ class Curve:
     color: Any = None                   # None = auto-pick
     marker: str | None = None           # "o", "x", "s", "t", "d", "+"
     line_style: str = "solid"           # "solid" | "dash" | "dot" | "dash_dot"
-    line_width: float = 1.0
     yaxis: int = 0
     legend_label: str = ""
     show_in_legend: bool = True
@@ -94,7 +93,6 @@ class HLine:
     value: float
     color: Any = None
     line_style: str = "solid"
-    line_width: float = 1.0
     yaxis: int = 0
     legend_label: str = ""
     show_in_legend: bool = True
@@ -106,7 +104,6 @@ class VLine:
     value: float
     color: Any = None
     line_style: str = "solid"
-    line_width: float = 1.0
     legend_label: str = ""
     show_in_legend: bool = True
 

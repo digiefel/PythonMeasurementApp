@@ -66,17 +66,30 @@ class _LinearFitState:
 # Theme helpers
 # ---------------------------------------------------------------------------
 
-def _line_theme(color: tuple, line_weight: float = 1.0):
+LINE_WEIGHT = 2.0
+MARKER_SIZE = 6.0
+MARKER_WEIGHT = 1.5
+
+
+def _line_theme(color: tuple | None):
+    """Per-series theme: always sets line weight; sets color only if provided.
+
+    Applied to every line series unconditionally. ImPlot auto-picks color when
+    the theme does not override it.
+    """
     with dpg.theme() as theme:
         with dpg.theme_component(dpg.mvLineSeries):
-            dpg.add_theme_color(dpg.mvPlotCol_Line, color, category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, line_weight, category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, LINE_WEIGHT, category=dpg.mvThemeCat_Plots)
+            if color is not None:
+                dpg.add_theme_color(dpg.mvPlotCol_Line, color, category=dpg.mvThemeCat_Plots)
     return theme
 
 
 def _scatter_theme(color: tuple | None, marker: str | None):
     with dpg.theme() as theme:
         with dpg.theme_component(dpg.mvScatterSeries):
+            dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerSize,   MARKER_SIZE,   category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerWeight, MARKER_WEIGHT, category=dpg.mvThemeCat_Plots)
             if color is not None:
                 dpg.add_theme_color(dpg.mvPlotCol_MarkerFill,    color, category=dpg.mvThemeCat_Plots)
                 dpg.add_theme_color(dpg.mvPlotCol_MarkerOutline, color, category=dpg.mvThemeCat_Plots)
@@ -265,26 +278,24 @@ class PlotViewer:
                                 anti_aliased=True, crosshairs=True)
         self._plot_tags[p.id] = plot_tag
 
-        x_axis = dpg.add_plot_axis(dpg.mvXAxis, label=p.xlabel, parent=plot_tag)
+        x_axis = dpg.add_plot_axis(dpg.mvXAxis, label=p.xlabel, parent=plot_tag,
+                                    auto_fit=(p.xlim is None))
         self._xaxis_tags[p.id] = x_axis
         if p.xlim is not None:
             dpg.set_axis_limits(x_axis, p.xlim[0], p.xlim[1])
 
         yaxis_tags = []
-        axis_flags = [dpg.mvXAxis, dpg.mvYAxis, dpg.mvYAxis2, dpg.mvYAxis3]
+        yaxis_codes = [dpg.mvYAxis, dpg.mvYAxis2, dpg.mvYAxis3]
+        ylims = p.ylims or ()
         for i, ylabel in enumerate(p.ylabels):
-            if i == 0:
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label=ylabel, parent=plot_tag)
-            elif i == 1:
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis2, label=ylabel, parent=plot_tag)
-            elif i == 2:
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis3, label=ylabel, parent=plot_tag)
-            else:
+            if i >= len(yaxis_codes):
                 break  # ImPlot supports at most 3 y-axes
+            lim = ylims[i] if i < len(ylims) else None
+            y_axis = dpg.add_plot_axis(yaxis_codes[i], label=ylabel, parent=plot_tag,
+                                        auto_fit=(lim is None))
             yaxis_tags.append(y_axis)
-
-            if i < len(p.ylims or ()) and p.ylims[i] is not None:
-                dpg.set_axis_limits(y_axis, p.ylims[i][0], p.ylims[i][1])
+            if lim is not None:
+                dpg.set_axis_limits(y_axis, lim[0], lim[1])
 
         self._yaxis_tags[p.id] = yaxis_tags
 
@@ -312,8 +323,7 @@ class PlotViewer:
 
         if elem.mode in ("line", "line_scatter"):
             sid = dpg.add_line_series([], [], label=label, parent=y_axis)
-            if color is not None:
-                dpg.bind_item_theme(sid, _line_theme(color, elem.line_width))
+            dpg.bind_item_theme(sid, _line_theme(color))
             series_ids.append(sid)
 
         if elem.mode in ("scatter", "line_scatter"):
@@ -342,8 +352,7 @@ class PlotViewer:
         label = elem.legend_label_template if elem.show_in_legend else f"##{elem.source}_fit"
 
         line_id = dpg.add_line_series([], [], label=label, parent=y_axis)
-        if color is not None:
-            dpg.bind_item_theme(line_id, _line_theme(color, 1.5))
+        dpg.bind_item_theme(line_id, _line_theme(color))
 
         self._linear_fits.setdefault(elem.source, []).append(_LinearFitState(elem, line_id))
 
@@ -353,8 +362,7 @@ class PlotViewer:
         label = elem.legend_label if elem.show_in_legend else f"##hline_{elem.value}"
 
         sid = dpg.add_inf_line_series([elem.value], label=label, parent=y_axis, horizontal=True)
-        if color is not None:
-            dpg.bind_item_theme(sid, _line_theme(color, elem.line_width))
+        dpg.bind_item_theme(sid, _line_theme(color))
 
     def _create_vline(self, elem: VLine, plot_id: str, yaxis_tags: list) -> None:
         y_axis = yaxis_tags[0] if yaxis_tags else None
@@ -362,8 +370,7 @@ class PlotViewer:
         label = elem.legend_label if elem.show_in_legend else f"##vline_{elem.value}"
 
         sid = dpg.add_inf_line_series([elem.value], label=label, parent=y_axis, horizontal=False)
-        if color is not None:
-            dpg.bind_item_theme(sid, _line_theme(color, elem.line_width))
+        dpg.bind_item_theme(sid, _line_theme(color))
 
     # ------------------------------------------------------------------
     # Data update → element redraw
@@ -438,6 +445,7 @@ def viewer_main(cmd_queue: Queue, rsp_queue: Queue) -> None:
     dpg.create_viewport(title="Plot Viewer", width=1200, height=800)
 
     apply_dark_theme()
+    dpg.set_global_font_scale(1.15)
 
     viewer = PlotViewer(cmd_queue, rsp_queue)
 

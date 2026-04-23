@@ -193,9 +193,9 @@ class PUNDProcedure(MeasurementProcedure):
 				show = (rep == 0 or rep == self.repetition_count - 1)
 				v_legend = f"V (rep {rep+1})" if show else ""
 				i_legend = f"I (rep {rep+1})" if show else ""
-				elements.append(Curve(f"V_{rep}", color=(0, 0, intensity), line_width=0.8,
+				elements.append(Curve(f"V_{rep}", color=(0, 0, intensity),
 				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
-				elements.append(Curve(f"I_{rep}", color=(intensity, 0.3 * intensity, 0), line_width=0.8,
+				elements.append(Curve(f"I_{rep}", color=(intensity, 0.3 * intensity, 0),
 				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
 
 			# Initialize live overlay plot

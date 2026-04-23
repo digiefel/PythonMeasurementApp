@@ -135,7 +135,7 @@ def apply_dark_theme() -> None:
             dpg.add_theme_color(dpg.mvPlotCol_InlayText,       (220, 220, 220, 255), category=dpg.mvThemeCat_Plots)
             dpg.add_theme_color(dpg.mvPlotCol_AxisText,        (190, 190, 190, 255), category=dpg.mvThemeCat_Plots)
             dpg.add_theme_color(dpg.mvPlotCol_AxisGrid,        ( 60,  60,  60, 255), category=dpg.mvThemeCat_Plots)
-            dpg.add_theme_style(dpg.mvPlotStyleVar_PlotPadding, 10, 10,              category=dpg.mvThemeCat_Plots)
+            dpg.add_theme_style(dpg.mvPlotStyleVar_PlotPadding, 10, 10, category=dpg.mvThemeCat_Plots)
 
     dpg.bind_theme(global_theme)
 
