@@ -1,19 +1,20 @@
 """Process bridge for instrument sessions.
 
-The main process talks to a small worker over multiprocessing queues. The worker
-owns the vendor DLL-backed session object; the proxy only forwards method calls
-and returns structured results or explicit errors.
+The main process talks to a dedicated worker interpreter over newline-delimited
+JSON messages on stdin/stdout. The worker owns the vendor DLL-backed session
+object; this avoids multiprocessing spawn importing the UI module.
 """
 
 from __future__ import annotations
 
+import json
 import os
-import multiprocessing as mp
 import queue
 import subprocess
+import threading
 import time
-import traceback
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Callable
 
@@ -71,112 +72,44 @@ def _assert_worker_is_32bit(worker_python: str) -> None:
         )
 
 
-def _worker_main(cmd_queue: mp.Queue, rsp_queue: mp.Queue) -> None:
-    session = None
-    try:
-        while True:
-            msg = cmd_queue.get()
-            cmd = msg["cmd"]
-            req_id = msg["req_id"]
-            payload = msg.get("payload", {})
-
-            try:
-                if cmd == "init_b1500":
-                    from instrumentio.sessions import B1500Session
-
-                    session = B1500Session(payload["address"])
-                    rsp_queue.put_nowait({"type": "ack", "req_id": req_id, "payload": {}})
-                    continue
-
-                if cmd == "bridge_info":
-                    rsp_queue.put_nowait({
-                        "type": "result",
-                        "req_id": req_id,
-                        "payload": {
-                            "value": {
-                                "pid": os.getpid(),
-                                "session_initialized": session is not None,
-                            }
-                        },
-                    })
-                    continue
-
-                if cmd == "call":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-                    method_name = payload["method"]
-                    args = payload.get("args", [])
-                    kwargs = payload.get("kwargs", {})
-                    result = getattr(session, method_name)(*args, **kwargs)
-                    rsp_queue.put_nowait({"type": "result", "req_id": req_id, "payload": {"value": result}})
-                    continue
-
-                if cmd == "stream_cv_sweep":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-
-                    def _on_point(step, dc_bias_v, para1, para2, time_s, status1, status2):
-                        rsp_queue.put_nowait({
-                            "type": "event",
-                            "req_id": req_id,
-                            "payload": {
-                                "step": int(step),
-                                "dc_bias_v": float(dc_bias_v),
-                                "para1": float(para1),
-                                "para2": float(para2),
-                                "time_s": float(time_s),
-                                "status1": int(status1),
-                                "status2": int(status2),
-                            },
-                        })
-
-                    session.stream_cv_sweep(
-                        payload["cmu_channel"],
-                        payload["cmu_mode"],
-                        payload["meas_range"],
-                        payload["expected_points"],
-                        _on_point,
-                    )
-                    rsp_queue.put_nowait({"type": "done", "req_id": req_id, "payload": {}})
-                    continue
-
-                if cmd == "close":
-                    if session is not None:
-                        session.close()
-                        session = None
-                    rsp_queue.put_nowait({"type": "ack", "req_id": req_id, "payload": {}})
-                    break
-
-                raise RuntimeError(f"Unknown bridge command: {cmd}")
-            except Exception:
-                rsp_queue.put_nowait({
-                    "type": "error",
-                    "req_id": req_id,
-                    "payload": {"message": traceback.format_exc()},
-                })
-    finally:
-        if session is not None:
-            session.close()
-
-
 class RemoteB1500Session:
     """Proxy for a B1500 session running in a worker process."""
 
     def __init__(self, address: str):
         worker_python = _resolve_worker_python()
         _assert_worker_is_32bit(worker_python)
-        ctx = mp.get_context("spawn")
-        ctx_set_executable = getattr(ctx, "set_executable", None)
-        if callable(ctx_set_executable):
-            ctx_set_executable(worker_python)
-        else:
-            mp.set_executable(worker_python)
-        self._cmd_queue: mp.Queue = ctx.Queue(maxsize=64)
-        self._rsp_queue: mp.Queue = ctx.Queue(maxsize=64)
-        self._process = ctx.Process(target=_worker_main, args=(self._cmd_queue, self._rsp_queue), daemon=True)
+
+        worker_module = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_MODULE", "instrumentio.bridge_worker")
+        cmd = [worker_python, "-u", "-m", worker_module]
+
         self._worker_python = worker_python
-        self._process.start()
-        self._send_and_wait("init_b1500", {"address": address}, timeout_s=10.0)
+        self._process = subprocess.Popen(
+            cmd,
+            cwd=str(_project_root()),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        if self._process.stdin is None or self._process.stdout is None or self._process.stderr is None:
+            raise RuntimeError("Bridge worker pipe setup failed.")
+
+        self._rsp_queue: queue.Queue = queue.Queue(maxsize=512)
+        self._write_lock = threading.Lock()
+        self._stderr_lock = threading.Lock()
+        self._stderr_lines: deque[str] = deque(maxlen=200)
+
+        self._stdout_thread = threading.Thread(target=self._stdout_reader, daemon=True)
+        self._stderr_thread = threading.Thread(target=self._stderr_reader, daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        try:
+            self._send_and_wait("init_b1500", {"address": address}, timeout_s=10.0)
+        except Exception:
+            self.close()
+            raise
 
     @property
     def wgfmu(self):
@@ -208,29 +141,24 @@ class RemoteB1500Session:
             },
         )
         req_id = envelope["req_id"]
-        try:
-            self._cmd_queue.put(envelope, timeout=timeout_s)
-        except queue.Full as exc:
-            raise TimeoutError("Bridge command queue full for stream_cv_sweep") from exc
+        self._send_envelope(envelope)
 
         deadline = time.monotonic() + timeout_s
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError("No bridge response for stream_cv_sweep")
-            try:
-                rsp = self._rsp_queue.get(timeout=remaining)
-            except queue.Empty as exc:
-                raise TimeoutError("No bridge response for stream_cv_sweep") from exc
+                raise TimeoutError(
+                    f"No bridge response for stream_cv_sweep. {self._worker_diagnostics()}"
+                )
 
-            if rsp.get("req_id") != req_id:
-                continue
-
+            rsp = self._wait_for_response(req_id, "stream_cv_sweep", remaining)
             rsp_type = rsp.get("type")
+
             if rsp_type == "error":
-                raise RuntimeError(rsp["payload"]["message"])
+                raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
+
             if rsp_type == "event":
-                payload = rsp["payload"]
+                payload = rsp.get("payload", {})
                 callback(
                     int(payload["step"]),
                     float(payload["dc_bias_v"]),
@@ -241,8 +169,10 @@ class RemoteB1500Session:
                     int(payload["status2"]),
                 )
                 continue
+
             if rsp_type == "done":
                 return
+
             raise RuntimeError(f"Unexpected bridge response type for stream_cv_sweep: {rsp_type!r}")
 
     def __getattr__(self, name: str):
@@ -250,46 +180,161 @@ class RemoteB1500Session:
             raise AttributeError(name)
 
         def _call(*args, **kwargs):
-            return self._send_and_wait("call", {"method": name, "args": list(args), "kwargs": kwargs}, timeout_s=30.0)
+            return self._send_and_wait(
+                "call",
+                {"method": name, "args": list(args), "kwargs": kwargs},
+                timeout_s=30.0,
+            )
 
         return _call
 
     def close(self):
         if getattr(self, "_process", None) is None:
             return
+        process = self._process
+        if process.poll() is None:
+            try:
+                self._send_and_wait("close", {}, timeout_s=5.0)
+            except Exception:
+                pass
+
+        if process.poll() is None:
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=1.0)
+
+        for stream_name in ("stdin", "stdout", "stderr"):
+            stream = getattr(process, stream_name, None)
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+    def _stdout_reader(self) -> None:
+        assert self._process.stdout is not None
+        for raw in self._process.stdout:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except Exception:
+                msg = {
+                    "type": "error",
+                    "req_id": None,
+                    "payload": {"message": f"Invalid JSON from bridge worker: {line[:300]}"},
+                }
+            self._queue_response(msg)
+
+        self._queue_response(
+            {
+                "type": "worker_exit",
+                "req_id": None,
+                "payload": {"exit_code": self._process.poll()},
+            }
+        )
+
+    def _stderr_reader(self) -> None:
+        assert self._process.stderr is not None
+        for raw in self._process.stderr:
+            line = raw.rstrip("\r\n")
+            if not line:
+                continue
+            with self._stderr_lock:
+                self._stderr_lines.append(line)
+
+    def _queue_response(self, msg: dict) -> None:
         try:
-            self._send_and_wait("close", {}, timeout_s=10.0)
-        finally:
-            if self._process.is_alive():
-                self._process.join(timeout=2.0)
-                if self._process.is_alive():
-                    self._process.terminate()
-                    self._process.join(timeout=1.0)
+            self._rsp_queue.put_nowait(msg)
+        except queue.Full:
+            try:
+                self._rsp_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._rsp_queue.put_nowait(msg)
+
+    def _stderr_tail(self, max_lines: int = 15) -> str:
+        with self._stderr_lock:
+            lines = list(self._stderr_lines)[-max_lines:]
+        return "\n".join(lines)
+
+    def _worker_diagnostics(self) -> str:
+        exit_code = self._process.poll()
+        state = "running" if exit_code is None else f"exited with code {exit_code}"
+        msg = f"Bridge worker ({self._worker_python}) is {state}."
+        tail = self._stderr_tail()
+        if tail:
+            msg += f"\nWorker stderr tail:\n{tail}"
+        return msg
+
+    def _send_envelope(self, envelope: dict) -> None:
+        if self._process.poll() is not None:
+            raise RuntimeError(self._worker_diagnostics())
+
+        line = json.dumps(envelope, separators=(",", ":")) + "\n"
+        with self._write_lock:
+            if self._process.poll() is not None:
+                raise RuntimeError(self._worker_diagnostics())
+            assert self._process.stdin is not None
+            try:
+                self._process.stdin.write(line)
+                self._process.stdin.flush()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed sending bridge command {envelope.get('cmd')!r}. {self._worker_diagnostics()}"
+                ) from exc
+
+    def _wait_for_response(self, req_id: str, cmd: str, timeout_s: float) -> dict:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"No bridge response for {cmd}. {self._worker_diagnostics()}")
+            try:
+                rsp = self._rsp_queue.get(timeout=min(remaining, 0.5))
+            except queue.Empty:
+                if self._process.poll() is not None:
+                    raise RuntimeError(
+                        f"Bridge worker exited while waiting for {cmd}. {self._worker_diagnostics()}"
+                    )
+                continue
+
+            rsp_type = rsp.get("type")
+            if rsp_type == "worker_exit":
+                raise RuntimeError(
+                    f"Bridge worker exited while waiting for {cmd}. {self._worker_diagnostics()}"
+                )
+
+            rsp_req_id = rsp.get("req_id")
+            if rsp_type == "error" and rsp_req_id is None:
+                raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
+
+            if rsp_req_id != req_id:
+                continue
+
+            return rsp
 
     def _send_and_wait(self, cmd: str, payload: dict, timeout_s: float) -> object:
         envelope = _make_envelope(cmd, payload)
         req_id = envelope["req_id"]
-        try:
-            self._cmd_queue.put(envelope, timeout=timeout_s)
-        except queue.Full as exc:
-            raise TimeoutError(f"Bridge command queue full for {cmd}") from exc
+        self._send_envelope(envelope)
+        rsp = self._wait_for_response(req_id, cmd, timeout_s)
 
-        while True:
-            try:
-                rsp = self._rsp_queue.get(timeout=timeout_s)
-            except queue.Empty as exc:
-                raise TimeoutError(f"No bridge response for {cmd}") from exc
+        rsp_type = rsp.get("type")
+        if rsp_type == "error":
+            raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
 
-            if rsp.get("req_id") != req_id:
-                continue
+        if rsp_type == "result":
+            return rsp.get("payload", {}).get("value")
 
-            if rsp["type"] == "error":
-                raise RuntimeError(rsp["payload"]["message"])
+        if rsp_type == "ack":
+            return rsp.get("payload", {})
 
-            if rsp["type"] == "result":
-                return rsp["payload"].get("value")
-
-            if rsp["type"] == "ack":
-                return rsp.get("payload", {})
-
-            raise RuntimeError(f"Unexpected bridge response type for {cmd}: {rsp['type']!r}")
+        raise RuntimeError(f"Unexpected bridge response type for {cmd}: {rsp_type!r}")
