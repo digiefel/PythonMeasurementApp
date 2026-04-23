@@ -291,7 +291,7 @@
       "gpib_address": "GPIB0::17::INSTR",
       "cmu_channel": 7,
       "sweep_type": "double",
-      "cmu_mode": 100,
+      "cmu_mode": 11,
       "start_bias": 1.6,
       "stop_bias": -2.5,
       "points": 101,

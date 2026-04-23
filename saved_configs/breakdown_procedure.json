@@ -1,11 +1,14 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
     "output_dir": "Z:/_Users/Shared/dgfl/B1500",
+    "fallback_output_dir": "C:\\Users\\EMN Lab\\Desktop\\PythonMeasurementApp\\DavideL\\test_output",
     "asu_channels": [
         "SMU2"
     ],
     "asu_path_mode": 1,
     "asu_range_mode": null,
+    "devices_csv_path": "C:\\Users\\EMN Lab\\Desktop\\PythonMeasurementApp\\DavideL\\saved_configs\\devices.csv",
+    "cmu_calibration": {},
     "procedures": {
         "FourTerminalIV": {
             "gpib_address": "GPIB0::17::INSTR",
@@ -39,20 +42,21 @@
         }
     },
     "last_selection": {
+        "chip_id": "",
         "site": "VII",
         "subsite": "FeCapBD",
         "device": "A1A2",
         "procedure": "OxideBreakdown",
         "set_home_before_run": true,
-        "chip": "",
-        "selected_devices": [],
-        "temp_comp_x_um_per_c": "-0.284",
-        "temp_comp_y_um_per_c": "1.435",
-        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": false,
         "temperature_mode": "Sweep",
         "temperature_setpoint_c": "",
         "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30"
+        "temperature_wait_after_s": "30",
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
+        "chip": "",
+        "selected_devices": []
     }
 }
