@@ -43,6 +43,7 @@ class MeasurementRunner:
         self.temp_ref_c: Optional[float] = None
         # Baseline Z heights and reference temperature (captured once at first convergence)
         self.temp_comp_ref_z_heights = None  # (contact, separation, overtravel, hover)
+        self._temp_comp_unavailable_logged = False
         self.auto_separation_after_measurement = True
         self.stop_event = threading.Event()
         atexit.register(self.safe_stop)
@@ -273,16 +274,27 @@ class MeasurementRunner:
         comp_y = comp_y or 0.0
         dx, dy = 0.0, 0.0
         if comp_x != 0.0 or comp_y != 0.0:
-            temp = self.prober_get_temp()
-            if self.temp_ref_c is None:
-                raise RuntimeError("Temperature reference not set before device move.")
-            delta_t = temp - self.temp_ref_c
-            dx = comp_x * delta_t
-            dy = comp_y * delta_t
-            self.log(
-                f'[temp_comp] {device.name}: dT={delta_t:.2f}C at {temp:.2f}C '
-                f'(ref {self.temp_ref_c:.2f}C), comp=({dx:.3f}um, {dy:.3f}um)'
-            )
+            temp = self.prober_ctrl.get_temp()
+            self.current_temp_c = temp
+            if temp is None:
+                if not self._temp_comp_unavailable_logged:
+                    self.log(
+                        "Warning: Temperature compensation requested but prober temperature is unavailable; "
+                        "continuing without XY compensation."
+                    )
+                    self._temp_comp_unavailable_logged = True
+            else:
+                if self.temp_ref_c is None:
+                    self.temp_ref_c = temp
+                    self.log(f"[temp_comp] Reference temperature set to {temp:.2f}C (first read)")
+                delta_t = temp - self.temp_ref_c
+                dx = comp_x * delta_t
+                dy = comp_y * delta_t
+                self._temp_comp_unavailable_logged = False
+                self.log(
+                    f'[temp_comp] {device.name}: dT={delta_t:.2f}C at {temp:.2f}C '
+                    f'(ref {self.temp_ref_c:.2f}C), comp=({dx:.3f}um, {dy:.3f}um)'
+                )
         origin_x, origin_y = self.prober_ctrl.subsite_origin or (0.0, 0.0)
         return origin_x + device.x + dx, origin_y + device.y + dy
 

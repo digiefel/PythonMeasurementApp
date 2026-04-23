@@ -52,6 +52,7 @@ class ProberController:
 
             self.prober = prober
             self._last_init_error = None
+            self.log("SENTIO prober initialization complete.")
             return True
         except Exception as e:
             err = f"SENTIO initialization failed: {e}"
