@@ -1,9 +1,13 @@
+import math
+
 from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
     B1500_CMUM_CP_D,
+    B1500_CMUM_Z_TDEG,
+    B1500_CMUM_Z_TRAD,
     B1500_LAST_STOP,
     B1500_STOP_DISABLE,
     B1500_SWP_VF_DBLLIN,
@@ -15,6 +19,7 @@ from instrumentio.descriptors import (
     get_cmu_mode_components,
     get_cmu_mode_name,
 )
+from si_utils import parse_si_list, format_si_value
 
 
 class CVSweepProcedure(MeasurementProcedure):
@@ -31,6 +36,9 @@ class CVSweepProcedure(MeasurementProcedure):
     always includes a Frequency_Hz column.
 
     Data is streamed point-by-point via raw VISA SCPI (FMT 5,0 + XE) for live plotting.
+
+    When cmu_mode is Z-Theta (mode 11 or 10), Rp and Cp are computed from Z and Theta
+    per-point and plotted live in a 2×2 panel layout alongside Z and Theta.
     """
 
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
@@ -38,7 +46,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
         self.gpib_address = settings.get("gpib_address", "GPIB0::17::INSTR")
         self.cmu_channel = int(settings.get("cmu_channel", -1))
-        self.cmu_mode = int(settings.get("cmu_mode", B1500_CMUM_CP_D))
+        self.cmu_mode = int(settings.get("cmu_mode", B1500_CMUM_Z_TDEG))
 
         # Backward compat: old configs have double_sweep + frequency_hz
         if 'sweep_type' not in settings and 'double_sweep' in settings:
@@ -150,7 +158,6 @@ class CVSweepProcedure(MeasurementProcedure):
 
     @staticmethod
     def _parse_frequencies(text):
-        from ui import parse_si_list
         freqs = sorted(parse_si_list(str(text)))
         if not freqs:
             raise ValueError("At least one frequency is required.")
@@ -161,7 +168,6 @@ class CVSweepProcedure(MeasurementProcedure):
 
     @staticmethod
     def _freq_label(freq_hz):
-        from ui import format_si_value
         return f"{format_si_value(freq_hz)}Hz"
 
     def _validate_settings(self):
@@ -210,6 +216,23 @@ class CVSweepProcedure(MeasurementProcedure):
             (vmin, 0.0,  raw[2]),
         ]
 
+    def _is_z_theta_mode(self) -> bool:
+        return self.cmu_mode in (B1500_CMUM_Z_TDEG, B1500_CMUM_Z_TRAD)
+
+    @staticmethod
+    def _rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
+        """Compute parallel-RC equivalent from impedance magnitude and phase angle.
+
+        Returns (Rp, Cp) in Ohm and Farad respectively, or (nan, nan) on degenerate input.
+        """
+        theta_rad = math.radians(theta) if is_degrees else theta
+        omega = 2.0 * math.pi * freq
+        cos_t = math.cos(theta_rad)
+        sin_t = math.sin(theta_rad)
+        if abs(cos_t) < 1e-15 or abs(Z) < 1e-30 or omega < 1e-15:
+            return float('nan'), float('nan')
+        return Z / cos_t, -sin_t / (omega * Z)
+
     def run(self, b1500, device):
         self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
@@ -233,10 +256,24 @@ class CVSweepProcedure(MeasurementProcedure):
 
         base = self.format_filename("CVSweep", device.name)
         filename = f"{base}.csv"
-        self.save_data(
-            results,
-            filename,
-            [
+
+        is_z_theta = self._is_z_theta_mode()
+        if is_z_theta:
+            theta_unit = "deg" if self.cmu_mode == B1500_CMUM_Z_TDEG else "rad"
+            columns = [
+                "Frequency_Hz",
+                "Bias_V",
+                primary_label,
+                monitor_label,
+                "Rp (Ohm)",
+                "Cp (F)",
+                "Time_sec",
+                f"Status_{primary_name}",
+                f"Status_{monitor_name}",
+                "Status_Combined",
+            ]
+        else:
+            columns = [
                 "Frequency_Hz",
                 "Bias_V",
                 primary_label,
@@ -245,9 +282,9 @@ class CVSweepProcedure(MeasurementProcedure):
                 f"Status_{primary_name}",
                 f"Status_{monitor_name}",
                 "Status_Combined",
-            ],
-            add_timestamp=False,
-        )
+            ]
+
+        self.save_data(results, filename, columns, add_timestamp=False)
         plot_filename = f"{base}_plot.png"
         self.runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
         self.log(f"C-V sweep completed for {device.name}")
@@ -255,19 +292,44 @@ class CVSweepProcedure(MeasurementProcedure):
     def perform_cv_sweep(self, b1500, device, primary_name, monitor_name, primary_label, monitor_label):
         self.check_stop(b1500)
 
-        elements = []
-        for i, freq in enumerate(self.frequencies):
-            color = f'C{i % 10}'
-            tag = self._freq_label(freq)
-            elements.append(Curve(f"p_{tag}", color=color, line_style="solid",
-                                  legend_label=f"{primary_label} @ {tag}"))
-            elements.append(Curve(f"m_{tag}", color=color, line_style="dash", yaxis=1,
-                                  legend_label=f"{monitor_label} @ {tag}"))
+        is_z_theta = self._is_z_theta_mode()
+        is_degrees = self.cmu_mode == B1500_CMUM_Z_TDEG
+        theta_unit = "deg" if is_degrees else "rad"
 
-        self.runner.configure_plot(f"C-V Sweep - {device.name}", [
-            PlotDef("cv", xlabel="Bias (V)", ylabels=(primary_label, monitor_label),
-                    elements=elements),
-        ])
+        if is_z_theta:
+            elements_z, elements_theta, elements_rp, elements_cp = [], [], [], []
+            for i, freq in enumerate(self.frequencies):
+                color = f'C{i % 10}'
+                tag = self._freq_label(freq)
+                elements_z.append(    Curve(f"z_{tag}",     color=color, legend_label=f"Z @ {tag}"))
+                elements_theta.append(Curve(f"theta_{tag}", color=color, legend_label=f"θ @ {tag}"))
+                elements_rp.append(   Curve(f"rp_{tag}",    color=color, legend_label=f"Rp @ {tag}"))
+                elements_cp.append(   Curve(f"cp_{tag}",    color=color, legend_label=f"Cp @ {tag}"))
+
+            self.runner.configure_plot(f"C-V Sweep - {device.name}", [
+                PlotDef("z",     row=0, col=0, xlabel="Bias (V)", ylabels=("Z (Ohm)",),
+                        elements=elements_z),
+                PlotDef("theta", row=0, col=1, xlabel="Bias (V)", ylabels=(f"Theta ({theta_unit})",),
+                        xlink="z", elements=elements_theta),
+                PlotDef("rp",    row=1, col=0, xlabel="Bias (V)", ylabels=("Rp (Ohm)",),
+                        xlink="z", elements=elements_rp),
+                PlotDef("cp",    row=1, col=1, xlabel="Bias (V)", ylabels=("Cp (F)",),
+                        xlink="z", elements=elements_cp),
+            ])
+        else:
+            elements = []
+            for i, freq in enumerate(self.frequencies):
+                color = f'C{i % 10}'
+                tag = self._freq_label(freq)
+                elements.append(Curve(f"p_{tag}", color=color, line_style="solid",
+                                      legend_label=f"{primary_label} @ {tag}"))
+                elements.append(Curve(f"m_{tag}", color=color, line_style="dash", yaxis=1,
+                                      legend_label=f"{monitor_label} @ {tag}"))
+
+            self.runner.configure_plot(f"C-V Sweep - {device.name}", [
+                PlotDef("cv", xlabel="Bias (V)", ylabels=(primary_label, monitor_label),
+                        elements=elements),
+            ])
 
         nonzero_statuses = set()
         all_results = []
@@ -282,13 +344,30 @@ class CVSweepProcedure(MeasurementProcedure):
                 self.check_stop(b1500)
                 b1500.set_cmu_freq(self.cmu_channel, freq)
                 tag = self._freq_label(freq)
-                p_source = f"p_{tag}"
-                m_source = f"m_{tag}"
+
+                if is_z_theta:
+                    p_source  = f"z_{tag}"
+                    m_source  = f"theta_{tag}"
+                    rp_source = f"rp_{tag}"
+                    cp_source = f"cp_{tag}"
+                else:
+                    p_source  = f"p_{tag}"
+                    m_source  = f"m_{tag}"
+                    rp_source = None
+                    cp_source = None
 
                 if self.sweep_type == 'butterfly':
-                    rows = self._run_butterfly_sweep(b1500, p_source, m_source, nonzero_statuses)
+                    rows = self._run_butterfly_sweep(
+                        b1500, p_source, m_source, nonzero_statuses,
+                        rp_source=rp_source, cp_source=cp_source,
+                        freq=freq, is_degrees=is_degrees,
+                    )
                 else:
-                    rows = self._run_standard_sweep(b1500, p_source, m_source, nonzero_statuses)
+                    rows = self._run_standard_sweep(
+                        b1500, p_source, m_source, nonzero_statuses,
+                        rp_source=rp_source, cp_source=cp_source,
+                        freq=freq, is_degrees=is_degrees,
+                    )
 
                 for row in rows:
                     all_results.append([freq] + row)
@@ -310,10 +389,18 @@ class CVSweepProcedure(MeasurementProcedure):
                 f"{primary_name} range: {min(p_vals):.6g} to {max(p_vals):.6g}; "
                 f"{monitor_name} range: {min(m_vals):.6g} to {max(m_vals):.6g}"
             )
+            if is_z_theta:
+                rp_vals = [row[4] for row in all_results if math.isfinite(row[4])]
+                cp_vals = [row[5] for row in all_results if math.isfinite(row[5])]
+                if rp_vals:
+                    self.log(f"Rp range: {min(rp_vals):.6g} to {max(rp_vals):.6g} Ohm")
+                if cp_vals:
+                    self.log(f"Cp range: {min(cp_vals):.6g} to {max(cp_vals):.6g} F")
         self.log(f"Collected {len(all_results)} C-V data points")
         return all_results
 
-    def _run_standard_sweep(self, b1500, p_source, m_source, nonzero_statuses):
+    def _run_standard_sweep(self, b1500, p_source, m_source, nonzero_statuses, *,
+                             rp_source=None, cp_source=None, freq=None, is_degrees=True):
         """Single or double linear sweep with per-point live SCPI streaming."""
         mode = B1500_SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500_SWP_VF_SGLLIN
         expected = self._expected_points()
@@ -331,12 +418,21 @@ class CVSweepProcedure(MeasurementProcedure):
             self.runner.plot.append_point(p_source, source_v, para1)
             self.runner.plot.append_point(m_source, source_v, para2)
             self._report_status(nonzero_statuses, s1, s2)
-            rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
+            if rp_source is not None:
+                rp, cp = self._rp_cp_from_z_theta(para1, para2, freq, is_degrees)
+                if math.isfinite(rp):
+                    self.runner.plot.append_point(rp_source, source_v, rp)
+                if math.isfinite(cp):
+                    self.runner.plot.append_point(cp_source, source_v, cp)
+                rows.append([source_v, para1, para2, rp, cp, time_s, s1, s2, s1 | s2])
+            else:
+                rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 
         b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, expected, on_point)
         return rows
 
-    def _run_butterfly_sweep(self, b1500, p_source, m_source, nonzero_statuses):
+    def _run_butterfly_sweep(self, b1500, p_source, m_source, nonzero_statuses, *,
+                              rp_source=None, cp_source=None, freq=None, is_degrees=True):
         """Three-segment butterfly sweep (0→Vmax→Vmin→0) with per-point live SCPI streaming."""
         segments = self._compute_butterfly_segments()
         rows = []
@@ -360,7 +456,15 @@ class CVSweepProcedure(MeasurementProcedure):
                 self.runner.plot.append_point(p_source, source_v, para1)
                 self.runner.plot.append_point(m_source, source_v, para2)
                 self._report_status(nonzero_statuses, s1, s2)
-                rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
+                if rp_source is not None:
+                    rp, cp = self._rp_cp_from_z_theta(para1, para2, freq, is_degrees)
+                    if math.isfinite(rp):
+                        self.runner.plot.append_point(rp_source, source_v, rp)
+                    if math.isfinite(cp):
+                        self.runner.plot.append_point(cp_source, source_v, cp)
+                    rows.append([source_v, para1, para2, rp, cp, time_s, s1, s2, s1 | s2])
+                else:
+                    rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 
             b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, npts, on_point)
 
