@@ -122,6 +122,18 @@ class RemoteB1500Session:
         info["configured_worker_python"] = self._worker_python
         return info
 
+    def run_cmu_phase_compensation(self, channel: int, mode: int = 1) -> dict:
+        """Phase compensation can legitimately exceed the generic RPC timeout."""
+        return self._send_and_wait(
+            "call",
+            {
+                "method": "run_cmu_phase_compensation",
+                "args": [int(channel), int(mode)],
+                "kwargs": {},
+            },
+            timeout_s=120.0,
+        )
+
     def stream_cv_sweep(
         self,
         cmu_channel: int,
