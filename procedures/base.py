@@ -3,6 +3,9 @@ import os
 import threading
 from datetime import datetime
 
+from instrumentio.bridge import RemoteB1500Session
+from runner import MeasurementRunner
+
 class MeasurementAbortRequested(Exception):
     """Custom exception to indicate measurement abortion."""
     pass
@@ -10,7 +13,7 @@ class MeasurementAbortRequested(Exception):
 class MeasurementProcedure(ABC):
     SAFE_FALLBACK_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'test_output'))
 
-    def __init__(self, settings: dict, output_root: str, output_relative: str, runner, fallback_root: str | None = None):
+    def __init__(self, settings: dict, output_root: str, output_relative: str, runner: MeasurementRunner, fallback_root: str | None = None):
         """
         output_root: base directory for primary saves
         output_relative: chip/site/subsite/device relative path
@@ -24,13 +27,13 @@ class MeasurementProcedure(ABC):
         self._run_timestamp = None
 
     @abstractmethod
-    def run(self, b1500, device):
+    def run(self, b1500: RemoteB1500Session, device):
         pass
     
     def log(self, message: str):
         self.runner.log(message)
 
-    def check_stop(self, b1500):
+    def check_stop(self, b1500: RemoteB1500Session):
         """Check if stop was requested, abort hardware if so, then raise.
         
         This runs in the worker thread - the only thread that should talk to
