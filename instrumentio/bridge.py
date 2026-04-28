@@ -72,6 +72,78 @@ def _assert_worker_is_32bit(worker_python: str) -> None:
         )
 
 
+class RemoteWGFMUProxy:
+    """Proxy for WGFMUSession in the bridge worker.
+
+    Simple calls are routed via ``wgfmu_call`` through ``__getattr__``.
+    ``read_chunk`` fetches a contiguous block of samples in one round-trip.
+    ``poll`` combines get_status + get_measure_value_size for two channels
+    into one round-trip.
+    """
+
+    def __init__(self, parent: "RemoteB1500Session") -> None:
+        self._parent = parent
+
+    def clear(self) -> None:
+        self._parent._send_and_wait(
+            "wgfmu_call",
+            {"method": "clear", "args": [], "kwargs": {}},
+            timeout_s=30.0,
+        )
+
+    def abort(self, timeout_s: float = 2.0):
+        """Abort with a generous bridge timeout to cover the wait loop."""
+        return self._parent._send_and_wait(
+            "wgfmu_call",
+            {"method": "abort", "args": [float(timeout_s)], "kwargs": {}},
+            timeout_s=max(timeout_s + 5.0, 10.0),
+        )
+
+    def poll(self, channel_1: int, channel_2: int):
+        """Single round-trip: get_status + get_measure_value_size for two channels.
+
+        Returns (status, elapsed, total, measured_1, total_1, measured_2, total_2).
+        """
+        r = self._parent._send_and_wait(
+            "wgfmu_poll",
+            {"channel_1": int(channel_1), "channel_2": int(channel_2)},
+            timeout_s=10.0,
+        )
+        return (
+            r["status"], r["elapsed"], r["total"],
+            r["measured_1"], r["total_1"],
+            r["measured_2"], r["total_2"],
+        )
+
+    def read_chunk(
+        self, channel_id: int, from_index: int, count: int
+    ) -> list[tuple[float, float]]:
+        """Fetch ``count`` samples starting at ``from_index`` in one round-trip.
+
+        The caller is responsible for ensuring the requested range is available.
+        Returns a list of (time, value) tuples.
+        """
+        result = self._parent._send_and_wait(
+            "wgfmu_read_chunk",
+            {"channel_id": int(channel_id), "from_index": int(from_index), "count": int(count)},
+            timeout_s=60.0,
+        )
+        return list(zip(result["times"], result["values"]))
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def _call(*args, **kwargs):
+            return self._parent._send_and_wait(
+                "wgfmu_call",
+                {"method": name, "args": list(args), "kwargs": kwargs},
+                timeout_s=30.0,
+            )
+
+        return _call
+
+
 class RemoteB1500Session:
     """Proxy for a B1500 session running in a worker process."""
 
@@ -99,6 +171,7 @@ class RemoteB1500Session:
         self._write_lock = threading.Lock()
         self._stderr_lock = threading.Lock()
         self._stderr_lines: deque[str] = deque(maxlen=200)
+        self._wgfmu_proxy: RemoteWGFMUProxy | None = None
 
         self._stdout_thread = threading.Thread(target=self._stdout_reader, daemon=True)
         self._stderr_thread = threading.Thread(target=self._stderr_reader, daemon=True)
@@ -112,8 +185,10 @@ class RemoteB1500Session:
             raise
 
     @property
-    def wgfmu(self):
-        raise RuntimeError("WGFMU bridge proxy is not implemented in RemoteB1500Session yet.")
+    def wgfmu(self) -> RemoteWGFMUProxy:
+        if self._wgfmu_proxy is None:
+            self._wgfmu_proxy = RemoteWGFMUProxy(self)
+        return self._wgfmu_proxy
 
     def bridge_info(self) -> dict:
         info = self._send_and_wait("bridge_info", {}, timeout_s=5.0)

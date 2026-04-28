@@ -122,6 +122,19 @@ class PlotBridge:
             for source, pairs in data.items():
                 self._pending.setdefault(source, []).extend(pairs)
 
+    def replace_source(self, source: str, xs: Sequence[float], ys: Sequence[float]) -> None:
+        """Overwrite the full contents of a source. Drops pending appends for it."""
+        ds = self._require_source(source)
+        ds.clear()
+        ds.append_many(xs, ys)
+        with self._pending_lock:
+            self._pending.pop(source, None)
+        self._send_fire_and_forget("replace_source", {
+            "source": source,
+            "xs": list(xs),
+            "ys": list(ys),
+        })
+
     def set_limits(
         self,
         plot_id: str,

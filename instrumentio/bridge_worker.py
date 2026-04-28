@@ -106,6 +106,57 @@ def main() -> None:
                     _emit({"type": "done", "req_id": req_id, "payload": {}})
                     continue
 
+                if cmd == "wgfmu_call":
+                    if session is None:
+                        raise RuntimeError("B1500 session is not initialized")
+                    method_name = payload["method"]
+                    args = payload.get("args", [])
+                    kwargs = payload.get("kwargs", {})
+                    result = getattr(session.wgfmu, method_name)(*args, **kwargs)
+                    _emit({"type": "result", "req_id": req_id, "payload": {"value": result}})
+                    continue
+
+                if cmd == "wgfmu_poll":
+                    if session is None:
+                        raise RuntimeError("B1500 session is not initialized")
+                    ch1 = int(payload["channel_1"])
+                    ch2 = int(payload["channel_2"])
+                    status, elapsed, total, measured_1, total_1, measured_2, total_2 = session.wgfmu.poll(ch1, ch2)
+                    _emit({
+                        "type": "result",
+                        "req_id": req_id,
+                        "payload": {"value": {
+                            "status": int(status),
+                            "elapsed": float(elapsed),
+                            "total": float(total),
+                            "measured_1": int(measured_1),
+                            "total_1": int(total_1),
+                            "measured_2": int(measured_2),
+                            "total_2": int(total_2),
+                        }},
+                    })
+                    continue
+
+                if cmd == "wgfmu_read_chunk":
+                    if session is None:
+                        raise RuntimeError("B1500 session is not initialized")
+                    channel_id = int(payload["channel_id"])
+                    from_index = int(payload["from_index"])
+                    count = int(payload["count"])
+                    to_index = from_index + count
+                    times = []
+                    values = []
+                    for idx in range(from_index, to_index):
+                        t, v = session.wgfmu.get_measure_value(channel_id, idx)
+                        times.append(t)
+                        values.append(v)
+                    _emit({
+                        "type": "result",
+                        "req_id": req_id,
+                        "payload": {"value": {"times": times, "values": values}},
+                    })
+                    continue
+
                 if cmd == "close":
                     if session is not None:
                         session.close()

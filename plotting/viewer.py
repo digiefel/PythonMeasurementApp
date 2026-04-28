@@ -357,6 +357,17 @@ class PlotViewer:
             ds.append_pairs(pairs)
             self._redraw_source(source_name)
 
+    def _handle_replace_source(self, req_id: str, payload: dict) -> None:
+        source_name: str = payload["source"]
+        xs = payload["xs"]
+        ys = payload["ys"]
+        ds = self._sources.get(source_name)
+        if ds is None:
+            return
+        ds.clear()
+        ds.append_many(xs, ys)
+        self._redraw_source(source_name)
+
     def _handle_set_axis_limits(self, req_id: str, payload: dict) -> None:
         plot_id: str = payload["plot_id"]
         xlim = payload.get("xlim")

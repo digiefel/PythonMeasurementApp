@@ -872,3 +872,14 @@ class WGFMUSession:
         """Abort a specific WGFMU channel."""
         ret = dll_wgfmu.WGFMU_abortChannel(channel_id)
         return ret
+
+    def poll(self, channel_1: int, channel_2: int):
+        """Single-call status + available-sample-count query for two channels.
+
+        Returns (status, elapsed, total, measured_1, total_1, measured_2, total_2).
+        Reduces three per-tick RPC round-trips to one when called via the bridge.
+        """
+        status, elapsed, total = self.get_status()
+        measured_1, total_1 = self.get_measure_value_size(channel_1)
+        measured_2, total_2 = self.get_measure_value_size(channel_2)
+        return status, elapsed, total, measured_1, total_1, measured_2, total_2
