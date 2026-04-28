@@ -179,7 +179,7 @@ Blocks until viewer acknowledges.
 
 - `row_ratios` / `column_ratios` are optional layout weights.
 - They apply to stretched grid columns and to the supported split-span layout used by
-  `OxideBreakdown`.
+  `IVSweep`.
 
 ### append_point
 

@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from plotting import PlotDef, Curve
-from procedures.base import MeasurementProcedure, MeasurementAbortRequested
+from procedures.base import MeasurementProcedure
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
 	WGFMU_MEASURE_ENABLED_ENABLE,

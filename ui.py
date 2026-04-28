@@ -124,7 +124,7 @@ class MainUI:
                 ('delay_time', 'Delay Time (s)', float),
                 ('second_delay', 'Second Delay (s)', float),
             ],
-            'OxideBreakdown': [
+            'IVSweep': [
                 ('gpib_address', 'GPIB Address', str),
                 ('high_channel', 'High SMU', 'smu'),
                 ('low_channel', 'Low SMU', 'smu'),
@@ -217,7 +217,7 @@ class MainUI:
                 'delay_time': 0.0,
                 'second_delay': 0.0,
             },
-            'OxideBreakdown': {
+            'IVSweep': {
                 'gpib_address': 'GPIB0::17::INSTR',
                 'high_channel': 4,
                 'low_channel': 3,
@@ -1462,7 +1462,7 @@ class MainUI:
 
         proc_class = {
             'FourTerminalIV': FourTerminalIVProcedure,
-            'OxideBreakdown': OxideBreakdownProcedure,
+            'IVSweep': IVSweepProcedure,
             'CVSweep': CVSweepProcedure,
             'PUND': PUNDProcedure,
             'PUNDFatigue': PUNDFatigueProcedure,

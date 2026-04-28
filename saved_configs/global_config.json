@@ -124,7 +124,7 @@
             "delay_time": 0.0,
             "second_delay": 0.0
         },
-        "OxideBreakdown": {
+        "IVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
             "high_channel": 6,
             "low_channel": 5,
@@ -283,7 +283,7 @@
         "site": "VII",
         "subsite": "25um",
         "device": "D1",
-        "procedure": "OxideBreakdown",
+        "procedure": "IVSweep",
         "set_home_before_run": true,
         "auto_separation_after_measurement": true,
         "chip": "",

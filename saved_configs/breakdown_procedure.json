@@ -27,7 +27,7 @@
             "delay_time": 0.0,
             "second_delay": 0.0
         },
-        "OxideBreakdown": {
+        "IVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
             "high_channel": 4,
             "low_channel": 5,
@@ -46,7 +46,7 @@
         "site": "VII",
         "subsite": "FeCapBD",
         "device": "A1A2",
-        "procedure": "OxideBreakdown",
+        "procedure": "IVSweep",
         "set_home_before_run": true,
         "temperature_enabled": false,
         "temperature_mode": "Sweep",

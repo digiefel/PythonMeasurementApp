@@ -20,7 +20,7 @@ from instrumentio.descriptors import describe_status_bits
 
 class IVSweepProcedure(MeasurementProcedure):
     """
-    Two-terminal oxide breakdown sweep.
+    Two-terminal IV sweep.
     Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
     measuring the sourced voltage and current at each step.
     """
@@ -55,7 +55,7 @@ class IVSweepProcedure(MeasurementProcedure):
 
     def run(self, b1500, device):
         runner = self.runner
-        self.log(f'Starting Oxide Breakdown sweep on {device.name}')
+        self.log(f'Starting IV sweep on {device.name}')
         try:
             # Initialize B1500 session
             self.check_stop(b1500)

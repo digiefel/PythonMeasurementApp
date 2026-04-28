@@ -211,7 +211,7 @@ Replaced entirely.
 Functional:
 1. RV sweep: single curve, PNG saved.
 2. 4-term IV: scatter + live fit line updating as points stream.
-3. Oxide breakdown: dual-axis with log current trace.
+3. 2-term IV: dual-axis with log current trace.
 4. CV sweep: multiple frequencies with paired styles.
 5. PUND: overlay with first/last legend labels only.
 6. PUND fatigue: overlay with cycle-selection plotting.

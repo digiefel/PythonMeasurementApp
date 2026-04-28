@@ -1,4 +1,4 @@
-from procedures.base import MeasurementProcedure, MeasurementAbortRequested
+from procedures.base import MeasurementProcedure
 from instrumentio.constants import SMU_CHANNEL_MAP
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
