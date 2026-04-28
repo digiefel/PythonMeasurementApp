@@ -26,9 +26,9 @@ from instrumentio.constants import (
     WGFMU_MEASURE_CURRENT_RANGES,
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
-from procedures.base import MeasurementAbortRequested
+from runner import MeasurementAbortRequested, MeasurementRunner
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
-from procedures.oxide_breakdown import OxideBreakdownProcedure
+from procedures.iv_sweep import IVSweepProcedure
 from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
@@ -45,8 +45,6 @@ CV_SWEEP_TYPES = [
 
 class MainUI:
     def __init__(self, root):
-        from runner import MeasurementRunner
-
         self.root = root
         self.config = Config('global_config.json', 'TASE_devices.csv')
         self.runner = MeasurementRunner(self.config)

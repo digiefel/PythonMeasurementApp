@@ -4,13 +4,16 @@ import time
 import atexit
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 import threading
-from procedures.base import MeasurementAbortRequested
 from instrumentio.codes import B1500_CH_ALL
 from instrumentio.bridge import RemoteB1500Session
 from prober import ProberController
 
 if TYPE_CHECKING:
     from plotting import PlotBridge, PlotDef, ToolbarButton
+
+class MeasurementAbortRequested(Exception):
+    """Custom exception to indicate measurement abortion."""
+    pass
 
 
 class MeasurementRunner:

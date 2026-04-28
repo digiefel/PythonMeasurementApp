@@ -4,11 +4,7 @@ import threading
 from datetime import datetime
 
 from instrumentio.bridge import RemoteB1500Session
-from runner import MeasurementRunner
-
-class MeasurementAbortRequested(Exception):
-    """Custom exception to indicate measurement abortion."""
-    pass
+from runner import MeasurementRunner, MeasurementAbortRequested
 
 class MeasurementProcedure(ABC):
     SAFE_FALLBACK_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'test_output'))
