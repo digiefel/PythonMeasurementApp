@@ -545,7 +545,13 @@ class PlotViewer:
         self._plot_tags[plot_def.id] = plot_tag
         dpg.add_plot_legend(parent=plot_tag)
 
-        x_axis = dpg.add_plot_axis(dpg.mvXAxis, label=plot_def.xlabel, parent=plot_tag, auto_fit=False)
+        x_axis = dpg.add_plot_axis(
+            dpg.mvXAxis,
+            label=plot_def.xlabel,
+            scale=_resolve_axis_scale(plot_def.xscale),
+            parent=plot_tag,
+            auto_fit=False
+        )
         self._xaxis_tags[plot_def.id] = x_axis
         if plot_def.xlim is not None:
             dpg.set_axis_limits(x_axis, plot_def.xlim[0], plot_def.xlim[1])

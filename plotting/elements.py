@@ -136,6 +136,7 @@ class PlotDef:
     title: str = ""
     xlabel: str = ""
     ylabels: tuple[str, ...] = ("",)
+    xscale: str = "linear"
     yscales: tuple[str, ...] = ("linear",)
     xlim: tuple[float, float] | None = None
     ylims: tuple[tuple[float, float] | None, ...] | None = None

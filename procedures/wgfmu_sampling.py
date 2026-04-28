@@ -1,6 +1,10 @@
 import math
+import os
+import threading
 import time
 from itertools import product
+
+import numpy as np
 
 from plotting import PlotDef, Curve
 from procedures.base import MeasurementProcedure
@@ -22,7 +26,8 @@ from instrumentio.constants import SMU_CHANNEL_MAP, WGFMU_MEASURE_CURRENT_RANGES
 class WGFMUSamplingProcedure(MeasurementProcedure):
     """Dual-channel fixed-bias current sampling using WGFMU."""
 
-    MAX_PLOT_POINTS = 10000
+    MAX_PLOT_POINTS = 100_000
+    PSD_WINDOW_LEN = 2048
     MIN_SAMPLE_INTERVAL_S = 1e-8
     SAMPLE_INTERVAL_RESOLUTION_S = 1e-8
     MAX_MEAS_INTERVAL_S = 1.34217728
@@ -218,6 +223,55 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             integration_clamped,
         )
 
+    @staticmethod
+    def _combination_label(index, force_voltage_1, force_voltage_2):
+        return f"#{index} V1={force_voltage_1:.3g}V V2={force_voltage_2:.3g}V"
+
+    @staticmethod
+    def _combo_source_names(index):
+        return (
+            f"I1_c{index}",
+            f"I2_c{index}",
+            f"PSD_I1_c{index}",
+            f"PSD_I2_c{index}",
+        )
+
+    def _build_plot_elements(self, combos):
+        time_elements = []
+        psd_elements = []
+        for i, (force_voltage_1, force_voltage_2) in enumerate(combos):
+            combo_index = i + 1
+            color_i1 = f"C{(2 * i) % 10}"
+            color_i2 = f"C{(2 * i + 1) % 10}"
+            label_suffix = self._combination_label(combo_index, force_voltage_1, force_voltage_2)
+            i1_src, i2_src, psd1_src, psd2_src = self._combo_source_names(combo_index)
+            time_elements.append(Curve(i1_src, color=color_i1, legend_label=f"I1 {label_suffix}"))
+            time_elements.append(Curve(i2_src, color=color_i2, legend_label=f"-I2 {label_suffix}"))
+            psd_elements.append(Curve(psd1_src, color=color_i1, legend_label=f"PSD I1 {label_suffix}"))
+            psd_elements.append(Curve(psd2_src, color=color_i2, legend_label=f"PSD I2 {label_suffix}"))
+        return time_elements, psd_elements
+
+    @staticmethod
+    def _rectangular_periodogram(samples, fs):
+        """One-sided power spectral density for a rectangular-windowed segment."""
+        x = np.asarray(samples, dtype=np.float64)
+        x = x - x.mean()
+        n = x.size
+        spectrum = np.fft.rfft(x)
+        psd = (np.abs(spectrum) ** 2) / (fs * n)
+        if psd.size > 2:
+            psd[1:-1] *= 2.0
+        return psd
+
+    def _new_plot_state(self, bucket_size):
+        return {
+            'bucket_size': bucket_size,
+            'count': 0,
+            'sum_t': 0.0,
+            'sum_i1': 0.0,
+            'sum_i2': 0.0,
+        }
+
     def _push_plot_sample(self, t_val, i1_val, i2_val, state, out_i1, out_i2):
         state['count'] += 1
         state['sum_t'] += t_val
@@ -246,6 +300,142 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         state['sum_i1'] = 0.0
         state['sum_i2'] = 0.0
 
+    def _new_psd_state(self, fs):
+        freqs = np.fft.rfftfreq(self.PSD_WINDOW_LEN, d=1.0 / fs)
+        return {
+            'fs': fs,
+            'freqs': freqs,
+            'freqs_list': freqs.tolist(),
+            'buf_i1': [],
+            'buf_i2': [],
+            'sum_psd_i1': np.zeros_like(freqs),
+            'sum_psd_i2': np.zeros_like(freqs),
+            'count': 0,
+            'dirty': False,
+        }
+
+    def _push_psd_sample(self, psd_state, i1_val, i2_val):
+        psd_state['buf_i1'].append(i1_val)
+        psd_state['buf_i2'].append(i2_val)
+        if len(psd_state['buf_i1']) >= self.PSD_WINDOW_LEN:
+            psd_state['sum_psd_i1'] += self._rectangular_periodogram(
+                psd_state['buf_i1'][: self.PSD_WINDOW_LEN], psd_state['fs']
+            )
+            psd_state['sum_psd_i2'] += self._rectangular_periodogram(
+                psd_state['buf_i2'][: self.PSD_WINDOW_LEN], psd_state['fs']
+            )
+            psd_state['count'] += 1
+            del psd_state['buf_i1'][: self.PSD_WINDOW_LEN]
+            del psd_state['buf_i2'][: self.PSD_WINDOW_LEN]
+            psd_state['dirty'] = True
+
+    def _flush_psd_to_plot(self, psd_state, psd1_source, psd2_source, plot, force=False):
+        if psd_state['count'] <= 0:
+            return
+        if not force and not psd_state['dirty']:
+            return
+        count = psd_state['count']
+        avg_psd_i1 = psd_state['sum_psd_i1'] / count
+        avg_psd_i2 = psd_state['sum_psd_i2'] / count
+        freqs = psd_state['freqs_list']
+        plot.replace_source(psd1_source, freqs, avg_psd_i1.tolist())
+        plot.replace_source(psd2_source, freqs, avg_psd_i2.tolist())
+        psd_state['dirty'] = False
+
+    def _format_combo_header(
+        self,
+        *,
+        combo_index,
+        total_combinations,
+        smu_channel_1,
+        smu_voltage_1,
+        smu_channel_2,
+        smu_voltage_2,
+        force_voltage_1,
+        force_voltage_2,
+        sample_interval,
+        effective_rate_hz,
+        sampling_duration_s,
+        hold_time_s,
+        integration_time_s,
+        device_name,
+    ):
+        return [
+            "# Procedure: WGFMU_Sampling",
+            f"# Device: {device_name}",
+            f"# Combination: {combo_index}/{total_combinations}",
+            f"# Timestamp: {self.get_run_timestamp()}",
+            f"# GPIB Address: {self.gpib_address}",
+            f"# SMU Channel 1: {smu_channel_1}",
+            f"# SMU Voltage 1: {smu_voltage_1:.9e} V",
+            f"# SMU Compliance 1: {self.smu_compliance_1:.9e} A",
+            f"# SMU Channel 2: {smu_channel_2}",
+            f"# SMU Voltage 2: {smu_voltage_2:.9e} V",
+            f"# SMU Compliance 2: {self.smu_compliance_2:.9e} A",
+            f"# WGFMU Channel 1: {self.channel_1}",
+            f"# WGFMU Force Voltage 1: {force_voltage_1:.9e} V",
+            f"# WGFMU Meas Range 1: {self.meas_range_1}",
+            f"# WGFMU Channel 2: {self.channel_2}",
+            f"# WGFMU Force Voltage 2: {force_voltage_2:.9e} V",
+            f"# WGFMU Meas Range 2: {self.meas_range_2}",
+            f"# Requested Sampling Rate: {self.sampling_rate_hz:.9e} Hz",
+            f"# Effective Sampling Rate: {effective_rate_hz:.9e} Hz",
+            f"# Sample Interval: {sample_interval:.9e} s",
+            f"# Integration Time: {integration_time_s:.9e} s",
+            f"# Hold Time: {hold_time_s:.9e} s",
+            f"# Total Samples: {self.total_samples}",
+            f"# Sampling Duration: {sampling_duration_s:.9e} s",
+        ]
+
+    def _write_combo_file(self, path, header_lines, rows):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            for line in header_lines:
+                f.write(line + '\n')
+            f.write("Time_s,Current_1_A,Current_2_A\n")
+            for t_val, i1, i2 in rows:
+                f.write(f"{t_val:.9e},{i1:.7e},{i2:.7e}\n")
+
+    def _save_combo_data(self, base, combo_index, header_lines, rows, primary_timeout=5.0):
+        filename = f"{base}_c{combo_index:03d}.csv"
+        primary_path = self.make_output_path(filename, add_timestamp=False)
+
+        result = {}
+
+        def _writer():
+            try:
+                self._write_combo_file(primary_path, header_lines, rows)
+                result['success'] = True
+            except Exception as exc:
+                result['success'] = False
+                result['error'] = exc
+
+        thread = threading.Thread(target=_writer, daemon=True)
+        thread.start()
+        thread.join(timeout=primary_timeout)
+
+        if thread.is_alive():
+            self.log(f"Warning: primary save timed out after {primary_timeout}s; falling back.")
+        elif result.get('success'):
+            self.log(f"Saved combo {combo_index} to {primary_path}")
+            return primary_path
+        else:
+            error = result.get('error', 'Unknown error')
+            self.log(f"Warning: primary save failed ({error}); retrying in fallback directory.")
+
+        fallback_path = self._make_fallback_path(primary_path)
+        try:
+            self._write_combo_file(fallback_path, header_lines, rows)
+            self.output_root = self.fallback_root
+            self.log(f"Saved combo {combo_index} to fallback path {fallback_path}")
+            return fallback_path
+        except Exception as exc:
+            self.log(f"Error saving combo {combo_index} to fallback directory: {exc}")
+            try:
+                self.runner.safe_stop()
+            finally:
+                raise
+
     def run(self, b1500, device):
         self.check_stop(b1500)
 
@@ -269,14 +459,8 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 f"Overlapping channels: {overlap_text}"
             )
 
-        total_combinations = (
-            len(self.smu_channel_list_1)
-            * len(self.smu_channel_list_2)
-            * len(self.force_voltage_1_values)
-            * len(self.force_voltage_2_values)
-            * len(self.smu_voltage_1_values)
-            * len(self.smu_voltage_2_values)
-        )
+        combinations = list(self._iter_parameter_combinations())
+        total_combinations = len(combinations)
         if total_combinations <= 0:
             raise ValueError("No parameter combinations available to run")
 
@@ -299,6 +483,9 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             f"plot bucket size: {plot_bucket_size}"
         )
         self.log(
+            f"  SMU compliance: ch1 {self.smu_compliance_1:.6g} A, ch2 {self.smu_compliance_2:.6g} A"
+        )
+        self.log(
             f"  Parameter combinations: {total_combinations} "
             f"(SMU1 channels={len(self.smu_channel_list_1)}, "
             f"SMU2 channels={len(self.smu_channel_list_2)}, "
@@ -306,6 +493,10 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             f"WGFMU V2 values={len(self.force_voltage_2_values)}, "
             f"SMU V1 values={len(self.smu_voltage_1_values)}, "
             f"SMU V2 values={len(self.smu_voltage_2_values)})"
+        )
+        self.log(
+            f"  PSD window: rectangular, {self.PSD_WINDOW_LEN} samples "
+            f"(resolution {effective_rate_hz / self.PSD_WINDOW_LEN:.6g} Hz)"
         )
 
         if abs(sample_interval - requested_interval) > (requested_interval * 1e-12):
@@ -326,20 +517,47 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 f"({self.SAMPLE_INTERVAL_RESOLUTION_S:.0e} s)."
             )
 
+        if self.PSD_WINDOW_LEN > self.total_samples:
+            self.log(
+                f"  Note: PSD window ({self.PSD_WINDOW_LEN}) exceeds total_samples "
+                f"({self.total_samples}); PSD will remain empty."
+            )
+
         runner = self.runner
-        runner.configure_plot(f'WGFMU Sampling - {device.name}', [
-            PlotDef("samp", xlabel="Time (s)", ylabels=("Current (A)",),
-                    xlim=(0.0, sampling_duration_s),
-                    elements=[
-                        Curve("I1", color="C0", legend_label="I1(t)"),
-                        Curve("I2", color="C1", legend_label="-I2(t)"),
-                    ]),
-        ])
+        time_elements, psd_elements = self._build_plot_elements(
+            [(v1, v2) for (_, _, v1, v2, _, _) in combinations]
+        )
+        runner.configure_plot(
+            f'WGFMU Sampling - {device.name}',
+            [
+                PlotDef(
+                    "samp",
+                    row=0,
+                    col=0,
+                    title="Time Domain",
+                    xlabel="Time (s)",
+                    ylabels=("Current (A)",),
+                    elements=time_elements,
+                ),
+                PlotDef(
+                    "psd",
+                    row=1,
+                    col=0,
+                    title="PSD (rect, N=2048)",
+                    xlabel="Frequency (Hz)",
+                    xscale="log",
+                    ylabels=("PSD (A²/Hz)",),
+                    yscales=("log",),
+                    elements=psd_elements,
+                ),
+            ],
+            row_ratios=(1.0, 1.0),
+        )
 
         wgfmu = b1500.wgfmu
         ts = self.get_run_timestamp()
+        base = self.format_filename("WGFMU_Sampling", device.name)
 
-        csv_rows = []
         active_smu_channels = sorted(set(self.smu_channel_list_1 + self.smu_channel_list_2))
 
         try:
@@ -350,7 +568,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 force_voltage_2,
                 smu_voltage_1,
                 smu_voltage_2,
-            ) in enumerate(self._iter_parameter_combinations(), start=1):
+            ) in enumerate(combinations, start=1):
                 self.check_stop(b1500)
                 self.log(
                     f"  Combination {combo_index}/{total_combinations}: "
@@ -402,53 +620,40 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 wgfmu.add_sequence(self.channel_2, pattern_2, 1.0)
                 wgfmu.execute()
 
+                i1_source, i2_source, psd1_source, psd2_source = self._combo_source_names(combo_index)
                 next_index = 0
                 expected_total = self.total_samples
                 last_progress_time = time.monotonic()
-                plot_state = {
-                    'bucket_size': plot_bucket_size,
-                    'count': 0,
-                    'sum_t': 0.0,
-                    'sum_i1': 0.0,
-                    'sum_i2': 0.0,
-                }
+                plot_state = self._new_plot_state(plot_bucket_size)
+                psd_state = self._new_psd_state(effective_rate_hz)
+                combo_rows = []
 
                 while True:
                     self.check_stop(b1500)
-                    status, _elapsed, _total = wgfmu.get_status()
-
-                    measured_1, _total_1 = wgfmu.get_measure_value_size(self.channel_1)
-                    measured_2, _total_2 = wgfmu.get_measure_value_size(self.channel_2)
+                    status, _elapsed, _total, measured_1, _total_1, measured_2, _total_2 = (
+                        wgfmu.poll(self.channel_1, self.channel_2)
+                    )
                     available = min(measured_1, measured_2, expected_total)
 
                     if available > next_index:
-                        read_until = min(available, next_index + self.MAX_READ_CHUNK_POINTS)
+                        chunk_size = min(available - next_index, self.MAX_READ_CHUNK_POINTS)
+                        read_until = next_index + chunk_size
                         plot_i1 = []
                         plot_i2 = []
-                        for idx in range(next_index, read_until):
-                            t1, i1 = wgfmu.get_measure_value(self.channel_1, idx)
-                            t2, i2 = wgfmu.get_measure_value(self.channel_2, idx)
-                            t_raw = t1 if t1 is not None else t2
-                            t_val = t_raw - hold_time_s
-
-                            csv_rows.append([
-                                combo_index,
-                                idx,
-                                smu_channel_1,
-                                smu_voltage_1,
-                                smu_channel_2,
-                                smu_voltage_2,
-                                t_val,
-                                i1,
-                                force_voltage_1,
-                                i2,
-                                force_voltage_2,
-                            ])
-
+                        samples_1 = wgfmu.read_chunk(self.channel_1, next_index, chunk_size)
+                        samples_2 = wgfmu.read_chunk(self.channel_2, next_index, chunk_size)
+                        for (t1, i1), (_, i2) in zip(samples_1, samples_2):
+                            t_val = t1 - hold_time_s
+                            combo_rows.append((t_val, i1, i2))
                             self._push_plot_sample(t_val, i1, i2, plot_state, plot_i1, plot_i2)
+                            self._push_psd_sample(psd_state, i1, i2)
 
                         if plot_i1 or plot_i2:
-                            runner.plot.append_batch({'I1': plot_i1, 'I2': plot_i2})
+                            runner.plot.append_batch({
+                                i1_source: plot_i1,
+                                i2_source: plot_i2,
+                            })
+                        self._flush_psd_to_plot(psd_state, psd1_source, psd2_source, runner.plot)
                         next_index = read_until
                         last_progress_time = time.monotonic()
                         continue
@@ -480,7 +685,11 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 tail_i2 = []
                 self._flush_plot_bucket(plot_state, tail_i1, tail_i2)
                 if tail_i1 or tail_i2:
-                    runner.plot.append_batch({'I1': tail_i1, 'I2': tail_i2})
+                    runner.plot.append_batch({
+                        i1_source: tail_i1,
+                        i2_source: tail_i2,
+                    })
+                self._flush_psd_to_plot(psd_state, psd1_source, psd2_source, runner.plot, force=True)
 
                 if next_index < self.total_samples:
                     self.log(
@@ -488,33 +697,29 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                         f"collected {next_index}."
                     )
 
-            base = self.format_filename("WGFMU_Sampling", device.name)
-            filename = f"{base}.csv"
-            self.save_data(
-                csv_rows,
-                filename,
-                [
-                    "Combination_Index",
-                    "Sample_Index",
-                    "SMU_Channel_1",
-                    "SMU_Voltage_1_V",
-                    "SMU_Channel_2",
-                    "SMU_Voltage_2_V",
-                    "Time_s",
-                    "Current_1_A",
-                    "Voltage_1_V",
-                    "Current_2_A",
-                    "Voltage_2_V",
-                ],
-                add_timestamp=False,
-            )
+                header_lines = self._format_combo_header(
+                    combo_index=combo_index,
+                    total_combinations=total_combinations,
+                    smu_channel_1=smu_channel_1,
+                    smu_voltage_1=smu_voltage_1,
+                    smu_channel_2=smu_channel_2,
+                    smu_voltage_2=smu_voltage_2,
+                    force_voltage_1=force_voltage_1,
+                    force_voltage_2=force_voltage_2,
+                    sample_interval=sample_interval,
+                    effective_rate_hz=effective_rate_hz,
+                    sampling_duration_s=sampling_duration_s,
+                    hold_time_s=hold_time_s,
+                    integration_time_s=integration_time_s,
+                    device_name=device.name,
+                )
+                self._save_combo_data(base, combo_index, header_lines, combo_rows)
 
             plot_filename = f"{base}_plot.png"
             runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 
             self.log(
-                f"WGFMU Sampling complete: {len(csv_rows)} samples captured "
-                f"across {total_combinations} combinations"
+                f"WGFMU Sampling complete: {total_combinations} file(s) written"
             )
 
         finally:
