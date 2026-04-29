@@ -46,11 +46,31 @@ CV_SWEEP_TYPES = [
 class MainUI:
     def __init__(self, root):
         self.root = root
+        
+        # Geometry setup: left half for main UI, right half for Viewer
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        half_width = screen_width // 2
+        self.root.geometry(f"{half_width}x{screen_height}+0+0")
+        self.root.update()  # Realize the window so winfo coords are accurate
+
+        # Read the actual client-area position after placement so the viewer
+        # can sit flush against this window (accounts for DWM shadow borders).
+        tk_right = self.root.winfo_rootx() + self.root.winfo_width()
+        tk_top = self.root.winfo_rooty()
+
+        viewer_geometry = {
+            "width": screen_width - tk_right,
+            "height": screen_height - tk_top,
+            "x_pos": tk_right,
+            "y_pos": tk_top,
+        }
+        
         self.config = Config('global_config.json', 'TASE_devices.csv')
         self.runner = MeasurementRunner(self.config)
         self.runner.log_callback = self._post_log
         self.runner.status_callback = self._post_status
-        self.plot_bridge = PlotBridge()
+        self.plot_bridge = PlotBridge(viewer_geometry=viewer_geometry)
         self.runner.plot = self.plot_bridge
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
@@ -65,7 +85,6 @@ class MainUI:
         self.selected_device_names = set()
 
         self.root.title("Python Measurement App")
-        self.root.geometry("900x900")
         for col, weight in enumerate((1, 1)):
             self.root.grid_columnconfigure(col, weight=weight)
         self.root.grid_rowconfigure(0, weight=3)

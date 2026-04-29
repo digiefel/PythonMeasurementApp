@@ -38,30 +38,56 @@ def _make_envelope(cmd: str, payload: dict) -> dict:
 class PlotBridge:
     """Procedure-facing plot API. Accessed as ``runner.plot``."""
 
-    def __init__(self) -> None:
-        ctx = mp.get_context("spawn")
-        self._cmd_queue: mp.Queue = ctx.Queue(maxsize=_CMD_QUEUE_MAXSIZE)
-        self._rsp_queue: mp.Queue = ctx.Queue(maxsize=_RSP_QUEUE_MAXSIZE)
-
-        # Deferred import: keeps DearPyGui out of the main process import graph
-        from plotting.viewer import viewer_main
-        self._process = ctx.Process(
-            target=viewer_main,
-            args=(self._cmd_queue, self._rsp_queue),
-            daemon=True,
-        )
-        self._process.start()
-
+    def __init__(self, viewer_geometry: dict | None = None) -> None:
+        self._viewer_geometry = viewer_geometry
+        self._ctx = mp.get_context("spawn")
+        self._cmd_queue: mp.Queue = self._ctx.Queue(maxsize=_CMD_QUEUE_MAXSIZE)
+        self._rsp_queue: mp.Queue = self._ctx.Queue(maxsize=_RSP_QUEUE_MAXSIZE)
+        self._process = None
         self._sources: dict[str, DataSource] = {}
         self._pending: dict[str, list[tuple[float, float]]] = {}
         self._pending_lock = threading.Lock()
+        self._last_config: dict | None = None
+
+        self._start_viewer_process()
 
         self._flush_timer: threading.Timer | None = None
         self._flush_stop = threading.Event()
         self._last_warn_ts: float = 0.0
 
         self._schedule_flush()
-        self._send_and_wait("ping", {}, timeout_s=5.0)
+        if self._process:
+            self._send_and_wait("ping", {}, timeout_s=5.0)
+
+    def _start_viewer_process(self) -> None:
+        if self._process and self._process.is_alive():
+            return
+            
+        # If reviving, re-create the queues so they are fresh and un-broken
+        self._cmd_queue = self._ctx.Queue(maxsize=_CMD_QUEUE_MAXSIZE)
+        self._rsp_queue = self._ctx.Queue(maxsize=_RSP_QUEUE_MAXSIZE)
+        
+        # Deferred import: keeps DearPyGui out of the main process import graph
+        from plotting.viewer import viewer_main
+        self._process = self._ctx.Process(
+            target=viewer_main,
+            args=(self._cmd_queue, self._rsp_queue, self._viewer_geometry),
+            daemon=True,
+        )
+        self._process.start()
+        
+        # Give it a moment to boot, then restore data if there's a last_config
+        if self._last_config is not None:
+            self._send_fire_and_forget("configure_figure", self._last_config)
+            
+            # Send current data points to plot
+            for source_name, ds in self._sources.items():
+                if ds.x and ds.y:
+                    self._send_fire_and_forget("replace_source", {
+                        "source": source_name,
+                        "xs": list(ds.x),
+                        "ys": list(ds.y),
+                    })
 
     # ------------------------------------------------------------------
     # Public API
@@ -76,6 +102,17 @@ class PlotBridge:
         column_ratios: list[float] | tuple[float, ...] | None = None,
     ) -> None:
         """Define figure layout and visual elements. Blocks until viewer acks."""
+        if not self._process.is_alive():
+            self._start_viewer_process()
+            
+        self._last_config = {
+            "title": title,
+            "plots": plots,
+            "toolbar_buttons": toolbar_buttons or [],
+            "row_ratios": list(row_ratios or []),
+            "column_ratios": list(column_ratios or []),
+        }
+            
         self._sources.clear()
         with self._pending_lock:
             self._pending.clear()
@@ -247,7 +284,9 @@ class PlotBridge:
 
     def _send_fire_and_forget(self, cmd: str, payload: dict) -> None:
         if not self._process.is_alive():
-            return
+            logger.info("Viewer process is dead, attempting to revive...")
+            self._start_viewer_process()
+
         envelope = _make_envelope(cmd, payload)
         try:
             self._cmd_queue.put_nowait(envelope)
@@ -256,6 +295,10 @@ class PlotBridge:
 
     def _send_and_wait(self, cmd: str, payload: dict, timeout_s: float = 5.0) -> dict:
         """Send a command and block until a matching ack/error arrives."""
+        if not self._process.is_alive():
+            logger.info("Viewer process is dead, attempting to revive in _send_and_wait...")
+            self._start_viewer_process()
+
         envelope = _make_envelope(cmd, payload)
         req_id = envelope["req_id"]
 
@@ -273,6 +316,8 @@ class PlotBridge:
                 rsp = self._rsp_queue.get(timeout=min(remaining, 0.5))
             except queue.Empty:
                 if not self._process.is_alive():
+                    # Attempt to revive, but this particular wait has failed
+                    self._start_viewer_process()
                     raise RuntimeError(f"Viewer process died while waiting for {cmd} ack")
                 continue
 

@@ -997,7 +997,7 @@ class PlotViewer:
             limits = dpg.get_axis_limits(self._xaxis_tags[anchor_id])
             dpg.set_axis_limits(self._xaxis_tags[linked_id], limits[0], limits[1])
 
-def viewer_main(cmd_queue: Queue, rsp_queue: Queue) -> None:
+def viewer_main(cmd_queue: Queue, rsp_queue: Queue, geometry: dict | None = None) -> None:
     """Entry point for the viewer process."""
     dpg.create_context()
     dpg.configure_app(
@@ -1005,11 +1005,21 @@ def viewer_main(cmd_queue: Queue, rsp_queue: Queue) -> None:
         anti_aliased_lines_use_tex=True,
         anti_aliased_fill=True,
     )
-    dpg.create_viewport(
-        title="Plot Viewer",
-        width=VIEWER_VIEWPORT_WIDTH,
-        height=VIEWER_VIEWPORT_HEIGHT,
-    )
+    
+    viewport_kwargs = {
+        "title": "Plot Viewer",
+        "width": VIEWER_VIEWPORT_WIDTH,
+        "height": VIEWER_VIEWPORT_HEIGHT,
+    }
+    if geometry:
+        viewport_kwargs["width"] = geometry.get("width", VIEWER_VIEWPORT_WIDTH)
+        viewport_kwargs["height"] = geometry.get("height", VIEWER_VIEWPORT_HEIGHT)
+        if "x_pos" in geometry:
+            viewport_kwargs["x_pos"] = geometry["x_pos"]
+        if "y_pos" in geometry:
+            viewport_kwargs["y_pos"] = geometry["y_pos"]
+
+    dpg.create_viewport(**viewport_kwargs)
 
     apply_plot_theme()
     dpg.set_global_font_scale(VIEWER_FONT_SCALE)
