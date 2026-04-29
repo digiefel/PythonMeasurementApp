@@ -25,6 +25,7 @@ class PUNDProcedure(MeasurementProcedure):
 		self.channel_1 = int(settings.get('channel_1', 1))  # PG Vmeas
 		self.channel_2 = int(settings.get('channel_2', 2))  # FastIV Imeas
 
+		self.base_voltage = float(settings.get('base_voltage', 0.0))
 		self.vmax = float(settings.get('vmax', 1.0))
 		self.frequency = float(settings.get('frequency', 1e3))
 		self.pulse_delay = float(settings.get('pulse_delay', 0.0))
@@ -52,16 +53,18 @@ class PUNDProcedure(MeasurementProcedure):
 		gap = 0.2 * T + self.pulse_delay
 		edge = 0.1 * T
 
-		vectors = [(edge, 0.0)]
+		vectors = [(edge, self.base_voltage)]
 		for s in signs:
-			vectors += [(pulse_width, s * self.vmax), (pulse_width, 0.0), (gap, 0.0)]
-		vectors[-1] = (edge, 0.0)  # last gap becomes trailing edge
+			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
+			            (pulse_width, self.base_voltage), 
+			            (gap, self.base_voltage)]
+		vectors[-1] = (edge, self.base_voltage)  # last gap becomes trailing edge
 
 		# Track active duration (before repetition_delay)
 		self._active_duration = sum(dt for dt, _ in vectors)
 
 		if self.repetition_delay > 0:
-			vectors.append((self.repetition_delay, 0.0))
+			vectors.append((self.repetition_delay, self.base_voltage))
 		return vectors
 
 	def run(self, b1500, device):
@@ -119,15 +122,15 @@ class PUNDProcedure(MeasurementProcedure):
 				delay_points = 0
 				delay_interval = sample_interval
 
-			wgfmu.create_pattern(pattern_pg, 0.0)
+			wgfmu.create_pattern(pattern_pg, self.base_voltage)
 			for dt, voltage in vectors:
 				if dt > 0:
 					wgfmu.add_vector(pattern_pg, dt, voltage)
 
-			wgfmu.create_pattern(pattern_iv, 0.0)
+			wgfmu.create_pattern(pattern_iv, self.base_voltage)
 			for dt, _ in vectors:
 				if dt > 0:
-					wgfmu.add_vector(pattern_iv, dt, 0.0)
+					wgfmu.add_vector(pattern_iv, dt, self.base_voltage)
 
 			# Measure event for active portion (full rate)
 			wgfmu.set_measure_event(
@@ -173,11 +176,21 @@ class PUNDProcedure(MeasurementProcedure):
 			self.check_stop(b1500)
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
+			
+			pattern_cleanup = f"CLEANUP_{self.get_run_timestamp()}"
+			wgfmu.create_pattern(pattern_cleanup, self.base_voltage)
+			wgfmu.add_vector(pattern_cleanup, 1e-4, 0.0) 
+			wgfmu.add_sequence(self.channel_1, pattern_cleanup, 1.0)
+			
+			pattern_cleanup_iv = f"CLEANUP_IV_{self.get_run_timestamp()}"
+			wgfmu.create_pattern(pattern_cleanup_iv, self.base_voltage)
+			wgfmu.add_vector(pattern_cleanup_iv, 1e-4, 0.0) 
+			wgfmu.add_sequence(self.channel_2, pattern_cleanup_iv, 1.0)
 
 			# Calculate expected limits for the overlay plot
 			v_margin = self.vmax * 0.1
 			xlim = (0, pattern_duration)
-			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
+			ylim = (self.base_voltage - self.vmax - v_margin, self.base_voltage + self.vmax + v_margin)
 
 			# Build Curve elements with color gradient for each rep
 			# Blues for voltage, oranges for current

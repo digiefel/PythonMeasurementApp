@@ -29,6 +29,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
 		self.channel_1 = int(settings.get('channel_1', 101))  # PG + Vmeas
 		self.channel_2 = int(settings.get('channel_2', 102))  # FastIV + Imeas
+		
+		self.base_voltage = float(settings.get('base_voltage', 0.0))
 		self.vmax = float(settings.get('vmax', 1.0))
 		self.frequency = float(settings.get('frequency', 1e3))
 		self.pulse_delay = float(settings.get('pulse_delay', 0.0))
@@ -51,16 +53,34 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		signs = [1, -1, -1, 1, 1] if self.invert_polarity else [-1, 1, 1, -1, -1]
 
 		# Timing as fractions of period T = 1/f
-		# Each pulse: 0.4T at ±Vmax, 0.4T at 0V, 0.2T gap; edges 0.1T
+		# Each pulse: 0.4T at ±Vmax, 0.4T at base_voltage, 0.2T gap; edges 0.1T
 		T = 1.0 / self.frequency
 		pulse_width = 0.4 * T
 		gap = 0.2 * T + self.pulse_delay
 		edge = 0.1 * T
 
-		vectors = [(edge, 0.0)]
+		vectors = [(edge, self.base_voltage)]
 		for s in signs:
-			vectors += [(pulse_width, s * self.vmax), (pulse_width, 0.0), (gap, 0.0)]
-		vectors[-1] = (edge, 0.0)  # last gap becomes trailing edge
+			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
+			            (pulse_width, self.base_voltage), 
+			            (gap, self.base_voltage)]
+		vectors[-1] = (edge, self.base_voltage)  # last gap becomes trailing edge
+		return vectors
+
+	def _build_pn_pattern(self):
+		"""Build PN switching waveform vectors: P-N (or inverted N-P)."""
+		signs = [-1, 1] if self.invert_polarity else [1, -1]
+		T = 1.0 / self.frequency
+		pulse_width = 0.4 * T
+		gap = 0.2 * T + self.pulse_delay
+		edge = 0.1 * T
+
+		vectors = [(edge, self.base_voltage)]
+		for s in signs:
+			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
+			            (pulse_width, self.base_voltage), 
+			            (gap, self.base_voltage)]
+		vectors[-1] = (edge, self.base_voltage)
 		return vectors
 
 	def _get_measure_cycles(self):
@@ -148,16 +168,18 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		# Use shared method for cycle calculation
 		measure_cycles = PUNDFatigueProcedure._compute_measure_cycles(n, ppd)
 		
-		# Pattern duration: 5 pulses, each with 0.4T on + 0.4T off + 0.2T gap, plus edges
-		# Total = 5 * (0.4 + 0.4 + 0.2) * T + 0.2T edges = 5.2 * T
+		# Pattern duration for fatigue is the PN cycle: 2 pulses instead of 5
 		T = 1.0 / frequency if frequency > 0 else 1.0
-		pattern_duration = 5.2 * T  # approximate
-		total_duration = pattern_duration * cycle_count
+		meas_duration = 5.2 * T 
+		fatigue_duration = 2.2 * T
+		
+		# Most cycles are fatigue. So approximate total duration by fatigue cycles.
+		total_duration = (fatigue_duration * (cycle_count - len(measure_cycles))) + (meas_duration * len(measure_cycles))
 		
 		return {
 			'measure_cycles': measure_cycles,
 			'total_measurements': len(measure_cycles),
-			'pattern_duration': pattern_duration,
+			'pattern_duration': meas_duration,
 			'total_duration': total_duration,
 			'decades': np.log10(max(n, 1)),
 		}
@@ -165,10 +187,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 	def run(self, b1500, device):
 		self.check_stop(b1500)
 
-		vectors = self._build_pund_pattern()
-		pattern_duration = sum(dt for dt, _ in vectors)
+		vectors_meas = self._build_pund_pattern()
+		vectors_fat = self._build_pn_pattern()
+		pattern_duration_meas = sum(dt for dt, _ in vectors_meas)
+		pattern_duration_fat = sum(dt for dt, _ in vectors_fat)
+		
 		measure_cycles = self._get_measure_cycles()
-		total_time = pattern_duration * self.cycle_count
+		total_time = (pattern_duration_fat * (self.cycle_count - len(measure_cycles))) + (pattern_duration_meas * len(measure_cycles))
 
 		self.log(f"Starting PUND Fatigue on {device.name}")
 		self.log(f"  {self.cycle_count:.2e} cycles @ {self.frequency:.0f} Hz, Vmax={self.vmax}V")
@@ -205,30 +230,30 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			raw_interval = 1e-3 / self.frequency
 			sample_interval = max(raw_interval, MIN_INTERVAL)
 			sample_interval = round(sample_interval / RESOLUTION) * RESOLUTION
-			sample_points = int(pattern_duration / sample_interval)
+			sample_points = int(pattern_duration_meas / sample_interval)
 
-			# Create fatigue pattern for ch1 (PG mode - applies PUND waveform, no measure event)
-			wgfmu.create_pattern(pattern_fat_pg, 0.0)
-			for dt, voltage in vectors:
+			# Create fatigue pattern for ch1 (PG mode - applies PN waveform, no measure event)
+			wgfmu.create_pattern(pattern_fat_pg, self.base_voltage)
+			for dt, voltage in vectors_fat:
 				if dt > 0:
 					wgfmu.add_vector(pattern_fat_pg, dt, voltage)
 
-			# Create fatigue pattern for ch2 (FastIV mode - holds at 0V, no measure event)
-			wgfmu.create_pattern(pattern_fat_iv, 0.0)
-			for dt, _ in vectors:
+			# Create fatigue pattern for ch2 (FastIV mode - holds at base_voltage, no measure event)
+			wgfmu.create_pattern(pattern_fat_iv, self.base_voltage)
+			for dt, _ in vectors_fat:
 				if dt > 0:
-					wgfmu.add_vector(pattern_fat_iv, dt, 0.0)
+					wgfmu.add_vector(pattern_fat_iv, dt, self.base_voltage)
 
 			# Create measure patterns with sampling
-			wgfmu.create_pattern(pattern_meas_pg, 0.0)
-			for dt, voltage in vectors:
+			wgfmu.create_pattern(pattern_meas_pg, self.base_voltage)
+			for dt, voltage in vectors_meas:
 				if dt > 0:
 					wgfmu.add_vector(pattern_meas_pg, dt, voltage)
 
-			wgfmu.create_pattern(pattern_meas_iv, 0.0)
-			for dt, _ in vectors:
+			wgfmu.create_pattern(pattern_meas_iv, self.base_voltage)
+			for dt, _ in vectors_meas:
 				if dt > 0:
-					wgfmu.add_vector(pattern_meas_iv, dt, 0.0)
+					wgfmu.add_vector(pattern_meas_iv, dt, self.base_voltage)
 
 			wgfmu.set_measure_event(
 				pattern_meas_pg, "meas", 0.0, sample_points,
@@ -256,6 +281,16 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			if remaining > 0:
 				wgfmu.add_sequence(self.channel_1, pattern_fat_pg, remaining)
 				wgfmu.add_sequence(self.channel_2, pattern_fat_iv, remaining)
+
+			pattern_cleanup = f"CLEANUP_{ts}"
+			wgfmu.create_pattern(pattern_cleanup, self.base_voltage)
+			wgfmu.add_vector(pattern_cleanup, 1e-4, 0.0) 
+			wgfmu.add_sequence(self.channel_1, pattern_cleanup, 1.0)
+			
+			pattern_cleanup_iv = f"CLEANUP_IV_{ts}"
+			wgfmu.create_pattern(pattern_cleanup_iv, self.base_voltage)
+			wgfmu.add_vector(pattern_cleanup_iv, 1e-4, 0.0) 
+			wgfmu.add_sequence(self.channel_2, pattern_cleanup_iv, 1.0)
 
 			wgfmu.execute()
 
@@ -292,8 +327,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 			# Calculate expected limits for the overlay plot
 			v_margin = self.vmax * 0.1
-			xlim = (0, pattern_duration)
-			ylim = (-self.vmax - v_margin, self.vmax + v_margin)
+			xlim = (0, pattern_duration_meas)
+			ylim = (self.base_voltage - self.vmax - v_margin, self.base_voltage + self.vmax + v_margin)
 
 			runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
 				PlotDef("pund_fat", xlabel="Time (s)",
