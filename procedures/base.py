@@ -4,7 +4,7 @@ import threading
 from datetime import datetime
 
 from instrumentio.bridge import RemoteB1500Session
-from runner import MeasurementRunner, MeasurementAbortRequested
+from runner import MeasurementRunner, MeasurementAbortRequested, MeasurementSkipRequested
 
 class MeasurementProcedure(ABC):
     SAFE_FALLBACK_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'test_output'))
@@ -30,20 +30,23 @@ class MeasurementProcedure(ABC):
         self.runner.log(message)
 
     def check_stop(self, b1500: RemoteB1500Session):
-        """Check if stop was requested, abort hardware if so, then raise.
-        
-        This runs in the worker thread - the only thread that should talk to
-        the instrument to avoid GPIB bus contention.
+        """Check if stop or skip was requested, abort hardware if so, then raise.
+
+        Runs in the worker thread — the only thread that should talk to the
+        instrument to avoid GPIB bus contention. ABORT takes priority over SKIP.
         """
-        if not self.runner.stop_event.is_set():
+        abort = self.runner.stop_event.is_set()
+        skip = self.runner.skip_device_event.is_set()
+        if not abort and not skip:
             return
-        # We're in the worker thread - safe to abort here
         if b1500 is not None:
             try:
                 b1500.abort_measure()
             except Exception:
                 pass
-        raise MeasurementAbortRequested("Measurement aborted by user")
+        if abort:
+            raise MeasurementAbortRequested("Measurement aborted by user")
+        raise MeasurementSkipRequested("Device skipped by user")
 
     def get_run_timestamp(self):
         if self._run_timestamp is None:

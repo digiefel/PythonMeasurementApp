@@ -491,6 +491,26 @@ class MainUI:
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
         self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
+        # Stop controls (shown when running, hidden otherwise)
+        self.stop_frame = tk.Frame(self.selection_frame)
+        for col in range(3):
+            self.stop_frame.grid_columnconfigure(col, weight=1)
+
+        abort_btn = tk.Button(self.stop_frame, text="ABORT", command=self.stop_run,
+                              bg="#c0392b", fg="white", font=("TkDefaultFont", 9, "bold"))
+        finish_btn = tk.Button(self.stop_frame, text="Finish & Stop", command=self.cancel_queue_run,
+                               bg="#d4830a", fg="white")
+        skip_btn = tk.Button(self.stop_frame, text="Skip Device", command=self.skip_device_run,
+                             bg="#1565c0", fg="white")
+
+        abort_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        finish_btn.grid(row=0, column=1, sticky="ew", padx=2)
+        skip_btn.grid(row=0, column=2, sticky="ew", padx=(2, 0))
+
+        attach_tooltip(abort_btn, "Immediately abort all measurements and cancel the remaining queue.")
+        attach_tooltip(finish_btn, "Let the current measurement finish and save, then stop the queue.")
+        attach_tooltip(skip_btn, "Abort the current measurement, skip this device, and continue with the next.")
+
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
 
@@ -1588,7 +1608,9 @@ class MainUI:
             finally:
                 if self.prober_available:
                     self.runner.prober_set_light(True)
-                self.runner.stop_event.clear()  # Clear stop flag now that we're done
+                self.runner.stop_event.clear()
+                self.runner.cancel_queue_event.clear()
+                self.runner.skip_device_event.clear()
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
                 self._post(self._set_running_state, False)
@@ -1598,10 +1620,17 @@ class MainUI:
         self._run_thread.start()
 
     def stop_run(self):
-        """Triggered by Stop button to abort measurement safely."""
-        self.log("Stop button pressed; stopping run...")
-        # Run safe_stop in a separate thread to avoid blocking the UI
+        """Triggered by ABORT button."""
+        self.log("Abort pressed; stopping run immediately...")
         threading.Thread(target=self.runner.safe_stop, daemon=True).start()
+
+    def cancel_queue_run(self):
+        """Triggered by Finish & Stop button."""
+        threading.Thread(target=self.runner.safe_cancel_queue, daemon=True).start()
+
+    def skip_device_run(self):
+        """Triggered by Skip Device button."""
+        threading.Thread(target=self.runner.safe_skip_device, daemon=True).start()
 
     # --- Prober control handlers ---
     def prober_set_reference(self):
@@ -1700,11 +1729,12 @@ class MainUI:
         self._post(self.show_status, info)
 
     def _set_running_state(self, running: bool):
-        """Toggle Run/Stop button appearance and command."""
         if running:
-            self.run_button.config(text="STOP", command=self.stop_run, bg="red", fg="white")
+            self.run_button.grid_remove()
+            self.stop_frame.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         else:
-            self.run_button.config(text="RUN", command=self.run, bg="green", fg="white")
+            self.stop_frame.grid_remove()
+            self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
     def _set_contact_state(self, in_contact: bool):
         """Update contact button appearance based on contact state."""

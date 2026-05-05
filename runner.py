@@ -15,6 +15,10 @@ class MeasurementAbortRequested(Exception):
     """Custom exception to indicate measurement abortion."""
     pass
 
+class MeasurementSkipRequested(Exception):
+    """Raised to abort the current device and continue with the next in the queue."""
+    pass
+
 
 class MeasurementRunner:
     CONTACT_LIGHTS_OFF_DELAY_S = 1.0
@@ -49,6 +53,8 @@ class MeasurementRunner:
         self._temp_comp_unavailable_logged = False
         self.auto_separation_after_measurement = True
         self.stop_event = threading.Event()
+        self.cancel_queue_event = threading.Event()
+        self.skip_device_event = threading.Event()
         atexit.register(self.safe_stop)
     
     def log(self, msg):
@@ -83,6 +89,28 @@ class MeasurementRunner:
                         self.contact_state_callback(False)
                     except Exception as e:
                         self.log(f"Contact state cb error: {e}")
+                if separated:
+                    self.prober_set_light(True)
+            except Exception:
+                pass
+
+    def safe_cancel_queue(self):
+        """Signal the runner to stop after the current measurement finishes."""
+        self.cancel_queue_event.set()
+        self.log("Finish & Stop requested: queue will stop after the current device completes.")
+
+    def safe_skip_device(self):
+        """Signal the runner to abort the current device and continue with the next."""
+        self.skip_device_event.set()
+        self.log("Skip requested: aborting current device and proceeding to next.")
+        if self.is_prober_available():
+            try:
+                separated = self.prober_ctrl.separation()
+                if separated and self.contact_state_callback:
+                    try:
+                        self.contact_state_callback(False)
+                    except Exception:
+                        pass
                 if separated:
                     self.prober_set_light(True)
             except Exception:
@@ -380,6 +408,9 @@ class MeasurementRunner:
                         self.temp_phase_cb("measure_end", idx)
                     except Exception as e:
                         self.log(f"Temp phase end cb error: {e}")
+                if self.cancel_queue_event.is_set():
+                    self.log("Queue cancelled. Stopping after current device.")
+                    break
             self._current_temp_step = None
         except MeasurementAbortRequested:
             self.log("Measurement aborted during temperature sweep.")
@@ -397,13 +428,21 @@ class MeasurementRunner:
             return
         try:
             for idx, device in enumerate(devices):
-                # Copy settings per device to avoid accidental mutation
-                self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
+                try:
+                    # Copy settings per device to avoid accidental mutation
+                    self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
+                except MeasurementSkipRequested:
+                    self.skip_device_event.clear()
+                    self.log(f"Device '{device.name}' skipped by user. TODO: mark device as bad.")
+                    continue
                 if self.temp_device_done_cb and self._current_temp_step is not None:
                     try:
                         self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, len(devices))
                     except Exception as e:
                         self.log(f"Temp device done cb error: {e}")
+                if self.cancel_queue_event.is_set():
+                    self.log("Queue cancelled. Stopping after current device.")
+                    break
         except MeasurementAbortRequested:
             self.log("Measurement aborted during devices run.")
             raise
@@ -447,9 +486,8 @@ class MeasurementRunner:
             b1500 = self.get_b1500(settings['gpib_address'])
             self.log(f'Connected to B1500 at {settings["gpib_address"]}')
             proc.run(b1500, device)
-        except MeasurementAbortRequested:
-            self.log("Measurement aborted during procedure run.")
-            raise # things will be cleaned up in safe_stop
+        except (MeasurementAbortRequested, MeasurementSkipRequested):
+            raise
         except Exception as e:
             try:
                 self.b1500.zero_output(B1500_CH_ALL)
