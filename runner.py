@@ -94,11 +94,6 @@ class MeasurementRunner:
             except Exception:
                 pass
 
-    def safe_cancel_queue(self):
-        """Signal the runner to stop after the current measurement finishes."""
-        self.cancel_queue_event.set()
-        self.log("Finish & Stop requested: queue will stop after the current device completes.")
-
     def safe_skip_device(self):
         """Signal the runner to abort the current device and continue with the next."""
         self.skip_device_event.set()

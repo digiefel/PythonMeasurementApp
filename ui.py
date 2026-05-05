@@ -498,18 +498,18 @@ class MainUI:
 
         abort_btn = tk.Button(self.stop_frame, text="ABORT", command=self.stop_run,
                               bg="#c0392b", fg="white", font=("TkDefaultFont", 9, "bold"))
-        finish_btn = tk.Button(self.stop_frame, text="Finish & Stop", command=self.cancel_queue_run,
-                               bg="#d4830a", fg="white")
+        self._finish_btn = tk.Button(self.stop_frame, text="Finish & Stop", command=self.cancel_queue_run,
+                                     bg="#d4830a", fg="white")
         skip_btn = tk.Button(self.stop_frame, text="Skip Device", command=self.skip_device_run,
                              bg="#1565c0", fg="white")
 
         abort_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
-        finish_btn.grid(row=0, column=1, sticky="ew", padx=2)
+        self._finish_btn.grid(row=0, column=1, sticky="ew", padx=2)
         skip_btn.grid(row=0, column=2, sticky="ew", padx=(2, 0))
 
         attach_tooltip(abort_btn, "Immediately abort all measurements and cancel the remaining queue.")
-        attach_tooltip(finish_btn, "Let the current measurement finish and save, then stop the queue.")
-        attach_tooltip(skip_btn, "Abort the current measurement, skip this device, and continue with the next.")
+        attach_tooltip(self._finish_btn, "Let the current measurement finish and save, then stop the queue.")
+        attach_tooltip(skip_btn, "Abort the current measurement, and continue with the next device, and continue with the next.")
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -1625,8 +1625,14 @@ class MainUI:
         threading.Thread(target=self.runner.safe_stop, daemon=True).start()
 
     def cancel_queue_run(self):
-        """Triggered by Finish & Stop button."""
-        threading.Thread(target=self.runner.safe_cancel_queue, daemon=True).start()
+        if self.runner.cancel_queue_event.is_set():
+            self.runner.cancel_queue_event.clear()
+            self.log("Queue resumed: remaining devices will continue.")
+            self._finish_btn.config(text="Finish & Stop", bg="#d4830a")
+        else:
+            self.runner.cancel_queue_event.set()
+            self.log("Finish & Stop: queue will stop after the current device completes.")
+            self._finish_btn.config(text="Resume Queue", bg="#27ae60")
 
     def skip_device_run(self):
         """Triggered by Skip Device button."""
@@ -1730,6 +1736,7 @@ class MainUI:
 
     def _set_running_state(self, running: bool):
         if running:
+            self._finish_btn.config(text="Finish & Stop", bg="#d4830a")
             self.run_button.grid_remove()
             self.stop_frame.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         else:
