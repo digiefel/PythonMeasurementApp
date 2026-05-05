@@ -19,6 +19,7 @@ from plotting.stats import linear_fit
 from plotting.style import (
     IMPLOT_MARKER_MAP,
     UI_ITEM_SPACING_X,
+    UI_ITEM_SPACING_Y,
     VIEWER_FONT_SCALE,
     VIEWER_VIEWPORT_HEIGHT,
     VIEWER_VIEWPORT_WIDTH,
@@ -219,7 +220,6 @@ class PlotViewer:
         self._plot_defs: dict[str, PlotDef] = {}
         self._window_tag: int | str | None = None
         self._toolbar_tag: int | str | None = None
-        self._table_tag: int | str | None = None
         self._body_anchor_tag: int | str | None = None
         self._absolute_layout: dict[str, object] | None = None
 
@@ -304,39 +304,29 @@ class PlotViewer:
         dpg.add_separator(parent=self._window_tag)
         self._body_anchor_tag = dpg.add_group(parent=self._window_tag)
         split_layout = self._split_span_layout_spec(plots, max_row, max_col)
+        top_span_layout = self._top_span_layout_spec(plots, max_row, max_col)
         if split_layout is not None:
             self._build_split_span_layout(split_layout, row_ratios=row_ratios, column_ratios=column_ratios)
+        elif top_span_layout is not None:
+            self._build_top_span_layout(top_span_layout, row_ratios=row_ratios, column_ratios=column_ratios)
         else:
-            column_weights = self._normalize_ratios(column_ratios, max_col)
-            self._table_tag = dpg.add_table(
+            plots_by_cell: dict[tuple[int, int], PlotDef] = {(p.row, p.col): p for p in plots}
+            subplots_tag = dpg.add_subplots(
+                max_row, max_col,
                 parent=self._window_tag,
-                header_row=False,
-                resizable=True,
-                policy=dpg.mvTable_SizingStretchProp,
+                width=-1,
+                height=-1,
+                row_ratios=self._normalize_ratios(row_ratios, max_row),
+                column_ratios=self._normalize_ratios(column_ratios, max_col),
+                no_title=True,
             )
-            for weight in column_weights:
-                dpg.add_table_column(
-                    parent=self._table_tag,
-                    init_width_or_weight=weight,
-                    width_stretch=True,
-                )
-
-            plots_by_cell: dict[tuple[int, int], PlotDef] = {}
-            occupied: set[tuple[int, int]] = set()
-            for plot_def in plots:
-                plots_by_cell[(plot_def.row, plot_def.col)] = plot_def
-                for dr in range(plot_def.rowspan):
-                    for dc in range(plot_def.colspan):
-                        occupied.add((plot_def.row + dr, plot_def.col + dc))
-
             for row_idx in range(max_row):
-                with dpg.table_row(parent=self._table_tag):
-                    for col_idx in range(max_col):
-                        cell = (row_idx, col_idx)
-                        if cell in plots_by_cell:
-                            self._create_plot(plots_by_cell[cell])
-                        elif cell not in occupied:
-                            dpg.add_text("")
+                for col_idx in range(max_col):
+                    plot_def = plots_by_cell.get((row_idx, col_idx))
+                    if plot_def is not None:
+                        self._create_plot(plot_def, parent=subplots_tag)
+                    else:
+                        dpg.add_plot(parent=subplots_tag)
 
         for plot_def in plots:
             if plot_def.xlink and plot_def.xlink in self._plot_tags:
@@ -405,7 +395,7 @@ class PlotViewer:
             dpg.delete_item("__plot_window__")
         self._window_tag = None
         self._toolbar_tag = None
-        self._table_tag = None
+
         self._body_anchor_tag = None
         self._absolute_layout = None
         self._sources.clear()
@@ -474,6 +464,35 @@ class PlotViewer:
             "spanning_col": spanning_plot.col,
         }
 
+    def _top_span_layout_spec(
+        self,
+        plots: list[PlotDef],
+        max_row: int,
+        max_col: int,
+    ) -> dict[str, object] | None:
+        if len(plots) != 3 or max_row != 2 or max_col != 2:
+            return None
+
+        spanning = [p for p in plots if p.colspan == 2 and p.rowspan == 1]
+        if len(spanning) != 1:
+            return None
+
+        spanning_plot = spanning[0]
+        stack_row = 1 - spanning_plot.row
+        stack_plots = [p for p in plots if p.id != spanning_plot.id]
+        if any(p.row != stack_row or p.rowspan != 1 or p.colspan != 1 for p in stack_plots):
+            return None
+
+        ordered_stack = sorted(stack_plots, key=lambda p: p.col)
+        if [p.col for p in ordered_stack] != [0, 1]:
+            return None
+
+        return {
+            "spanning_plot": spanning_plot,
+            "stack_plots": ordered_stack,
+            "spanning_row": spanning_plot.row,
+        }
+
     def _build_split_span_layout(
         self,
         layout_spec: dict[str, object],
@@ -527,6 +546,61 @@ class PlotViewer:
             "stack_tag": stack_tag,
             "spanning_col": spanning_col,
             "column_ratios": self._normalize_ratios(column_ratios, 2),
+        }
+
+    def _build_top_span_layout(
+        self,
+        layout_spec: dict[str, object],
+        *,
+        row_ratios: list[float],
+        column_ratios: list[float],
+    ) -> None:
+        spanning_plot = layout_spec["spanning_plot"]
+        stack_plots = layout_spec["stack_plots"]
+        spanning_row = int(layout_spec["spanning_row"])
+        assert isinstance(spanning_plot, PlotDef)
+        assert isinstance(stack_plots, list)
+
+        span_container = dpg.add_child_window(
+            parent=self._window_tag,
+            width=16,
+            height=16,
+            pos=[0, 0],
+            border=False,
+            no_scrollbar=True,
+            no_scroll_with_mouse=True,
+        )
+        self._create_plot(spanning_plot, parent=span_container)
+
+        stack_container = dpg.add_child_window(
+            parent=self._window_tag,
+            width=16,
+            height=16,
+            pos=[0, 0],
+            border=False,
+            no_scrollbar=True,
+            no_scroll_with_mouse=True,
+        )
+        stack_tag = dpg.add_subplots(
+            1,
+            2,
+            parent=stack_container,
+            width=-1,
+            height=-1,
+            row_ratios=[1.0],
+            column_ratios=self._normalize_ratios(column_ratios, 2),
+            no_title=True,
+        )
+        for plot_def in stack_plots:
+            self._create_plot(plot_def, parent=stack_tag)
+
+        self._absolute_layout = {
+            "kind": "top_span",
+            "span_container": span_container,
+            "stack_container": stack_container,
+            "stack_tag": stack_tag,
+            "spanning_row": spanning_row,
+            "row_ratios": self._normalize_ratios(row_ratios, 2),
         }
 
     def _create_plot(self, plot_def: PlotDef, parent: int | str | None = None) -> None:
@@ -906,49 +980,67 @@ class PlotViewer:
         if body_w <= 0 or body_h <= 0:
             return
 
-        if self._absolute_layout.get("kind") != "split_span":
-            return
+        kind = self._absolute_layout.get("kind")
 
-        column_ratios = self._absolute_layout["column_ratios"]
-        assert isinstance(column_ratios, list)
-        gap_x = min(UI_ITEM_SPACING_X, max(body_w - 2, 0))
-        usable_w = max(body_w - gap_x, 1)
-        ratio_sum = max(sum(column_ratios), 1.0)
-        left_w = max(int(round(usable_w * column_ratios[0] / ratio_sum)), 1)
-        right_w = max(usable_w - left_w, 1)
+        if kind == "split_span":
+            column_ratios = self._absolute_layout["column_ratios"]
+            assert isinstance(column_ratios, list)
+            gap_x = min(UI_ITEM_SPACING_X, max(body_w - 2, 0))
+            usable_w = max(body_w - gap_x, 1)
+            ratio_sum = max(sum(column_ratios), 1.0)
+            left_w = max(int(round(usable_w * column_ratios[0] / ratio_sum)), 1)
+            right_w = max(usable_w - left_w, 1)
 
-        spanning_col = int(self._absolute_layout["spanning_col"])
-        main_container = self._absolute_layout["main_container"]
-        stack_container = self._absolute_layout["stack_container"]
-        stack_tag = self._absolute_layout["stack_tag"]
+            spanning_col = int(self._absolute_layout["spanning_col"])
+            main_container = self._absolute_layout["main_container"]
+            stack_container = self._absolute_layout["stack_container"]
+            stack_tag = self._absolute_layout["stack_tag"]
 
-        if spanning_col == 0:
-            main_x = body_x
-            stack_x = body_x + left_w + gap_x
-            main_w = left_w
-            stack_w = right_w
-        else:
-            stack_x = body_x
-            main_x = body_x + right_w + gap_x
-            stack_w = right_w
-            main_w = left_w
+            if spanning_col == 0:
+                main_x = body_x
+                stack_x = body_x + left_w + gap_x
+                main_w = left_w
+                stack_w = right_w
+            else:
+                stack_x = body_x
+                main_x = body_x + right_w + gap_x
+                stack_w = right_w
+                main_w = left_w
 
-        if dpg.does_item_exist(main_container):
-            dpg.configure_item(
-                main_container,
-                pos=[main_x, body_y],
-                width=max(main_w, 1),
-                height=max(body_h, 1),
-            )
-        if dpg.does_item_exist(stack_container):
-            dpg.configure_item(
-                stack_container,
-                pos=[stack_x, body_y],
-                width=max(stack_w, 1),
-                height=max(body_h, 1),
-            )
-        if dpg.does_item_exist(stack_tag):
-            dpg.configure_item(stack_tag, width=-1, height=-1)
+            if dpg.does_item_exist(main_container):
+                dpg.configure_item(main_container, pos=[main_x, body_y], width=max(main_w, 1), height=max(body_h, 1))
+            if dpg.does_item_exist(stack_container):
+                dpg.configure_item(stack_container, pos=[stack_x, body_y], width=max(stack_w, 1), height=max(body_h, 1))
+            if dpg.does_item_exist(stack_tag):
+                dpg.configure_item(stack_tag, width=-1, height=-1)
+
+        elif kind == "top_span":
+            row_ratios = self._absolute_layout["row_ratios"]
+            assert isinstance(row_ratios, list)
+            gap_y = min(UI_ITEM_SPACING_Y, max(body_h - 2, 0))
+            usable_h = max(body_h - gap_y, 1)
+            ratio_sum = max(sum(row_ratios), 1.0)
+            top_h = max(int(round(usable_h * row_ratios[0] / ratio_sum)), 1)
+            bottom_h = max(usable_h - top_h, 1)
+
+            spanning_row = int(self._absolute_layout["spanning_row"])
+            span_container = self._absolute_layout["span_container"]
+            stack_container = self._absolute_layout["stack_container"]
+            stack_tag = self._absolute_layout["stack_tag"]
+
+            if spanning_row == 0:
+                span_y, span_h = body_y, top_h
+                stack_y, stack_h = body_y + top_h + gap_y, bottom_h
+            else:
+                stack_y, stack_h = body_y, top_h
+                span_y, span_h = body_y + top_h + gap_y, bottom_h
+
+            if dpg.does_item_exist(span_container):
+                dpg.configure_item(span_container, pos=[body_x, span_y], width=max(body_w, 1), height=max(span_h, 1))
+            if dpg.does_item_exist(stack_container):
+                dpg.configure_item(stack_container, pos=[body_x, stack_y], width=max(body_w, 1), height=max(stack_h, 1))
+            if dpg.does_item_exist(stack_tag):
+                dpg.configure_item(stack_tag, width=-1, height=-1)
 
     def _release_pending_axis_limits(self) -> None:
         for plot_state in self._plot_states.values():
