@@ -55,6 +55,7 @@ class MeasurementRunner:
         self.stop_event = threading.Event()
         self.cancel_queue_event = threading.Event()
         self.skip_device_event = threading.Event()
+        self.device_progress_cb: Optional[Callable[[int, int, float], None]] = None
         atexit.register(self.safe_stop)
     
     def log(self, msg):
@@ -421,18 +422,29 @@ class MeasurementRunner:
         if not devices:
             self.log("No devices to run.")
             return
+        total = len(devices)
         try:
             for idx, device in enumerate(devices):
+                t0 = time.monotonic()
+                skipped = False
                 try:
                     # Copy settings per device to avoid accidental mutation
                     self.run_procedure(chip_id, site, subsite, device, proc_class, dict(settings))
                 except MeasurementSkipRequested:
                     self.skip_device_event.clear()
                     self.log(f"Device '{device.name}' skipped by user. TODO: mark device as bad.")
+                    skipped = True
+                elapsed = 0.0 if skipped else time.monotonic() - t0
+                if self.device_progress_cb:
+                    try:
+                        self.device_progress_cb(idx + 1, total, elapsed)
+                    except Exception as e:
+                        self.log(f"Device progress cb error: {e}")
+                if skipped:
                     continue
                 if self.temp_device_done_cb and self._current_temp_step is not None:
                     try:
-                        self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, len(devices))
+                        self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, total)
                     except Exception as e:
                         self.log(f"Temp device done cb error: {e}")
                 if self.cancel_queue_event.is_set():

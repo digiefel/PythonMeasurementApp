@@ -1,4 +1,5 @@
-﻿import json
+﻿import collections
+import json
 import os
 import threading
 from datetime import datetime
@@ -35,6 +36,17 @@ from procedures.pund_fatigue import PUNDFatigueProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
 from plotting import PlotBridge
+
+def _format_duration(seconds: float) -> str:
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        m, s = divmod(s, 60)
+        return f"{m}m {s:02d}s"
+    h, r = divmod(s, 3600)
+    return f"{h}h {r // 60:02d}m"
+
 
 # --- CV Sweep type options ---
 CV_SWEEP_TYPES = [
@@ -509,7 +521,15 @@ class MainUI:
 
         attach_tooltip(abort_btn, "Immediately abort all measurements and cancel the remaining queue.")
         attach_tooltip(self._finish_btn, "Let the current measurement finish and save, then stop the queue.")
-        attach_tooltip(skip_btn, "Abort the current measurement, and continue with the next device, and continue with the next.")
+        attach_tooltip(skip_btn, "Abort the current measurement, and continue with the next device.")
+
+        # Progress bar (shown when running, hidden otherwise)
+        self.progress_frame = ttk.Frame(self.selection_frame)
+        self.progress_frame.grid_columnconfigure(0, weight=1)
+        self._progress_bar = ttk.Progressbar(self.progress_frame, mode="determinate", maximum=100)
+        self._progress_bar.grid(row=0, column=0, sticky="ew", pady=(4, 1))
+        self._progress_label = ttk.Label(self.progress_frame, text="", anchor="center")
+        self._progress_label.grid(row=1, column=0, sticky="ew")
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -1611,10 +1631,13 @@ class MainUI:
                 self.runner.stop_event.clear()
                 self.runner.cancel_queue_event.clear()
                 self.runner.skip_device_event.clear()
+                self.runner.device_progress_cb = None
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
                 self._post(self._set_running_state, False)
                 self._post(self.temp_ui.stop_run)
+        self._init_progress(device_count)
+        self.runner.device_progress_cb = self._on_device_done
         self._set_running_state(True)
         self._run_thread = threading.Thread(target=target, daemon=True)
         self._run_thread.start()
@@ -1637,6 +1660,29 @@ class MainUI:
     def skip_device_run(self):
         """Triggered by Skip Device button."""
         threading.Thread(target=self.runner.safe_skip_device, daemon=True).start()
+
+    def _init_progress(self, total: int):
+        self._device_times: collections.deque[float] = collections.deque(maxlen=5)
+        self._progress_bar["value"] = 0
+        self._progress_label.config(text=f"Device 0 / {total}  ·  starting...")
+
+    def _on_device_done(self, completed: int, total: int, elapsed_s: float):
+        if elapsed_s > 0:
+            self._device_times.append(elapsed_s)
+        if self._device_times and completed < total:
+            avg = sum(self._device_times) / len(self._device_times)
+            est_remaining = avg * (total - completed)
+            eta_str = datetime.fromtimestamp(time.time() + est_remaining).strftime("%H:%M")
+            info = f"Device {completed} / {total}  ·  ~{_format_duration(est_remaining)} remaining  ·  ETA {eta_str}"
+        elif completed >= total:
+            info = f"Device {completed} / {total}  ·  done"
+        else:
+            info = f"Device {completed} / {total}"
+        self._post(self._update_progress, completed / total if total else 1.0, info)
+
+    def _update_progress(self, fraction: float, info: str):
+        self._progress_bar["value"] = fraction * 100
+        self._progress_label.config(text=info)
 
     # --- Prober control handlers ---
     def prober_set_reference(self):
@@ -1739,8 +1785,10 @@ class MainUI:
             self._finish_btn.config(text="Finish & Stop", bg="#d4830a")
             self.run_button.grid_remove()
             self.stop_frame.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+            self.progress_frame.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(2, 0))
         else:
             self.stop_frame.grid_remove()
+            self.progress_frame.grid_remove()
             self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
     def _set_contact_state(self, in_contact: bool):
