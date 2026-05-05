@@ -230,15 +230,8 @@ class RemoteB1500Session:
         req_id = envelope["req_id"]
         self._send_envelope(envelope)
 
-        deadline = time.monotonic() + timeout_s
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"No bridge response for stream_cv_sweep. {self._worker_diagnostics()}"
-                )
-
-            rsp = self._wait_for_response(req_id, "stream_cv_sweep", remaining)
+            rsp = self._wait_for_response(req_id, "stream_cv_sweep", timeout_s)
             rsp_type = rsp.get("type")
 
             if rsp_type == "error":
