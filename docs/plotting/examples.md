@@ -42,10 +42,10 @@ save_to_csv(resistance=fit.slope, r_squared=fit.r_squared)
 runner.plot.save_png(plot_filename, output_root, output_relative, fallback_root)
 ```
 
-## Oxide breakdown (3 panels, linked x, live fit + resistance)
+## IV sweep (3 panels, linked x, live fit + resistance)
 
 ```python
-runner.plot.configure(title=f"Oxide Breakdown - {device.name}", plots=[
+runner.plot.configure(title=f"IV sweep - {device.name}", plots=[
     PlotDef("iv", row=0, col=0, rowspan=2,
             title="Current",
             xlabel="Voltage (V)",

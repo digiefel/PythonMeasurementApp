@@ -1,6 +1,6 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
+    "output_dir": "Z:\\_Users\\Shared\\dgfl\\B1500",
     "fallback_output_dir": "C:\\Users\\EMN Lab\\Desktop\\PythonMeasurementApp\\DavideL\\test_output",
     "asu_channels": [
         "SMU2"
@@ -29,12 +29,12 @@
         },
         "IVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
-            "high_channel": 4,
-            "low_channel": 5,
-            "v_max": 15.0,
+            "high_channel": 3,
+            "low_channel": 4,
+            "v_max": 20.0,
             "points": 75,
             "double_sweep": true,
-            "current_compliance": 0.01,
+            "current_compliance": 0.1,
             "current_range": 1e-09,
             "hold_time": 0.0,
             "delay_time": 0.0,
@@ -42,21 +42,21 @@
         }
     },
     "last_selection": {
-        "chip_id": "",
-        "site": "VII",
+        "site": "VI",
         "subsite": "FeCapBD",
         "device": "A1A2",
         "procedure": "IVSweep",
         "set_home_before_run": true,
+        "auto_separation_after_measurement": true,
+        "chip": "",
+        "selected_devices": [],
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": false,
         "temperature_mode": "Sweep",
         "temperature_setpoint_c": "",
         "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30",
-        "temp_comp_x_um_per_c": "-0.284",
-        "temp_comp_y_um_per_c": "1.435",
-        "temp_comp_z_um_per_c": "0.0",
-        "chip": "",
-        "selected_devices": []
+        "temperature_wait_after_s": "30"
     }
 }

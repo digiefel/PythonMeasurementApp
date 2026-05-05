@@ -77,9 +77,9 @@ class IVSweepProcedure(MeasurementProcedure):
             )
             plot_filename = f'{base}_plot.png'
             runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
-            self.log(f'Oxide breakdown sweep completed for {device.name}')
+            self.log(f'IV sweep completed for {device.name}')
         except Exception as e:
-            self.log(f'Error during oxide breakdown sweep: {str(e)}')
+            self.log(f'Error during IV sweep: {str(e)}')
             raise
 
     def perform_breakdown_sweep(self, b1500, device):
@@ -139,7 +139,7 @@ class IVSweepProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
-        runner.configure_plot(f'Oxide Breakdown - {device.name}', [
+        runner.configure_plot(f'IV sweep - {device.name}', [
             PlotDef(
                 "iv",
                 row=0,
@@ -299,7 +299,7 @@ class IVSweepProcedure(MeasurementProcedure):
                 status_combined |= v_source_status[i]
             results.append([v_val, ip_val, in_val, t_val, status_combined])
 
-        self.log(f'Collected {len(results)} oxide breakdown points')
+        self.log(f'Collected {len(results)} IV sweep points')
         return results
 
     def _update_resistance_source(self, runner, voltage: float) -> None:

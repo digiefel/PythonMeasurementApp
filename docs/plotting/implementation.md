@@ -149,12 +149,12 @@ Migration mapping:
 - `runner.finalize_plot(...)` -> `runner.plot.save_png(...)`
 
 Procedure-specific notes:
-- `oxide_breakdown`: log(I) overlay becomes Curve source on yaxis=1 with log scale.
+- `iv_sweep`: log(I) overlay becomes Curve source on yaxis=1 with log scale.
 - `four_terminal_iv_sweep` / `van_der_pauw`: fit overlay becomes LinearFit element.
 - `PUND` / `pund_fatigue`: hidden legend names become `show_in_legend=False`.
 - `wgfmu_sampling`: bucketing stays; route through `append_batch`.
 
-Files: `rv_sweep.py`, `four_terminal_iv_sweep.py`, `oxide_breakdown.py`, `cv_sweep.py`,
+Files: `four_terminal_iv_sweep.py`, `iv_sweep.py`, `cv_sweep.py`,
 `PUND.py`, `pund_fatigue.py`, `wgfmu_sampling.py`, `van_der_pauw.py`.
 
 ### `requirements.txt`
