@@ -127,10 +127,10 @@ class PUNDProcedure(MeasurementProcedure):
 				if dt > 0:
 					wgfmu.add_vector(pattern_pg, dt, voltage)
 
-			wgfmu.create_pattern(pattern_iv, self.base_voltage)
+			wgfmu.create_pattern(pattern_iv, 0.0)
 			for dt, _ in vectors:
 				if dt > 0:
-					wgfmu.add_vector(pattern_iv, dt, self.base_voltage)
+					wgfmu.add_vector(pattern_iv, dt, 0.0)
 
 			# Measure event for active portion (full rate)
 			wgfmu.set_measure_event(
@@ -183,7 +183,7 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_cleanup, 1.0)
 			
 			pattern_cleanup_iv = f"CLEANUP_IV_{self.get_run_timestamp()}"
-			wgfmu.create_pattern(pattern_cleanup_iv, self.base_voltage)
+			wgfmu.create_pattern(pattern_cleanup_iv, 0.0)
 			wgfmu.add_vector(pattern_cleanup_iv, 1e-4, 0.0) 
 			wgfmu.add_sequence(self.channel_2, pattern_cleanup_iv, 1.0)
 

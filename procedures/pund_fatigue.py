@@ -238,11 +238,11 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				if dt > 0:
 					wgfmu.add_vector(pattern_fat_pg, dt, voltage)
 
-			# Create fatigue pattern for ch2 (FastIV mode - holds at base_voltage, no measure event)
-			wgfmu.create_pattern(pattern_fat_iv, self.base_voltage)
+			# Create fatigue pattern for ch2 (FastIV mode - holds at 0V, no measure event)
+			wgfmu.create_pattern(pattern_fat_iv, 0.0)
 			for dt, _ in vectors_fat:
 				if dt > 0:
-					wgfmu.add_vector(pattern_fat_iv, dt, self.base_voltage)
+					wgfmu.add_vector(pattern_fat_iv, dt, 0.0)
 
 			# Create measure patterns with sampling
 			wgfmu.create_pattern(pattern_meas_pg, self.base_voltage)
@@ -250,10 +250,10 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				if dt > 0:
 					wgfmu.add_vector(pattern_meas_pg, dt, voltage)
 
-			wgfmu.create_pattern(pattern_meas_iv, self.base_voltage)
+			wgfmu.create_pattern(pattern_meas_iv, 0.0)
 			for dt, _ in vectors_meas:
 				if dt > 0:
-					wgfmu.add_vector(pattern_meas_iv, dt, self.base_voltage)
+					wgfmu.add_vector(pattern_meas_iv, dt, 0.0)
 
 			wgfmu.set_measure_event(
 				pattern_meas_pg, "meas", 0.0, sample_points,
@@ -288,7 +288,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_cleanup, 1.0)
 			
 			pattern_cleanup_iv = f"CLEANUP_IV_{ts}"
-			wgfmu.create_pattern(pattern_cleanup_iv, self.base_voltage)
+			wgfmu.create_pattern(pattern_cleanup_iv, 0.0)
 			wgfmu.add_vector(pattern_cleanup_iv, 1e-4, 0.0) 
 			wgfmu.add_sequence(self.channel_2, pattern_cleanup_iv, 1.0)
 
