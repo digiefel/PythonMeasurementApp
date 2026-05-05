@@ -311,7 +311,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			log_max = np.log10(max(max_cycle, 1))
 
 			elements = []
-			meas_idx_to_sources = {}  # meas_idx -> (v_source, i_source)
+			iv_elements = []
+			qv_elements = []
+			meas_idx_to_sources = {}  # meas_idx -> (v_source, i_source, iv_source, qv_source)
 			for plot_idx, meas_idx in enumerate(cycles_to_plot_idx):
 				cycle_num = measure_cycles[meas_idx]
 				log_cycle = np.log10(max(cycle_num, 1))
@@ -319,11 +321,18 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				show = (meas_idx == 0 or meas_idx == len(measure_cycles) - 1)
 				v_legend = f"V (cycle {cycle_num})" if show else ""
 				i_legend = f"I (cycle {cycle_num})" if show else ""
+				q_legend = f"Q (cycle {cycle_num})" if show else ""
+				i_color = (intensity, 0.3 * intensity, 0)
 				elements.append(Curve(f"V_{cycle_num}", color=(0, 0, intensity),
 				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
-				elements.append(Curve(f"I_{cycle_num}", color=(intensity, 0.3 * intensity, 0),
+				elements.append(Curve(f"I_{cycle_num}", color=i_color,
 				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
-				meas_idx_to_sources[meas_idx] = (f"V_{cycle_num}", f"I_{cycle_num}")
+				iv_elements.append(Curve(f"IV_{cycle_num}", color=i_color,
+				                         legend_label=i_legend, show_in_legend=show))
+				qv_elements.append(Curve(f"QV_{cycle_num}", color=i_color,
+				                         legend_label=q_legend, show_in_legend=show))
+				meas_idx_to_sources[meas_idx] = (f"V_{cycle_num}", f"I_{cycle_num}",
+				                                  f"IV_{cycle_num}", f"QV_{cycle_num}")
 
 			# Calculate expected limits for the overlay plot
 			v_margin = self.vmax * 0.1
@@ -331,18 +340,31 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			ylim = (self.base_voltage - self.vmax - v_margin, self.base_voltage + self.vmax + v_margin)
 
 			runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
-				PlotDef("pund_fat", xlabel="Time (s)",
-				        ylabels=("Voltage (V)", "Current (μA)"),
+				PlotDef("pund_fat", row=0, col=0, colspan=2,
+				        xlabel="Time (s)",
+				        ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=xlim,
 				        ylims=(ylim, None),
 				        elements=elements),
-			])
+				PlotDef("iv_loop", row=1, col=0,
+				        xlabel="Voltage (V)",
+				        ylabels=("Current (uA)",),
+				        elements=iv_elements),
+				PlotDef("qv_loop", row=1, col=1,
+				        xlabel="Voltage (V)",
+				        ylabels=("Charge (nC)",),
+				        elements=qv_elements),
+			], row_ratios=[2.0, 1.0])
 
 			# Poll for data and plot live
 			STATUS_COMPLETED = 10000
 			plotted_count = 0
 			data_ch1 = []
 			data_ch2 = []
+			i_baseline_samples: dict[int, list] = {}
+			i_baseline: dict[int, float] = {}
+			q_accum: dict[int, float] = {}
+			last_t_per_cycle: dict[int, float] = {}
 
 			while True:
 				self.check_stop(b1500)
@@ -352,11 +374,11 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
 				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
 				available = min(measured_1, measured_2)
-				
+
 				# Fetch and plot new points
 				if available > plotted_count:
 					# Group points by measurement cycle for overlay plotting
-					cycle_batches = {}  # meas_idx -> {'v': [...], 'i': [...]}
+					cycle_batches: dict[int, dict] = {}
 
 					for i in range(plotted_count, available):
 						self.check_stop(b1500)
@@ -373,19 +395,44 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						# Only plot cycles in our display list
 						if meas_idx in cycles_to_plot_idx and meas_idx < len(measure_cycles):
 							rel_t = sample_in_cycle * sample_interval
-							
+
 							if meas_idx not in cycle_batches:
-								cycle_batches[meas_idx] = {'v': [], 'i': []}
+								cycle_batches[meas_idx] = {'v': [], 'i': [], 'iv': [], 'qv': []}
 							cycle_batches[meas_idx]['v'].append((rel_t, v))
 							cycle_batches[meas_idx]['i'].append((rel_t, cur * 1e6))
+
+							# Accumulate first 50 samples per cycle for baseline
+							if meas_idx not in i_baseline:
+								samples = i_baseline_samples.setdefault(meas_idx, [])
+								if len(samples) < 50:
+									samples.append(cur)
+								if len(samples) == 50:
+									i_baseline[meas_idx] = float(np.mean(samples))
+
+							# IV and QV use baseline-corrected current, only once baseline is ready
+							if meas_idx in i_baseline:
+								cur_adj = -(cur - i_baseline[meas_idx])
+								cycle_batches[meas_idx]['iv'].append((v, cur_adj * 1e6))
+
+								if meas_idx not in q_accum:
+									q_accum[meas_idx] = 0.0
+									last_t_per_cycle[meas_idx] = rel_t
+								else:
+									dt = rel_t - last_t_per_cycle[meas_idx]
+									if dt > 0:
+										q_accum[meas_idx] += cur_adj * dt
+									last_t_per_cycle[meas_idx] = rel_t
+								cycle_batches[meas_idx]['qv'].append((v, q_accum[meas_idx] * 1e9))
 
 					# Build batch update for all cycles
 					batch_update = {}
 					for meas_idx, batch_data in cycle_batches.items():
 						if meas_idx in meas_idx_to_sources:
-							v_source, i_source = meas_idx_to_sources[meas_idx]
+							v_source, i_source, iv_source, qv_source = meas_idx_to_sources[meas_idx]
 							batch_update[v_source] = batch_data['v']
 							batch_update[i_source] = batch_data['i']
+							batch_update[iv_source] = batch_data['iv']
+							batch_update[qv_source] = batch_data['qv']
 
 					if batch_update:
 						runner.plot.append_batch(batch_update)

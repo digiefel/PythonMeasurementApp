@@ -201,25 +201,42 @@ class PUNDProcedure(MeasurementProcedure):
 				reps_to_plot.append(self.repetition_count - 1)
 
 			elements = []
+			iv_elements = []
+			qv_elements = []
 			for idx, rep in enumerate(reps_to_plot):
 				intensity = 0.2 + 0.7 * (idx / max(1, len(reps_to_plot) - 1))
 				show = (rep == 0 or rep == self.repetition_count - 1)
 				v_legend = f"V (rep {rep+1})" if show else ""
 				i_legend = f"I (rep {rep+1})" if show else ""
+				q_legend = f"Q (rep {rep+1})" if show else ""
+				i_color = (intensity, 0.3 * intensity, 0)
 				elements.append(Curve(f"V_{rep}", color=(0, 0, intensity),
 				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
-				elements.append(Curve(f"I_{rep}", color=(intensity, 0.3 * intensity, 0),
+				elements.append(Curve(f"I_{rep}", color=i_color,
 				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
+				iv_elements.append(Curve(f"IV_{rep}", color=i_color,
+				                         legend_label=i_legend, show_in_legend=show))
+				qv_elements.append(Curve(f"QV_{rep}", color=i_color,
+				                         legend_label=q_legend, show_in_legend=show))
 
 			# Initialize live overlay plot
 			runner = self.runner
 			runner.configure_plot(f'PUND Overlay - {device.name}', [
-				PlotDef("pund", xlabel="Time (s)",
-				        ylabels=("Voltage (V)", "Current (μA)"),
+				PlotDef("pund", row=0, col=0, colspan=2,
+				        xlabel="Time (s)",
+				        ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=xlim,
 				        ylims=(ylim, None),
 				        elements=elements),
-			])
+				PlotDef("iv_loop", row=1, col=0,
+				        xlabel="Voltage (V)",
+				        ylabels=("Current (uA)",),
+				        elements=iv_elements),
+				PlotDef("qv_loop", row=1, col=1,
+				        xlabel="Voltage (V)",
+				        ylabels=("Charge (nC)",),
+				        elements=qv_elements),
+			], row_ratios=[2.0, 1.0])
 
 			self.check_stop(b1500)
 			wgfmu.execute()
@@ -229,9 +246,10 @@ class PUNDProcedure(MeasurementProcedure):
 
 			data = []
 			plotted_count = 0
-			# Track which rep we're currently in
-			current_rep = 0
-			rep_start_time = None
+			i_baseline_samples: dict[int, list] = {}
+			i_baseline: dict[int, float] = {}
+			q_accum: dict[int, float] = {}
+			last_t_per_rep: dict[int, float] = {}
 
 			while True:
 				self.check_stop(b1500)
@@ -246,8 +264,8 @@ class PUNDProcedure(MeasurementProcedure):
 				# Fetch new points
 				if available > plotted_count:
 					# Group points by rep for overlay plotting
-					rep_batches = {}  # rep_index -> {'v': [...], 'i': [...]}
-					
+					rep_batches: dict[int, dict] = {}
+
 					for i in range(plotted_count, available):
 						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
 						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
@@ -260,19 +278,44 @@ class PUNDProcedure(MeasurementProcedure):
 
 						# Only plot reps in our display list
 						if rep_idx in reps_to_plot:
-							# Calculate relative time within this rep
 							rel_t = t - (rep_idx * pattern_duration)
-							
+
 							if rep_idx not in rep_batches:
-								rep_batches[rep_idx] = {'v': [], 'i': []}
+								rep_batches[rep_idx] = {'v': [], 'i': [], 'iv': [], 'qv': []}
+
 							rep_batches[rep_idx]['v'].append((rel_t, v))
 							rep_batches[rep_idx]['i'].append((rel_t, cur * 1e6))
+
+							# Accumulate first 50 samples per rep for baseline
+							if rep_idx not in i_baseline:
+								samples = i_baseline_samples.setdefault(rep_idx, [])
+								if len(samples) < 50:
+									samples.append(cur)
+								if len(samples) == 50:
+									i_baseline[rep_idx] = float(np.mean(samples))
+
+							# IV and QV use baseline-corrected current, only once baseline is ready
+							if rep_idx in i_baseline:
+								cur_adj = -(cur - i_baseline[rep_idx])
+								rep_batches[rep_idx]['iv'].append((v, cur_adj * 1e6))
+
+								if rep_idx not in q_accum:
+									q_accum[rep_idx] = 0.0
+									last_t_per_rep[rep_idx] = rel_t
+								else:
+									dt = rel_t - last_t_per_rep[rep_idx]
+									if dt > 0:
+										q_accum[rep_idx] += cur_adj * dt
+									last_t_per_rep[rep_idx] = rel_t
+								rep_batches[rep_idx]['qv'].append((v, q_accum[rep_idx] * 1e9))
 
 					# Build batch update for all reps
 					batch_update = {}
 					for rep_idx, batch_data in rep_batches.items():
 						batch_update[f"V_{rep_idx}"] = batch_data['v']
 						batch_update[f"I_{rep_idx}"] = batch_data['i']
+						batch_update[f"IV_{rep_idx}"] = batch_data['iv']
+						batch_update[f"QV_{rep_idx}"] = batch_data['qv']
 
 					if batch_update:
 						runner.plot.append_batch(batch_update)
