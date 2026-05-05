@@ -96,6 +96,7 @@ class MainUI:
         self.subsite_var = tk.StringVar()
         self.device_var = tk.StringVar()
         self.devices_csv_var = tk.StringVar()
+        self.output_dir_var = tk.StringVar()
         self.proc_var = tk.StringVar()
         self.param_vars = {}
         self._cv_calibration_store = {}
@@ -178,6 +179,7 @@ class MainUI:
                 ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
                 ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
                 ('vmax', 'Vmax (V)', float),
+                ('base_voltage', 'Base Voltage (V)', float),
                 ('frequency', 'Frequency (Hz)', float),
                 ('pulse_delay', 'Pulse Delay (s)', float),
                 ('repetition_count', 'Repetition Count', int),
@@ -191,6 +193,7 @@ class MainUI:
                 ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
                 ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
                 ('vmax', 'Vmax (V)', float),
+                ('base_voltage', 'Base Voltage (V)', float),
                 ('frequency', 'Frequency (Hz)', float),
                 ('pulse_delay', 'Pulse Delay (s)', float),
                 ('cycle_count', 'Cycle Count', float),
@@ -272,6 +275,7 @@ class MainUI:
                 'channel_2': 102,
                 'base_voltage': 0.0,
                 'vmax': 1.0,
+                'base_voltage': 0.0,
                 'frequency': 1e3,
                 'pulse_delay': 0.0,
                 'repetition_count': 1,
@@ -286,6 +290,7 @@ class MainUI:
                 'channel_2': 102,
                 'base_voltage': 0.0,
                 'vmax': 1.0,
+                'base_voltage': 0.0,
                 'frequency': 1e3,
                 'pulse_delay': 0.0,
                 'cycle_count': 1e6,
@@ -316,6 +321,7 @@ class MainUI:
 
         self.build_layout()
         self._refresh_devices_csv_options()
+        self.load_output_dir()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
@@ -421,44 +427,51 @@ class MainUI:
         self.devices_csv_cb.bind('<<ComboboxSelected>>', self.on_devices_csv_selected)
         ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv).grid(row=0, column=1, sticky="ew")
 
-        ttk.Label(self.selection_frame, text="Site").grid(row=2, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Output Directory").grid(row=2, column=0, sticky="w")
+        output_frame = ttk.Frame(self.selection_frame)
+        output_frame.grid(row=2, column=1, sticky="ew", pady=2)
+        output_frame.grid_columnconfigure(0, weight=1)
+        ttk.Entry(output_frame, textvariable=self.output_dir_var).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(self.selection_frame, text="Site").grid(row=3, column=0, sticky="w")
         self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
-        self.site_cb.grid(row=2, column=1, sticky="ew", pady=2)
+        self.site_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
 
-        ttk.Label(self.selection_frame, text="Subsite").grid(row=3, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Subsite").grid(row=4, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
-        self.subsite_cb.grid(row=3, column=1, sticky="ew", pady=2)
+        self.subsite_cb.grid(row=4, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
 
-        ttk.Label(self.selection_frame, text="Device").grid(row=4, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Device").grid(row=5, column=0, sticky="w")
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
-        self.device_cb.grid(row=4, column=1, sticky="ew", pady=2)
+        self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="Procedure").grid(row=5, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="Procedure").grid(row=6, column=0, sticky="w")
         self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
-        self.proc_cb.grid(row=5, column=1, sticky="ew", pady=2)
+        self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
         # Global ASU config
-        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=6, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=7, column=0, sticky="w")
         self.asu_channels_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_channels_var)
-        self.asu_channels_entry.grid(row=6, column=1, sticky="ew", pady=2)
+        self.asu_channels_entry.grid(row=7, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=7, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=8, column=0, sticky="w")
         self.asu_path_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_path_var)
-        self.asu_path_entry.grid(row=7, column=1, sticky="ew", pady=2)
+        self.asu_path_entry.grid(row=8, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=8, column=0, sticky="w")
+        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=9, column=0, sticky="w")
         self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
-        self.asu_range_check.grid(row=8, column=1, sticky="w", pady=2)
+        self.asu_range_check.grid(row=9, column=1, sticky="w", pady=2)
 
         self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
-        self.set_home_check.grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.set_home_check.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
-        device_sel_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        device_sel_frame.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
@@ -469,14 +482,14 @@ class MainUI:
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=11, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=12, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
-        self.run_button.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -580,6 +593,32 @@ class MainUI:
             return
         self.devices_csv_var.set(path)
         self._switch_devices_csv(path)
+
+    def load_output_dir(self):
+        self.output_dir_var.set(self.config.data.get('output_dir', ''))
+
+    def update_output_dir_from_ui(self) -> bool:
+        output_dir = self.output_dir_var.get().strip()
+        if not output_dir:
+            messagebox.showerror("Output Directory", "Please choose an output directory before running or saving settings.")
+            return False
+        output_dir = self.config.set_output_dir(output_dir)
+        self.output_dir_var.set(output_dir)
+        return True
+
+    def browse_output_dir(self):
+        current = self.output_dir_var.get().strip() or self.config.data.get('output_dir', '')
+        initialdir = current if current and os.path.isdir(current) else os.path.expanduser("~")
+        path = filedialog.askdirectory(
+            title="Select output directory",
+            initialdir=initialdir,
+        )
+        if not path:
+            return
+        self.output_dir_var.set(path)
+        if self.update_output_dir_from_ui():
+            self.config.set_output_dir(self.output_dir_var.get(), persist=True)
+            self.log(f"Output directory set to {self.config.data['output_dir']}")
 
     def populate_sites(self):
         site_names = [s.name for s in self.config.sites]
@@ -1421,6 +1460,7 @@ class MainUI:
             return
         # Refresh ASU globals and UI fields
         self.load_global_asu()
+        self.load_output_dir()
         self.render_param_form(proc_name)
         self.apply_last_selection(self.config.get_last_selection())
         self.log(f'Loaded settings from {path}')
@@ -1429,6 +1469,8 @@ class MainUI:
         proc_name = self.proc_var.get()
         if not proc_name:
             self.log("Select a procedure before saving settings.")
+            return
+        if not self.update_output_dir_from_ui():
             return
         self.update_global_asu_from_ui()
         settings = self.collect_settings()
@@ -1455,6 +1497,8 @@ class MainUI:
         try:
             self._apply_temp_comp()
         except ValueError:
+            return
+        if not self.update_output_dir_from_ui():
             return
         self.update_global_asu_from_ui()
         chip_id = self.chip_var.get().strip()

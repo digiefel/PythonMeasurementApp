@@ -62,6 +62,11 @@ class Config:
             return os.path.normpath(os.path.join(app_root, expanded))
         return os.path.normpath(os.path.join(self.config_root, expanded))
 
+    def _resolve_output_dir(self, path: str) -> str:
+        if not path:
+            path = DEFAULT_CONFIG['output_dir']
+        return os.path.abspath(os.path.normpath(os.path.expanduser(str(path))))
+
     def _merge_defaults(self, data: dict) -> dict:
         merged = deepcopy(DEFAULT_CONFIG)
         merged.update(data or {})
@@ -74,10 +79,19 @@ class Config:
         merged['last_selection'] = normalized_last
         if not merged.get('devices_csv_path'):
             merged['devices_csv_path'] = self.default_devices_csv_path
+        merged['output_dir'] = self._resolve_output_dir(merged.get('output_dir'))
+        merged['fallback_output_dir'] = self._resolve_output_dir(merged.get('fallback_output_dir'))
         return merged
 
     def replace_data(self, data: dict):
         self.data = self._merge_defaults(data)
+
+    def set_output_dir(self, path: str, persist: bool = False) -> str:
+        output_dir = self._resolve_output_dir(path)
+        self.data['output_dir'] = output_dir
+        if persist:
+            self.save()
+        return output_dir
     
     def load(self):
         if os.path.exists(self.config_path):
