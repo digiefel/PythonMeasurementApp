@@ -307,15 +307,17 @@ class CVSweepProcedure(MeasurementProcedure):
                 elements_cp.append(   Curve(f"cp_{tag}",    color=color, legend_label=f"Cp @ {tag}"))
 
             self.runner.configure_plot(f"C-V Sweep - {device.name}", [
-                PlotDef("z",     row=0, col=0, xlabel="Bias (V)", ylabels=("Z (Ohm)",),
-                        elements=elements_z),
-                PlotDef("theta", row=0, col=1, xlabel="Bias (V)", ylabels=(f"Theta ({theta_unit})",),
-                        xlink="z", elements=elements_theta),
-                PlotDef("rp",    row=1, col=0, xlabel="Bias (V)", ylabels=("Rp (Ohm)",),
-                        xlink="z", elements=elements_rp),
-                PlotDef("cp",    row=1, col=1, xlabel="Bias (V)", ylabels=("Cp (F)",),
-                        xlink="z", elements=elements_cp),
-            ])
+                    PlotDef("z",     row=0, col=0, xlabel="Bias (V)", ylabels=("Z (Ohm)",),
+                            elements=elements_z),
+                    PlotDef("theta", row=0, col=1, xlabel="Bias (V)", ylabels=(f"Theta ({theta_unit})",),
+                            xlink="z", elements=elements_theta),
+                    PlotDef("rp",    row=1, col=0, xlabel="Bias (V)", ylabels=("Rp (Ohm)",),
+                            xlink="z", elements=elements_rp),
+                    PlotDef("cp",    row=1, col=1, xlabel="Bias (V)", ylabels=("Cp (F)",),
+                            xlink="z", elements=elements_cp),
+                    ],
+                    row_ratios=(1.0, 1.0), column_ratios=(1.0, 1.0)
+                )
         else:
             elements = []
             for i, freq in enumerate(self.frequencies):
