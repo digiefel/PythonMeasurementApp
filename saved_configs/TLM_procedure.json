@@ -1,6 +1,6 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
+    "output_dir": "output",
     "asu_channels": [
         "SMU2"
     ],

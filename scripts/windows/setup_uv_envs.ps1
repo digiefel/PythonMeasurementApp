@@ -1,22 +1,18 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Python64,
-
-    [Parameter(Mandatory = $true)]
-    [string]$Python32,
-
+    [string]$Python64 = "",
+    [string]$Python32 = "",
+    [string]$PythonVersion = "3.11",
     [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\.." )).Path,
-
     [switch]$Recreate
 )
 
 $ErrorActionPreference = "Stop"
 
 function Assert-Command {
-    param([string]$Name)
+    param([string]$Name, [string]$InstallHint)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "Required command not found: $Name"
+        throw "Required command not found: $Name`n$InstallHint"
     }
 }
 
@@ -31,34 +27,72 @@ function Get-PythonBitness {
     param([string]$PythonPath)
     $out = & $PythonPath -c "import struct; print(struct.calcsize('P') * 8)"
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to query python bitness: $PythonPath"
+        throw "Failed to query Python bitness: $PythonPath"
     }
     return [int]($out | Select-Object -First 1)
+}
+
+function Get-PythonFromLauncher {
+    param([string[]]$Selectors)
+    if (-not (Get-Command "py" -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+    foreach ($selector in $Selectors) {
+        $out = & py $selector -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) {
+            return [string]($out | Select-Object -First 1)
+        }
+    }
+    return ""
+}
+
+function Resolve-Python {
+    param(
+        [string]$ExplicitPath,
+        [int]$RequiredBits,
+        [string]$Version
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        Assert-File $ExplicitPath "Python${RequiredBits}"
+        return (Resolve-Path -LiteralPath $ExplicitPath).Path
+    }
+
+    $selectors = if ($RequiredBits -eq 64) {
+        @("-${Version}-64", "-3-64")
+    } else {
+        @("-${Version}-32", "-3-32")
+    }
+    $fromLauncher = Get-PythonFromLauncher -Selectors $selectors
+    if (-not [string]::IsNullOrWhiteSpace($fromLauncher)) {
+        return (Resolve-Path -LiteralPath $fromLauncher).Path
+    }
+
+    throw @"
+Could not find a ${RequiredBits}-bit Python interpreter.
+Install Python ${Version} ${RequiredBits}-bit, or rerun this script with:
+  -Python${RequiredBits} "C:\Path\To\python.exe"
+"@
 }
 
 function Invoke-Uv {
     param([string[]]$UvArgs, [string]$Label)
     Write-Host "==> $Label"
-    $cmdText = "uv " + ($UvArgs -join " ")
-    Write-Host "    $cmdText"
+    Write-Host "    uv $($UvArgs -join ' ')"
     & uv @UvArgs
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "$Label failed with exit code ${exitCode}: $cmdText"
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code ${LASTEXITCODE}"
     }
 }
 
-Assert-Command "uv"
-Assert-File $Python64 "Python64"
-Assert-File $Python32 "Python32"
+Assert-Command "uv" "Install uv first, for example: winget install --id Astral.UV"
 
-$python64Resolved = (Resolve-Path -LiteralPath $Python64).Path
-$python32Resolved = (Resolve-Path -LiteralPath $Python32).Path
 $projectResolved = (Resolve-Path -LiteralPath $ProjectRoot).Path
+$python64Resolved = Resolve-Python -ExplicitPath $Python64 -RequiredBits 64 -Version $PythonVersion
+$python32Resolved = Resolve-Python -ExplicitPath $Python32 -RequiredBits 32 -Version $PythonVersion
 
 $bit64 = Get-PythonBitness -PythonPath $python64Resolved
 $bit32 = Get-PythonBitness -PythonPath $python32Resolved
-
 if ($bit64 -ne 64) {
     throw "Python64 is not 64-bit: $python64Resolved ($bit64-bit)"
 }
@@ -68,6 +102,7 @@ if ($bit32 -ne 32) {
 
 $mainEnvPath = Join-Path $projectResolved ".venv"
 $workerEnvPath = Join-Path $projectResolved ".venv32"
+$mainReq = Join-Path $projectResolved "requirements.txt"
 
 if ($Recreate) {
     if (Test-Path -LiteralPath $mainEnvPath) {
@@ -94,19 +129,14 @@ if (-not (Test-Path -LiteralPath $workerEnvPath)) {
 
 $mainPython = Join-Path $mainEnvPath "Scripts\python.exe"
 $workerPython = Join-Path $workerEnvPath "Scripts\python.exe"
-$mainReq = Join-Path $projectResolved "requirements.txt"
 
-Assert-File $mainPython "Main env python"
-Assert-File $workerPython "Worker env python"
-Assert-File $mainReq "Main requirements"
+Assert-File $mainPython "Main env Python"
+Assert-File $workerPython "Worker env Python"
+Assert-File $mainReq "Requirements file"
 
-Invoke-Uv -UvArgs @("pip", "install", "-p", $mainPython, "-r", $mainReq) -Label "Install main 64-bit packages"
-Write-Host "==> Worker env ready: $workerEnvPath"
+Invoke-Uv -UvArgs @("pip", "install", "-p", $mainPython, "-r", $mainReq) -Label "Install/update main packages"
 
 Write-Host ""
 Write-Host "Setup complete."
-Write-Host "Main env python  : $mainPython"
-Write-Host "Worker env python: $workerPython"
-Write-Host ""
-Write-Host "Next steps:"
-Write-Host "1) Activate .venv and run: python ui.py"
+Write-Host "Main env Python  : $mainPython"
+Write-Host "Worker env Python: $workerPython"

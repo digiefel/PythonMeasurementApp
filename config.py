@@ -6,8 +6,8 @@ from models import load_devices_csv
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
-    'output_dir': 'C:/Users/EMN Lab/Desktop/PythonMeasurementApp/_DEFAULT_OUTPUT_/',
-    'fallback_output_dir': 'C:/Users/EMN Lab/Desktop/PythonMeasurementApp/_DEFAULT_OUTPUT_/',
+    'output_dir': 'output',
+    'fallback_output_dir': 'output',
     # Global ASU configuration (applies to procedures that support it)
     'asu_channels': ["SMU2"],
     'asu_path_mode': 1,
@@ -35,8 +35,8 @@ DEFAULT_CONFIG = {
 
 class Config:
     def __init__(self, config_path: str, devices_csv_path: str = 'devices.csv'):
-        app_root = os.path.dirname(__file__)
-        self.config_root = os.path.join(app_root, "saved_configs")
+        self.app_root = os.path.dirname(os.path.abspath(__file__))
+        self.config_root = os.path.join(self.app_root, "saved_configs")
         self.config_path = self._resolve_config_path(config_path)
         self.default_devices_csv_path = self._resolve_csv_path(devices_csv_path)
         self.data = self.load()
@@ -65,7 +65,32 @@ class Config:
     def _resolve_output_dir(self, path: str) -> str:
         if not path:
             path = DEFAULT_CONFIG['output_dir']
-        return os.path.abspath(os.path.normpath(os.path.expanduser(str(path))))
+        expanded = os.path.normpath(os.path.expanduser(str(path)))
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+        return os.path.abspath(os.path.join(self.app_root, expanded))
+
+    def _portable_path(self, path: str, base: str) -> str:
+        if not path:
+            return path
+        try:
+            rel = os.path.relpath(os.path.abspath(path), os.path.abspath(base))
+        except ValueError:
+            return path
+        if rel == ".":
+            return "."
+        if rel.startswith(".." + os.sep) or rel == "..":
+            return path
+        return rel
+
+    def _serializable_data(self) -> dict:
+        data = deepcopy(self.data)
+        if data.get('devices_csv_path'):
+            data['devices_csv_path'] = self._portable_path(data['devices_csv_path'], self.config_root)
+        for key in ('output_dir', 'fallback_output_dir'):
+            if data.get(key):
+                data[key] = self._portable_path(data[key], self.app_root)
+        return data
 
     def _merge_defaults(self, data: dict) -> dict:
         merged = deepcopy(DEFAULT_CONFIG)
@@ -103,7 +128,7 @@ class Config:
     def save(self):
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, 'w') as f:
-            json.dump(self.data, f, indent=4)
+            json.dump(self._serializable_data(), f, indent=4)
 
     def reload_devices(self, csv_path: Optional[str] = None, persist: bool = False):
         target_path = self.devices_csv_path if csv_path is None else self._resolve_csv_path(csv_path)

@@ -5,6 +5,7 @@ __pycache__
 .vs
 
 test_output
+output
 
 *.log
 log.txt

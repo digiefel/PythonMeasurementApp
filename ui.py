@@ -2061,6 +2061,11 @@ class MainUI:
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    from app_logging import configure_logging
+
+    multiprocessing.freeze_support()
+    configure_logging()
     root = tk.Tk()
     app = MainUI(root)
     root.mainloop()

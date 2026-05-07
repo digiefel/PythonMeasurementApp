@@ -1,7 +1,8 @@
 import multiprocessing
 from app_logging import configure_logging
 
-if __name__ == '__main__':
+
+def main():
     multiprocessing.freeze_support()
     configure_logging()
     import tkinter as tk
@@ -9,3 +10,7 @@ if __name__ == '__main__':
     root = tk.Tk()
     app = MainUI(root)
     root.mainloop()
+
+
+if __name__ == '__main__':
+    main()

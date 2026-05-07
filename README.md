@@ -38,47 +38,59 @@ PythonMeasurementApp/
 - ctypes: Built-in for C DLL bindings (for B1500/WGFMU)
 - pythonnet: For C# DLL bindings (optional alternative)
 
-Install: `pip install -r requirements.txt`
-
-## Windows uv Setup (.venv + .venv32)
+## Windows Run / Setup
 
 This project targets Windows for real instrument DLL execution. Use split environments:
 - Main env (64-bit): `.venv` (run the UI from here)
 - Worker env (32-bit): `.venv32` (auto-started by the bridge)
 
-### 1) Create both environments with uv
+The normal lab-user entry point is:
 
-From the project root on Windows PowerShell:
+```text
+Run Measurement App.cmd
+```
+
+Double-clicking that file checks for `uv`, creates or updates `.venv` and `.venv32`, installs `requirements.txt` into the main env, and launches `main.py`.
+
+Prerequisites on the instrument PC:
+- `uv` on `PATH`
+- 64-bit Python 3.11
+- 32-bit Python 3.11 for the vendor DLL bridge
+- Vendor B1500/WGFMU/VISA DLLs installed in their standard locations, or supplied with environment overrides
+
+If Python auto-detection fails, run from PowerShell with explicit interpreters:
 
 ```powershell
-.\scripts\windows\setup_uv_envs.ps1 `
+.\scripts\windows\run_app.ps1 `
     -Python64 "C:\Path\To\Python311-x64\python.exe" `
     -Python32 "C:\Path\To\Python311-x86\python.exe"
 ```
 
-This creates:
-- `.venv`
-- `.venv32`
-
-and installs main app dependencies from:
-- `requirements.txt`
-
-### 2) Run UI normally
+To only create/update the environments:
 
 ```powershell
-.\.venv\Scripts\activate
-python ui.py
+.\scripts\windows\setup_uv_envs.ps1
 ```
 
-When started this way, the bridge automatically launches worker Python from:
-- `.venv32\Scripts\python.exe`
+Optional DLL overrides:
 
-Optional override if you want a different worker interpreter:
-- `PYMEASUREMENT_BRIDGE_WORKER_PYTHON`
+```powershell
+.\scripts\windows\run_app.ps1 `
+    -B1500Dll "C:\Path\To\agb1500_32.dll" `
+    -WGFMUDll "C:\Path\To\WGFMU.dll" `
+    -Visa32Dll "C:\Path\To\visa32.dll"
+```
+
+## Portable Config
+
+Default configs live in `saved_configs`. The checked-in `global_config.json` uses repo-relative paths:
+- `devices_csv_path`: `devices.csv` resolves to `saved_configs/devices.csv`
+- `output_dir`: `output` resolves to a folder inside the app copy
+- `fallback_output_dir`: `output` resolves to the same local folder
 
 ## How to Run
 1. Prepare one or more device CSV files (columns: `Site,Subsite,Device,X,Y`).
-2. Run `python ui.py` to launch GUI.
+2. Double-click `Run Measurement App.cmd` to launch the GUI.
 3. In the Selection panel, choose a `Devices CSV` source (dropdown or `Browse...`).
 4. Select site/subsite/device/procedure.
 5. Click "Run" to execute (logs to GUI, saves data).

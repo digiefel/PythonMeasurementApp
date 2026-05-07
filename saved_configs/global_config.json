@@ -1,13 +1,13 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
-    "fallback_output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\test_output",
+    "output_dir": "measurement_output",
+    "fallback_output_dir": "fallback_output",
     "asu_channels": [
         "SMU2"
     ],
     "asu_path_mode": 1,
     "asu_range_mode": null,
-    "devices_csv_path": "C:\\Users\\EMN Lab\\Desktop\\PythonMeasurementApp\\DavideL\\saved_configs\\devices.csv",
+    "devices_csv_path": "devices.csv",
     "cmu_calibration": {
         "7": {
             "open": {
