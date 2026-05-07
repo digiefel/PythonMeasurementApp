@@ -99,6 +99,7 @@ class CVSweepProcedure(MeasurementProcedure):
     def _entry_freq_keys(self, entry: dict) -> set[str]:
         if not isinstance(entry, dict):
             return set()
+        # Calibration data can be stored as a per-frequency map or as an older single-frequency entry.
         by_freq = entry.get("results_by_frequency", {})
         if isinstance(by_freq, dict) and by_freq:
             keys = set()

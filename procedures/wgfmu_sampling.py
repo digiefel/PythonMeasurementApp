@@ -118,6 +118,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         return channels
 
     def _iter_parameter_combinations(self):
+        # Each Cartesian-product combination is measured and saved as its own output file.
         return product(
             self.smu_channel_list_1,
             self.smu_channel_list_2,
@@ -277,6 +278,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         }
 
     def _push_plot_sample(self, t_val, i1_val, i2_val, state, out_i1, out_i2):
+        # Bucket-average only the live plot; raw samples are still preserved for CSV output.
         state['count'] += 1
         state['sum_t'] += t_val
         state['sum_i1'] += i1_val
@@ -319,6 +321,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         }
 
     def _push_psd_sample(self, psd_state, i1_val, i2_val):
+        # Average non-overlapping PSD windows before replacing the plotted spectrum.
         psd_state['buf_i1'].append(i1_val)
         psd_state['buf_i2'].append(i2_val)
         if len(psd_state['buf_i1']) >= self.PSD_WINDOW_LEN:

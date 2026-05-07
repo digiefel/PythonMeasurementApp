@@ -176,6 +176,7 @@ class PUNDProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_pg, float(self.repetition_count))
 			wgfmu.add_sequence(self.channel_2, pattern_iv, float(self.repetition_count))
 			
+			# Return both WGFMU channels to a known idle level after the repeated pattern.
 			pattern_cleanup = f"CLEANUP_{self.get_run_timestamp()}"
 			wgfmu.create_pattern(pattern_cleanup, self.base_voltage)
 			wgfmu.add_vector(pattern_cleanup, 1e-4, 0.0) 
@@ -272,6 +273,7 @@ class PUNDProcedure(MeasurementProcedure):
 						data.append([t, cur, v])
 
 						# Determine which rep this point belongs to
+						# Timestamps are absolute across repetitions; map each sample back to an overlay trace.
 						rep_idx = int(t / pattern_duration) if pattern_duration > 0 else 0
 						rep_idx = min(rep_idx, self.repetition_count - 1)
 

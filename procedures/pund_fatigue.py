@@ -283,6 +283,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				wgfmu.add_sequence(self.channel_1, pattern_fat_pg, remaining)
 				wgfmu.add_sequence(self.channel_2, pattern_fat_iv, remaining)
 
+			# Force both channels back to zero/base voltage after the fatigue schedule.
 			pattern_cleanup = f"CLEANUP_{ts}"
 			wgfmu.create_pattern(pattern_cleanup, self.base_voltage)
 			wgfmu.add_vector(pattern_cleanup, 1e-4, 0.0) 
@@ -388,6 +389,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						data_ch2.append((t_i, cur))
 
 						# Determine which measurement cycle this point belongs to
+						# Samples are contiguous by measured PUND cycle; split index into cycle and offset.
 						meas_idx = i // sample_points
 						sample_in_cycle = i % sample_points
 

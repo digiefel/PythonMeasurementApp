@@ -162,6 +162,7 @@ class MeasurementProcedure(ABC):
             value = self._coerce_parameter_value(raw_value, param.kind)
             self.settings[param.key] = value
             setattr(self, param.attr or param.key, value)
+        # Preserve runner/UI extras so older procedure logic can still use implicit self.<setting> access.
         for key, value in self.settings.items():
             if key == "cmu_calibration" or not isinstance(key, str) or not key.isidentifier():
                 continue

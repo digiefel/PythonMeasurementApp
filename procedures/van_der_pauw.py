@@ -68,6 +68,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         Forces current through force terminals, holds a return SMU at 0 V, and measures voltage on two sense SMUs.
         Returns list of [Current, VoltageDiff, Time, Status] tuples.
         """
+        # This mirrors the four-terminal sweep and assumes a future setup step supplies force/sense channels.
         runner = self.runner
         source_channel = self.force_high_channel
         return_channel = self.force_low_channel
