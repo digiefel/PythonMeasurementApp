@@ -1,5 +1,6 @@
 ﻿import collections
 import json
+import logging
 import os
 import threading
 from datetime import datetime
@@ -36,6 +37,8 @@ from procedures.pund_fatigue import PUNDFatigueProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
 from plotting import PlotBridge
+
+logger = logging.getLogger(__name__)
 
 def _format_duration(seconds: float) -> str:
     s = max(0, int(seconds))
@@ -1767,6 +1770,7 @@ class MainUI:
         timestamp = datetime.now().strftime('%H:%M:%S')
         log_msg = f'[{timestamp}] {msg}'
 
+        logger.info("%s", msg)
         print(log_msg)
         self.log_text.insert(tk.END, log_msg + '\n')
         self.log_text.see(tk.END)

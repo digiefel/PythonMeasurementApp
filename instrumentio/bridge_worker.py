@@ -7,9 +7,14 @@ parent process using newline-delimited JSON messages on stdin/stdout.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import traceback
+
+from app_logging import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def _emit(message: dict) -> None:
@@ -26,6 +31,8 @@ def _emit_error(req_id: str | None, message: str) -> None:
 
 
 def main() -> None:
+    configure_logging()
+    logger.info("Instrument bridge worker process started.")
     session = None
     try:
         for raw in sys.stdin:
@@ -166,6 +173,7 @@ def main() -> None:
 
                 raise RuntimeError(f"Unknown bridge command: {cmd}")
             except Exception:
+                logger.exception("Bridge command failed: req_id=%s", req_id)
                 _emit_error(req_id, traceback.format_exc())
     finally:
         if session is not None:

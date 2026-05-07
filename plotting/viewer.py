@@ -13,6 +13,7 @@ from multiprocessing import Queue
 import dearpygui.dearpygui as dpg
 import numpy as np
 
+from app_logging import configure_logging
 from plotting.elements import Curve, DataSource, HLine, Histogram, LinearFit, PlotDef, ToolbarButton, VLine
 from plotting.export import capture_framebuffer
 from plotting.stats import linear_fit
@@ -1091,6 +1092,8 @@ class PlotViewer:
 
 def viewer_main(cmd_queue: Queue, rsp_queue: Queue, geometry: dict | None = None) -> None:
     """Entry point for the viewer process."""
+    configure_logging()
+    logger.info("Plot viewer process started.")
     dpg.create_context()
     dpg.configure_app(
         anti_aliased_lines=True,

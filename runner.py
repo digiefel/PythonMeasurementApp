@@ -2,6 +2,7 @@ import os
 import os.path
 import time
 import atexit
+import logging
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 import threading
 from instrumentio.codes import B1500_CH_ALL
@@ -10,6 +11,8 @@ from prober import ProberController
 
 if TYPE_CHECKING:
     from plotting import PlotBridge, PlotDef, ToolbarButton
+
+logger = logging.getLogger(__name__)
 
 class MeasurementAbortRequested(Exception):
     """Custom exception to indicate measurement abortion."""
@@ -62,6 +65,7 @@ class MeasurementRunner:
         if self.log_callback:
             self.log_callback(msg)
         else:
+            logger.warning("No log callback registered. Message: %s", msg)
             print("Warning: No log callback registered. Message:", msg)
 
     def get_b1500(self, address: str) -> RemoteB1500Session:
