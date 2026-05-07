@@ -1,6 +1,6 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "Z:/_Users/Shared/dgfl/B1500",
+    "output_dir": "Z:\\_Users\\Shared\\dgfl\\B1500",
     "fallback_output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\test_output",
     "asu_channels": [
         "SMU2"
@@ -11,12 +11,11 @@
     "cmu_calibration": {
         "7": {
             "open": {
-                "timestamp": "2026-04-23T16:10:19",
+                "timestamp": "2026-05-05T10:16:28",
                 "frequencies_hz": [
                     1000.0,
                     10000.0,
-                    100000.0,
-                    1000000.0
+                    100000.0
                 ],
                 "results_by_frequency": {
                     "1000": {
@@ -35,13 +34,13 @@
                         "coefficients": {
                             "index": 1,
                             "frequency_hz": 1000.0,
-                            "open_r": -1.684965e-11,
-                            "open_i": 2.73845e-10,
-                            "short_r": 6.614138,
-                            "short_i": 0.2166812,
+                            "open_r": -9.903254e-12,
+                            "open_i": 1.130486e-10,
+                            "short_r": 1283.06,
+                            "short_i": 0.1296222,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "1000.000,-1.684965E-11,+2.738450E-10,+6.614138E+00,+2.166812E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "1000.000,-9.903254E-12,+1.130486E-10,+1.283060E+03,+1.296222E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "10000": {
@@ -60,13 +59,13 @@
                         "coefficients": {
                             "index": 4,
                             "frequency_hz": 10000.0,
-                            "open_r": 1.329244e-09,
-                            "open_i": 9.656185e-10,
-                            "short_r": 6.74403,
-                            "short_i": 0.1157738,
+                            "open_r": 8.231637e-11,
+                            "open_i": 8.868987e-10,
+                            "short_r": 1354.507,
+                            "short_i": 0.156248,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "10000.000,+1.329244E-09,+9.656185E-10,+6.744030E+00,+1.157738E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "10000.000,+8.231637E-11,+8.868987E-10,+1.354507E+03,+1.562480E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "100000": {
@@ -85,44 +84,19 @@
                         "coefficients": {
                             "index": 7,
                             "frequency_hz": 100000.0,
-                            "open_r": -5.176661e-09,
-                            "open_i": 9.340003e-09,
-                            "short_r": 6.805626,
-                            "short_i": 0.636474,
+                            "open_r": -3.381307e-11,
+                            "open_i": 8.758926e-09,
+                            "short_r": 1374.241,
+                            "short_i": 0.6192813,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "100000.000,-5.176661E-09,+9.340003E-09,+6.805626E+00,+6.364740E-01,+5.000000E+01,+0.000000E+00"
-                        }
-                    },
-                    "1000000": {
-                        "channel": 7,
-                        "corr_type": 1,
-                        "frequency_hz": 1000000.0,
-                        "mode": 100,
-                        "primary_reference": 0.0,
-                        "secondary_reference": 0.0,
-                        "result": 0,
-                        "corr_state": {
-                            "open": 1,
-                            "short": 0,
-                            "load": 0
-                        },
-                        "coefficients": {
-                            "index": 10,
-                            "frequency_hz": 1000000.0,
-                            "open_r": -8.163179e-09,
-                            "open_i": 8.294565e-08,
-                            "short_r": 7.316435,
-                            "short_i": 5.259551,
-                            "load_r": 50.0,
-                            "load_i": 0.0,
-                            "raw": "1000000.000,-8.163179E-09,+8.294565E-08,+7.316435E+00,+5.259551E+00,+5.000000E+01,+0.000000E+00"
+                            "raw": "100000.000,-3.381307E-11,+8.758926E-09,+1.374241E+03,+6.192813E-01,+5.000000E+01,+0.000000E+00"
                         }
                     }
                 }
             },
             "phase": {
-                "timestamp": "2026-04-23T16:22:29",
+                "timestamp": "2026-05-05T10:28:13",
                 "result": {
                     "channel": 7,
                     "mode": 1,
@@ -131,12 +105,11 @@
                 }
             },
             "short": {
-                "timestamp": "2026-04-23T16:10:51",
+                "timestamp": "2026-05-05T15:44:17",
                 "frequencies_hz": [
                     1000.0,
                     10000.0,
-                    100000.0,
-                    1000000.0
+                    100000.0
                 ],
                 "results_by_frequency": {
                     "1000": {
@@ -148,20 +121,20 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
                         "coefficients": {
                             "index": 1,
                             "frequency_hz": 1000.0,
-                            "open_r": 1.040745e-11,
-                            "open_i": 9.215886e-11,
-                            "short_r": 0.8692328,
-                            "short_i": 0.19522,
+                            "open_r": 8.141178e-12,
+                            "open_i": 1.008789e-10,
+                            "short_r": 1.731752,
+                            "short_i": 0.1772161,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "1000.000,+1.040745E-11,+9.215886E-11,+8.692328E-01,+1.952200E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "1000.000,+8.141178E-12,+1.008789E-10,+1.731752E+00,+1.772161E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "10000": {
@@ -173,20 +146,20 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
                         "coefficients": {
                             "index": 4,
                             "frequency_hz": 10000.0,
-                            "open_r": 5.191657e-10,
-                            "open_i": 1.288834e-09,
-                            "short_r": 1.034454,
-                            "short_i": 0.1185231,
+                            "open_r": 1.055136e-10,
+                            "open_i": 9.350332e-10,
+                            "short_r": 1.856409,
+                            "short_i": 0.1122319,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "10000.000,+5.191657E-10,+1.288834E-09,+1.034454E+00,+1.185231E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "10000.000,+1.055136E-10,+9.350332E-10,+1.856409E+00,+1.122319E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "100000": {
@@ -198,45 +171,20 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
                         "coefficients": {
                             "index": 7,
                             "frequency_hz": 100000.0,
-                            "open_r": 3.996559e-10,
-                            "open_i": 1.152039e-08,
-                            "short_r": 1.101772,
-                            "short_i": 0.6348255,
+                            "open_r": -3.381307e-11,
+                            "open_i": 8.758926e-09,
+                            "short_r": 1.855629,
+                            "short_i": 0.6357219,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "100000.000,+3.996559E-10,+1.152039E-08,+1.101772E+00,+6.348255E-01,+5.000000E+01,+0.000000E+00"
-                        }
-                    },
-                    "1000000": {
-                        "channel": 7,
-                        "corr_type": 2,
-                        "frequency_hz": 1000000.0,
-                        "mode": 400,
-                        "primary_reference": 0.0,
-                        "secondary_reference": 50.0,
-                        "result": 0,
-                        "corr_state": {
-                            "open": 1,
-                            "short": 1,
-                            "load": 0
-                        },
-                        "coefficients": {
-                            "index": 10,
-                            "frequency_hz": 1000000.0,
-                            "open_r": -8.163179e-09,
-                            "open_i": 8.294565e-08,
-                            "short_r": 1.643313,
-                            "short_i": 5.226246,
-                            "load_r": 50.0,
-                            "load_i": 0.0,
-                            "raw": "1000000.000,-8.163179E-09,+8.294565E-08,+1.643313E+00,+5.226246E+00,+5.000000E+01,+0.000000E+00"
+                            "raw": "100000.000,-3.381307E-11,+8.758926E-09,+1.855629E+00,+6.357219E-01,+5.000000E+01,+0.000000E+00"
                         }
                     }
                 }
@@ -292,68 +240,42 @@
             "cmu_channel": 7,
             "sweep_type": "double",
             "cmu_mode": 11,
-            "start_bias": 1.6,
-            "stop_bias": -2.5,
+            "start_bias": -2.0,
+            "stop_bias": 2.9,
             "points": 101,
             "measurement_range": 0.0,
             "ac_level_mv": 30.0,
-            "frequencies": "1k, 10k, 100k 1M",
+            "frequencies": "1k, 10k, 100k",
             "integration_mode": 0,
-            "integration_value": 5,
-            "hold_time": 0.0,
-            "delay_time": 0.0,
+            "integration_value": 2,
+            "hold_time": 0.5,
+            "delay_time": 0.05,
             "second_delay": 0.0
         }
     },
     "last_selection": {
-        "chip_id": "",
         "site": "VI",
         "subsite": "FeCap",
-        "device": "A1",
+        "device": "B4",
         "procedure": "CVSweep",
         "set_home_before_run": false,
+        "auto_separation_after_measurement": true,
+        "chip": "",
+        "selected_devices": [
+            "D4",
+            "G4",
+            "B4",
+            "C4",
+            "F4",
+            "E4"
+        ],
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": false,
         "temperature_mode": "Sweep",
         "temperature_setpoint_c": "",
         "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30",
-        "temp_comp_x_um_per_c": "-0.284",
-        "temp_comp_y_um_per_c": "1.435",
-        "temp_comp_z_um_per_c": "0.0",
-        "chip": "",
-        "selected_devices": [
-            "D6",
-            "C7",
-            "F5",
-            "E4",
-            "B5",
-            "E5",
-            "B7",
-            "H5",
-            "G4",
-            "A4",
-            "A6",
-            "A5",
-            "G6",
-            "C5",
-            "F7",
-            "D4",
-            "A7",
-            "E6",
-            "G5",
-            "H4",
-            "B4",
-            "F6",
-            "E7",
-            "B6",
-            "D5",
-            "D7",
-            "F4",
-            "C6",
-            "G7",
-            "C4",
-            "H6",
-            "H7"
-        ]
+        "temperature_wait_after_s": "30"
     }
 }
