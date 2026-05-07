@@ -1,8 +1,5 @@
 [CmdletBinding()]
 param(
-    [string]$Python64 = "",
-    [string]$Python32 = "",
-    [string]$PythonVersion = "3.11",
     [string]$WorkerPython = "",
     [string]$B1500Dll = "",
     [string]$WGFMUDll = "",
@@ -19,10 +16,8 @@ $mainPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 if (-not $SkipSetup) {
     & $setupScript `
-        -Python64 $Python64 `
-        -Python32 $Python32 `
-        -PythonVersion $PythonVersion `
         -ProjectRoot $projectRoot `
+        -WorkerPython $WorkerPython `
         -Recreate:$Recreate
 }
 

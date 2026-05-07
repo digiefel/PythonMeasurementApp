@@ -54,17 +54,9 @@ Double-clicking that file checks for `uv`, creates or updates `.venv` and `.venv
 
 Prerequisites on the instrument PC:
 - `uv` on `PATH`
-- 64-bit Python 3.11
-- 32-bit Python 3.11 for the vendor DLL bridge
+- A modern 64-bit Python 3 for the main GUI environment
+- The existing `.venv32` worker env, or 32-bit Python 3.11 so the script can create it
 - Vendor B1500/WGFMU/VISA DLLs installed in their standard locations, or supplied with environment overrides
-
-If Python auto-detection fails, run from PowerShell with explicit interpreters:
-
-```powershell
-.\scripts\windows\run_app.ps1 `
-    -Python64 "C:\Path\To\Python311-x64\python.exe" `
-    -Python32 "C:\Path\To\Python311-x86\python.exe"
-```
 
 To only create/update the environments:
 
