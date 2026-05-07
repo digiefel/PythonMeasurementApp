@@ -7,7 +7,7 @@ Optionally measures at N points (linear or log spaced) throughout the run.
 import time
 import numpy as np
 from plotting import PlotDef, Curve
-from procedures.base import MeasurementProcedure
+from procedures.base import Choice, MeasurementProcedure, WGFMUChannel, parameter, action
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
 	WGFMU_MEASURE_ENABLED_ENABLE,
@@ -24,24 +24,24 @@ from instrumentio.constants import (
 
 
 class PUNDFatigueProcedure(MeasurementProcedure):
-	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
-		super().__init__(settings, output_root, output_relative, runner, fallback_root)
-		self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
-		self.channel_1 = int(settings.get('channel_1', 101))  # PG + Vmeas
-		self.channel_2 = int(settings.get('channel_2', 102))  # FastIV + Imeas
-		
-		self.base_voltage = float(settings.get('base_voltage', 0.0))
-		self.vmax = float(settings.get('vmax', 1.0))
-		self.frequency = float(settings.get('frequency', 1e3))
-		self.pulse_delay = float(settings.get('pulse_delay', 0.0))
-		self.cycle_count = float(settings.get('cycle_count', 1e6))
-		self.invert_polarity = bool(settings.get('invert_polarity', False))
-
-		# Measurement spacing
-		self.points_per_decade = int(settings.get('points_per_decade', 10))
-
-		self.meas_range_1 = int(settings.get('meas_range_1', WGFMU_MEASURE_VOLTAGE_RANGES[0][0]))
-		self.meas_range_2 = int(settings.get('meas_range_2', WGFMU_MEASURE_CURRENT_RANGES[0][0]))
+	NAME = "PUNDFatigue"
+	PARAMETERS = (
+		parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+		parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
+		parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
+		parameter('vmax', 'Vmax (V)', 1.0, float),
+		parameter('base_voltage', 'Base Voltage (V)', 0.0, float),
+		parameter('frequency', 'Frequency (Hz)', 1e3, float),
+		parameter('pulse_delay', 'Pulse Delay (s)', 0.0, float),
+		parameter('cycle_count', 'Cycle Count', 1e6, float),
+		parameter('invert_polarity', 'Invert Polarity (PNNPP)', False, bool),
+		parameter('points_per_decade', 'Points per Decade', 10, int),
+		parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0], Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
+		parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+	)
+	UI_ACTIONS = (
+		action("Preview Sequence", "_show_pund_fatigue_preview"),
+	)
 
 	def _build_pund_pattern(self):
 		"""Build PUND waveform vectors: N-P-P-N-N (or inverted P-N-N-P-P)."""
@@ -184,7 +184,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			'decades': np.log10(max(n, 1)),
 		}
 
-	def run(self, b1500, device):
+	def measure(self, device):
+		b1500 = self.b1500
 		self.check_stop(b1500)
 
 		vectors_meas = self._build_pund_pattern()
@@ -296,8 +297,6 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 			# --- Set up live plot before polling ---
 			runner = self.runner
-			base = self.format_filename("PUND_Fatigue", device.name)
-			
 			# Build Curve elements with logarithmic color gradient for each measured cycle
 			# Blues for voltage, oranges for current
 			max_cycles_to_plot = min(len(measure_cycles), 50)
@@ -460,14 +459,14 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						all_rows.append([cycle_num, t_v, voltage, current])
 
 			if all_rows:
-				filename = f"{base}.csv"
-				self.save_data(all_rows, filename,
-					["Cycle", "Time_s", "Voltage_V", "Current_A"], add_timestamp=False)
-
-			# Finalize and save the overlay plot
-			if measure_cycles:
-				plot_filename = f'{base}_overlay.png'
-				runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+				self.save_measurement_outputs(
+					all_rows,
+					"PUND_Fatigue",
+					device,
+					["Cycle", "Time_s", "Voltage_V", "Current_A"],
+					plot_suffix="_overlay.png",
+					save_plot=bool(measure_cycles),
+				)
 
 			self.log(f"PUND Fatigue complete: {self.cycle_count:.2e} cycles, {len(measure_cycles)} measurements")
 

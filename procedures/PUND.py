@@ -1,7 +1,7 @@
 import time
 import numpy as np
 from plotting import PlotDef, Curve
-from procedures.base import MeasurementProcedure
+from procedures.base import Choice, MeasurementProcedure, WGFMUChannel, parameter
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
 	WGFMU_MEASURE_ENABLED_ENABLE,
@@ -18,23 +18,21 @@ from instrumentio.constants import (
 
 
 class PUNDProcedure(MeasurementProcedure):
-	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
-		super().__init__(settings, output_root, output_relative, runner, fallback_root)
-		self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
-
-		self.channel_1 = int(settings.get('channel_1', 1))  # PG Vmeas
-		self.channel_2 = int(settings.get('channel_2', 2))  # FastIV Imeas
-
-		self.base_voltage = float(settings.get('base_voltage', 0.0))
-		self.vmax = float(settings.get('vmax', 1.0))
-		self.frequency = float(settings.get('frequency', 1e3))
-		self.pulse_delay = float(settings.get('pulse_delay', 0.0))
-		self.repetition_count = int(settings.get('repetition_count', 1))
-		self.repetition_delay = float(settings.get('repetition_delay', 0.0))
-		self.invert_polarity = bool(settings.get('invert_polarity', False))
-
-		self.meas_range_1 = int(settings.get('meas_range_1', WGFMU_MEASURE_VOLTAGE_RANGES[0][0]))
-		self.meas_range_2 = int(settings.get('meas_range_2', WGFMU_MEASURE_CURRENT_RANGES[0][0]))
+	NAME = "PUND"
+	PARAMETERS = (
+		parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+		parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
+		parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
+		parameter('vmax', 'Vmax (V)', 1.0, float),
+		parameter('base_voltage', 'Base Voltage (V)', 0.0, float),
+		parameter('frequency', 'Frequency (Hz)', 1e3, float),
+		parameter('pulse_delay', 'Pulse Delay (s)', 0.0, float),
+		parameter('repetition_count', 'Repetition Count', 1, int),
+		parameter('repetition_delay', 'Repetition Delay (s)', 0.0, float),
+		parameter('invert_polarity', 'Invert Polarity (PNNPP)', False, bool),
+		parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0], Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
+		parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+	)
 
 	def _build_pund_vectors(self):
 		"""Build PUND waveform: N-P-P-N-N sequence (or inverted P-N-N-P-P)."""
@@ -67,7 +65,8 @@ class PUNDProcedure(MeasurementProcedure):
 			vectors.append((self.repetition_delay, self.base_voltage))
 		return vectors
 
-	def run(self, b1500, device):
+	def measure(self, device):
+		b1500 = self.b1500
 		self.check_stop(b1500)
 		self.log(f"Starting PUND on {device.name}")
 
@@ -327,14 +326,14 @@ class PUNDProcedure(MeasurementProcedure):
 
 				time.sleep(0.05)
 
-			base = self.format_filename("PUND", device.name)
-			filename = f"{base}.csv"
-			self.save_data(data, filename, ["Time_s", "Current_A", "Voltage_V"], add_timestamp=False)
+			self.save_measurement_outputs(
+				data,
+				"PUND",
+				device,
+				["Time_s", "Current_A", "Voltage_V"],
+				plot_suffix="_overlay.png",
+			)
 			self.log(f"PUND complete: {len(data)} points")
-
-			# Finalize and save overlay plot
-			plot_filename = f'{base}_overlay.png'
-			runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
 		finally:
 			try:
 				wgfmu.clear()

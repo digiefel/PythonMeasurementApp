@@ -1,5 +1,5 @@
-from procedures.base import MeasurementProcedure
-from instrumentio.constants import SMU_CHANNEL_MAP
+from procedures.base import Choice, MeasurementProcedure, SMU, parameter
+from instrumentio.constants import B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
@@ -13,43 +13,27 @@ from plotting import PlotDef, Curve, LinearFit
 from plotting import linear_fit
 
 class FourTerminalIVProcedure(MeasurementProcedure):
-    def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
-        super().__init__(settings, output_root, output_relative, runner, fallback_root)
-        # Default settings for 4-terminal I-V sweep
-        self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
+    NAME = "FourTerminalIV"
+    PARAMETERS = (
+        parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+        parameter('force_high_channel', 'Force High SMU', 4, SMU),
+        parameter('sense_high_channel', 'Sense High SMU', 5, SMU),
+        parameter('force_low_channel', 'Force Low SMU', 3, SMU),
+        parameter('sense_low_channel', 'Sense Low SMU', 6, SMU),
+        parameter('start_current', 'Start Current (A)', 0.0, float),
+        parameter('stop_current', 'Stop Current (A)', 1e-6, float),
+        parameter('points', 'Points', 75, int),
+        parameter('voltage_compliance', 'Voltage Compliance (V)', 10.0, float),
+        parameter('power_compliance', 'Power Compliance (W)', 0.0, float),
+        parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float)),
+        parameter('current_compliance', 'Return Current Compliance (A)', 0.01, float),
+        parameter('hold_time', 'Hold Time (s)', 0.0, float),
+        parameter('delay_time', 'Delay Time (s)', 0.0, float),
+        parameter('second_delay', 'Second Delay (s)', 0.0, float),
+    )
 
-        # SMU channel assignments for 4-terminal measurement (default to installed modules on this tool)
-        self.force_high_channel = settings.get('force_high_channel', 4)  # Force high terminal
-        self.sense_high_channel = settings.get('sense_high_channel', 5)  # Sense high terminal
-        self.force_low_channel = settings.get('force_low_channel', 3)   # Force low terminal
-        self.sense_low_channel = settings.get('sense_low_channel', 6)   # Sense low terminal
-
-        # Sweep parameters (current forcing for 4-terminal measurement)
-        self.start_current = settings.get('start_current', 0.0)
-        self.stop_current = settings.get('stop_current', 1e-6)
-        self.points = settings.get('points', 75)
-        self.voltage_compliance = settings.get('voltage_compliance', 10.0)  # Voltage compliance
-        self.power_compliance = settings.get('power_compliance', 0.0)
-        self.measurement_range = settings.get('measurement_range', 0.0)  # Voltage measurement range (0 = auto)
-        self.current_compliance = settings.get('current_compliance', 0.01)  # Current limit when holding 0 V on return
-
-        # Timing parameters
-        self.hold_time = settings.get('hold_time', 0.0)
-        self.delay_time = settings.get('delay_time', 0.0)
-        self.second_delay = settings.get('second_delay', 0.0)
-
-        # Optional ASU configuration
-        self.asu_channels = settings.get('asu_channels', [])
-        self.asu_path_mode = settings.get('asu_path_mode', None)
-        self.asu_range_mode = settings.get('asu_range_mode', None)
-
-        # Normalize SMU names to channel numbers if needed
-        self.force_high_channel = SMU_CHANNEL_MAP.get(str(self.force_high_channel), self.force_high_channel)
-        self.sense_high_channel = SMU_CHANNEL_MAP.get(str(self.sense_high_channel), self.sense_high_channel)
-        self.force_low_channel = SMU_CHANNEL_MAP.get(str(self.force_low_channel), self.force_low_channel)
-        self.sense_low_channel = SMU_CHANNEL_MAP.get(str(self.sense_low_channel), self.sense_low_channel)
-
-    def run(self, b1500, device):
+    def measure(self, device):
+        b1500 = self.b1500
         runner = self.runner
         self.check_stop(b1500)
 
@@ -67,14 +51,12 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             # Perform the I-V sweep
             results = self.perform_iv_sweep(b1500, device)
 
-            # Save results
-            base = self.format_filename("FourTerminalIV", device.name)
-            filename = f'{base}.csv'
-            self.save_data(results, filename,
-                          ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
-                          add_timestamp=False)
-            plot_filename = f'{base}_plot.png'
-            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            self.save_measurement_outputs(
+                results,
+                "FourTerminalIV",
+                device,
+                ['Current_A', 'VoltageHigh_V', 'VoltageLow_V', 'Time_sec', 'Status'],
+            )
             self.log(f'4-Terminal I-V sweep completed for {device.name}')
 
         except Exception as e:
@@ -102,8 +84,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         b1500.set_switch(sense_low, True)
 
         # If requested, configure ASU path/range for low-leakage channels
-        asu_list = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels] if self.asu_channels else []
-        for ch in asu_list:
+        for ch in self.asu_channels or []:
             if self.asu_path_mode is not None:
                 b1500.asu_path(ch, self.asu_path_mode)
             if self.asu_range_mode is not None:

@@ -2,8 +2,8 @@ import math
 import os
 
 from plotting import PlotDef, Curve, HLine, LinearFit, linear_fit
-from procedures.base import MeasurementProcedure, MeasurementAbortRequested
-from instrumentio.constants import SMU_CHANNEL_MAP
+from procedures.base import Choice, MeasurementProcedure, MeasurementAbortRequested, OptionalSMU, SMU, parameter
+from instrumentio.constants import B1500_CURRENT_RANGES
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
@@ -24,36 +24,26 @@ class IVSweepProcedure(MeasurementProcedure):
     Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
     measuring the sourced voltage and current at each step.
     """
-    def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
-        super().__init__(settings, output_root, output_relative, runner, fallback_root)
-        self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
+    NAME = "IVSweep"
+    PARAMETERS = (
+        parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+        parameter('high_channel', 'High SMU', 4, SMU),
+        parameter('low_channel', 'Low SMU', 3, SMU),
+        parameter('sense_high', 'Sense High SMU (optional)', None, OptionalSMU),
+        parameter('sense_low', 'Sense Low SMU (optional)', None, OptionalSMU),
+        parameter('start_voltage', 'Start Voltage (V)', 0.0, float),
+        parameter('v_max', 'Vmax (V)', 15.0, float),
+        parameter('points', 'Points', 75, int),
+        parameter('double_sweep', 'Double Sweep (return)', True, bool),
+        parameter('current_compliance', 'Current Compliance (A)', 1e-3, float),
+        parameter('current_range', 'Current Range (A)', B1500_AUTO_RANGE, Choice(B1500_CURRENT_RANGES, float)),
+        parameter('hold_time', 'Hold Time (s)', 0.0, float),
+        parameter('delay_time', 'Delay Time (s)', 0.0, float),
+        parameter('second_delay', 'Second Delay (s)', 0.0, float),
+    )
 
-        self.high_channel = SMU_CHANNEL_MAP.get(str(settings.get('high_channel', 4)), settings.get('high_channel', 4))
-        self.low_channel = SMU_CHANNEL_MAP.get(str(settings.get('low_channel', 3)), settings.get('low_channel', 3))
-        self.sense_high = SMU_CHANNEL_MAP.get(str(settings.get('sense_high', None)), settings.get('sense_high', None))
-        self.sense_low = SMU_CHANNEL_MAP.get(str(settings.get('sense_low', None)), settings.get('sense_low', None))
-
-        self.start_voltage = settings.get('start_voltage', 0.0)
-        self.v_max = settings.get('v_max', 15.0)
-        self.points = max(1, int(float(settings.get('points', 75))))
-        self.current_compliance = float(settings.get('current_compliance', 1e-3))
-        self.current_range = float(settings.get('current_range', B1500_AUTO_RANGE))
-        self.double_sweep = bool(settings.get('double_sweep', True))
-
-        # Timing controls (optional; default to immediate sweep)
-        self.hold_time = float(settings.get('hold_time', 0.0))
-        self.delay_time = float(settings.get('delay_time', 0.0))
-        self.second_delay = float(settings.get('second_delay', 0.0))
-
-        # Optional ASU configuration
-        self.asu_channels = settings.get('asu_channels', [])
-        self.asu_path_mode = settings.get('asu_path_mode', None)
-        self.asu_range_mode = settings.get('asu_range_mode', None)
-
-        # Normalize ASU channel labels to numeric indices
-        self.asu_channels = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in self.asu_channels]
-
-    def run(self, b1500, device):
+    def measure(self, device):
+        b1500 = self.b1500
         runner = self.runner
         self.log(f'Starting IV sweep on {device.name}')
         try:
@@ -67,16 +57,12 @@ class IVSweepProcedure(MeasurementProcedure):
 
             results = self.perform_breakdown_sweep(b1500, device)
 
-            base = self.format_filename("IVSweep", device.name)
-            filename = f'{base}.csv'
-            csv_path = self.save_data(
+            self.save_measurement_outputs(
                 results,
-                filename,
+                "IVSweep",
+                device,
                 ['Voltage_V', 'Current_High_A', 'Current_Low_A', 'Time_sec', 'Status'],
-                add_timestamp=False
             )
-            plot_filename = f'{base}_plot.png'
-            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
             self.log(f'IV sweep completed for {device.name}')
         except Exception as e:
             self.log(f'Error during IV sweep: {str(e)}')

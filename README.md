@@ -102,14 +102,15 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - `set_procedure_settings(proc_name, settings)`: Saves settings.
 
 ### procedures/base.py
-- `MeasurementProcedure(settings, output_dir, runner)`: Abstract base with runner provided at construction.
-- `run(device)`: Abstract method for execution.
-- `log(message)`: Logs with timestamp.
-- `save_data(data, filename, headers)`: Saves CSV.
+- `MeasurementProcedure(settings, output_root, output_relative, runner)`: Base class that applies declared procedure parameters, exposes `self.b1500` / `self.wgfmu`, and handles CSV saving.
+- `PARAMETERS`: Tuple of `parameter(...)` declarations. The UI form, defaults, runtime attributes, and CSV metadata are generated from this.
+- `UI_ACTIONS`: Optional tuple of `action(...)` declarations for procedure-specific UI buttons.
+- `measure(device)`: Preferred method for new procedures. Use `self.b1500`, `self.wgfmu`, and declared parameter attributes.
+- `save_data(data, filename, headers)`: Saves CSV and automatically prepends the procedure parameters and run context as `#` metadata lines.
 
 ### procedures/cv_sweep.py (Example)
 - `CVSweepProcedure`: Inherits from base.
-- `run(device)`: Implements measurement logic using bindings to B1500/WGFMU.
+- `measure(device)`: Implements measurement logic using `self.b1500` / `self.wgfmu`.
 
 ### runner.py
 - `MeasurementRunner(config)`: Handles execution.
@@ -173,10 +174,28 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - **global_config.json**: Stores global app settings including the active `devices_csv_path`.
 
 ## Procedures
-- Known at compile time (hardcoded in UI).
+- Known at compile time through `PROCEDURE_CLASSES` in `ui.py`.
 - Each is a class inheriting `MeasurementProcedure`.
-- Settings: Dict stored in global_config.json.
-- Add new procedures by creating subclasses and updating UI values.
+- Settings: Declared once on the procedure class with `PARAMETERS`; the UI and CSV metadata are derived automatically.
+- Add new procedures by creating a subclass, adding it to `PROCEDURE_CLASSES`, and implementing `measure(device)`.
+
+Minimal example:
+
+```python
+from procedures.base import MeasurementProcedure, parameter
+
+class MyProcedure(MeasurementProcedure):
+    NAME = "MyProcedure"
+    PARAMETERS = (
+        parameter("gpib_address", "GPIB Address", "GPIB0::17::INSTR", str),
+        parameter("voltage", "Voltage (V)", 1.0, float),
+    )
+
+    def measure(self, device):
+        self.b1500.reset()
+        self.b1500.force_voltage(4, self.voltage, 1e-3)
+        self.save_data([[self.voltage]], "example.csv", ["Voltage_V"])
+```
 
 ## GUI
 - Comboboxes for selection (cascading updates).

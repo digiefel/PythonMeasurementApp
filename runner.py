@@ -494,9 +494,14 @@ class MeasurementRunner:
         self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:
-            b1500 = self.get_b1500(settings['gpib_address'])
-            self.log(f'Connected to B1500 at {settings["gpib_address"]}')
-            proc.run(b1500, device)
+            gpib_address = settings.get('gpib_address')
+            if gpib_address is None and hasattr(proc_class, 'ui_defaults'):
+                gpib_address = proc_class.ui_defaults().get('gpib_address')
+            gpib_address = gpib_address or 'GPIB0::17::INSTR'
+            settings['gpib_address'] = gpib_address
+            b1500 = self.get_b1500(gpib_address)
+            self.log(f'Connected to B1500 at {gpib_address}')
+            proc.execute(b1500, device)
         except (MeasurementAbortRequested, MeasurementSkipRequested):
             raise
         except Exception as e:

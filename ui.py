@@ -29,6 +29,7 @@ from instrumentio.constants import (
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
 from runner import MeasurementAbortRequested, MeasurementRunner
+from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.iv_sweep import IVSweepProcedure
 from procedures.cv_sweep import CVSweepProcedure
@@ -39,6 +40,15 @@ from tooltip_helper import attach_tooltip
 from plotting import PlotBridge
 
 logger = logging.getLogger(__name__)
+
+PROCEDURE_CLASSES = {
+    'FourTerminalIV': FourTerminalIVProcedure,
+    'IVSweep': IVSweepProcedure,
+    'CVSweep': CVSweepProcedure,
+    'PUND': PUNDProcedure,
+    'PUNDFatigue': PUNDFatigueProcedure,
+    'WGFMU Sampling': WGFMUSamplingProcedure,
+}
 
 def _format_duration(seconds: float) -> str:
     s = max(0, int(seconds))
@@ -140,198 +150,15 @@ class MainUI:
         # Temperature UI helper
         self.temp_ui = TemperatureUI(self.root, self.runner, self.log)
 
-        # Procedure field definitions (label, type)
+        # Procedure forms are declared on the procedure classes themselves.
+        self.procedure_classes = PROCEDURE_CLASSES
         self.procedure_fields = {
-            'FourTerminalIV': [
-                ('gpib_address', 'GPIB Address', str),
-                ('force_high_channel', 'Force High SMU', 'smu'),
-                ('sense_high_channel', 'Sense High SMU', 'smu'),
-                ('force_low_channel', 'Force Low SMU', 'smu'),
-                ('sense_low_channel', 'Sense Low SMU', 'smu'),
-                ('start_current', 'Start Current (A)', float),
-                ('stop_current', 'Stop Current (A)', float),
-                ('points', 'Points', int),
-                ('voltage_compliance', 'Voltage Compliance (V)', float),
-                ('power_compliance', 'Power Compliance (W)', float),
-                ('measurement_range', 'Voltage Meas Range', 'voltage_range'),
-                ('current_compliance', 'Return Current Compliance (A)', float),
-                ('hold_time', 'Hold Time (s)', float),
-                ('delay_time', 'Delay Time (s)', float),
-                ('second_delay', 'Second Delay (s)', float),
-            ],
-            'IVSweep': [
-                ('gpib_address', 'GPIB Address', str),
-                ('high_channel', 'High SMU', 'smu'),
-                ('low_channel', 'Low SMU', 'smu'),
-                ('v_max', 'Vmax (V)', float),
-                ('points', 'Points', int),
-                ('double_sweep', 'Double Sweep (return)', bool),
-                ('current_compliance', 'Current Compliance (A)', float),
-                ('current_range', 'Current Range (A)', 'current_range'),
-                ('hold_time', 'Hold Time (s)', float),
-                ('delay_time', 'Delay Time (s)', float),
-                ('second_delay', 'Second Delay (s)', float),
-            ],
-            'CVSweep': [
-                ('gpib_address', 'GPIB Address', str),
-                ('cmu_channel', 'CMU Channel', 'cmu_channel'),
-                ('sweep_type', 'Sweep Type', 'cv_sweep_type'),
-                ('cmu_mode', 'C-V Meas Output', 'cmu_mode'),
-                ('start_bias', 'Start Bias (V)', float),
-                ('stop_bias', 'Stop Bias (V)', float),
-                ('points', 'Points', int),
-                ('measurement_range', 'MFCMU Meas Range', 'cmu_sweep_range'),
-                ('ac_level_mv', 'AC Level (mV)', float),
-                ('frequencies', 'Frequencies (e.g. 100k, 1M)', str),
-                ('integration_mode', 'Integration Mode', 'cmu_integration_mode'),
-                ('integration_value', 'Integration (manual/PLC)', int),
-                ('hold_time', 'Hold Time (s)', float),
-                ('delay_time', 'Delay Time (s)', float),
-                ('second_delay', 'Second Delay (s)', float),
-            ],
-            'PUND': [
-                ('gpib_address', 'GPIB Address', str),
-                ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
-                ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
-                ('vmax', 'Vmax (V)', float),
-                ('base_voltage', 'Base Voltage (V)', float),
-                ('frequency', 'Frequency (Hz)', float),
-                ('pulse_delay', 'Pulse Delay (s)', float),
-                ('repetition_count', 'Repetition Count', int),
-                ('repetition_delay', 'Repetition Delay (s)', float),
-                ('invert_polarity', 'Invert Polarity (PNNPP)', bool),
-                ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
-                ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
-            ],
-            'PUNDFatigue': [
-                ('gpib_address', 'GPIB Address', str),
-                ('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 'wgfmu_channel'),
-                ('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 'wgfmu_channel'),
-                ('vmax', 'Vmax (V)', float),
-                ('base_voltage', 'Base Voltage (V)', float),
-                ('frequency', 'Frequency (Hz)', float),
-                ('pulse_delay', 'Pulse Delay (s)', float),
-                ('cycle_count', 'Cycle Count', float),
-                ('invert_polarity', 'Invert Polarity (PNNPP)', bool),
-                ('points_per_decade', 'Points per Decade', int),
-                ('meas_range_1', 'Meas Range Ch1 (V)', 'wgfmu_voltage_range'),
-                ('meas_range_2', 'Meas Range Ch2 (I)', 'wgfmu_current_range'),
-            ],
-            'WGFMU Sampling': [
-                ('gpib_address', 'GPIB Address', str),
-                ('channel_1', 'WGFMU Channel 1', 'wgfmu_channel'),
-                ('channel_2', 'WGFMU Channel 2', 'wgfmu_channel'),
-                ('force_voltage_1', 'WGFMU Force Voltage Ch1 List (V, comma-separated)', str),
-                ('force_voltage_2', 'WGFMU Force Voltage Ch2 List (V, comma-separated)', str),
-                ('smu_channel_list_1', 'SMU Channel List 1 (comma-separated)', str),
-                ('smu_channel_list_2', 'SMU Channel List 2 (comma-separated)', str),
-                ('smu_voltage_1', 'SMU Voltage List 1 (V, comma-separated)', str),
-                ('smu_voltage_2', 'SMU Voltage List 2 (V, comma-separated)', str),
-                ('smu_compliance_1', 'SMU Compliance 1 (A)', float),
-                ('smu_compliance_2', 'SMU Compliance 2 (A)', float),
-                ('hold_time_s', 'Hold Time Before Sampling (s)', float),
-                ('sampling_rate_hz', 'Sampling Rate (Hz)', float),
-                ('total_samples', 'Total Samples', int),
-                ('meas_range_1', 'Current Range Ch1', 'wgfmu_current_range'),
-                ('meas_range_2', 'Current Range Ch2', 'wgfmu_current_range'),
-            ],
+            name: proc_class.ui_fields()
+            for name, proc_class in self.procedure_classes.items()
         }
         self.procedure_defaults = {
-            'FourTerminalIV': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'force_high_channel': 4,
-                'sense_high_channel': 5,
-                'force_low_channel': 3,
-                'sense_low_channel': 6,
-                'start_current': 0.0,
-                'stop_current': 1e-6,
-                'points': 75,
-                'voltage_compliance': 10.0,
-                'power_compliance': 0.0,
-                'measurement_range': 0.0,
-                'current_compliance': 0.01,
-                'hold_time': 0.0,
-                'delay_time': 0.0,
-                'second_delay': 0.0,
-            },
-            'IVSweep': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'high_channel': 4,
-                'low_channel': 3,
-                'v_max': 15.0,
-                'points': 75,
-                'double_sweep': True,
-                'current_compliance': 1e-3,
-                'current_range': 0.0,
-                'hold_time': 0.0,
-                'delay_time': 0.0,
-                'second_delay': 0.0,
-            },
-            'CVSweep': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'cmu_channel': -1,
-                'sweep_type': 'single',
-                'cmu_mode': 101,
-                'start_bias': -2.0,
-                'stop_bias': 2.0,
-                'points': 101,
-                'measurement_range': 0.0,
-                'ac_level_mv': 30.0,
-                'frequencies': '100k',
-                'integration_mode': 0,
-                'integration_value': 1,
-                'hold_time': 0.0,
-                'delay_time': 0.0,
-                'second_delay': 0.0,
-            },
-            'PUND': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'channel_1': 101,
-                'channel_2': 102,
-                'base_voltage': 0.0,
-                'vmax': 1.0,
-                'base_voltage': 0.0,
-                'frequency': 1e3,
-                'pulse_delay': 0.0,
-                'repetition_count': 1,
-                'repetition_delay': 0.0,
-                'invert_polarity': False,
-                'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
-                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
-            },
-            'PUNDFatigue': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'channel_1': 101,
-                'channel_2': 102,
-                'base_voltage': 0.0,
-                'vmax': 1.0,
-                'base_voltage': 0.0,
-                'frequency': 1e3,
-                'pulse_delay': 0.0,
-                'cycle_count': 1e6,
-                'invert_polarity': False,
-                'points_per_decade': 10,
-                'meas_range_1': WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
-                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
-            },
-            'WGFMU Sampling': {
-                'gpib_address': 'GPIB0::17::INSTR',
-                'channel_1': 101,
-                'channel_2': 102,
-                'force_voltage_1': '0.1',
-                'force_voltage_2': '0.1',
-                'smu_channel_list_1': 'SMU1',
-                'smu_channel_list_2': 'SMU2',
-                'smu_voltage_1': '0.0',
-                'smu_voltage_2': '0.0',
-                'smu_compliance_1': 0.01,
-                'smu_compliance_2': 0.01,
-                'hold_time_s': 0.0,
-                'sampling_rate_hz': 1e4,
-                'total_samples': 100000,
-                'meas_range_1': WGFMU_MEASURE_CURRENT_RANGES[0][0],
-                'meas_range_2': WGFMU_MEASURE_CURRENT_RANGES[0][0],
-            },
+            name: proc_class.ui_defaults()
+            for name, proc_class in self.procedure_classes.items()
         }
 
         self.build_layout()
@@ -816,87 +643,40 @@ class MainUI:
             return
 
         settings = self.config.get_procedure_settings(proc_name)
-        for idx, (key, label, cast) in enumerate(fields):
+        for idx, param in enumerate(fields):
+            key, label, kind = param.key, param.label, param.kind
             ttk.Label(self.params_frame, text=label).grid(row=idx, column=0, sticky="w", padx=4, pady=2)
             default_val = self.procedure_defaults.get(proc_name, {}).get(key, "")
             val = settings.get(key, default_val)
-            if cast is bool:
-                var = tk.BooleanVar(value=bool(val))
+            if kind is bool:
+                bool_val = val
+                if isinstance(val, str):
+                    bool_val = val.strip().lower() in ("1", "true", "yes", "on")
+                var = tk.BooleanVar(value=bool(bool_val))
                 chk = ttk.Checkbutton(self.params_frame, variable=var)
                 chk.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'smu':
-                label_val = self.lookup_smu_label(val)
+                self.param_vars[key] = (var, param)
+            elif kind in (SMU, OptionalSMU, WGFMUChannel):
+                label_val = kind.display_value(val)
                 var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=list(SMU_CHANNEL_MAP.keys()), state="readonly")
+                values = list(WGFMU_CHANNEL_MAP.keys()) if kind is WGFMUChannel else list(SMU_CHANNEL_MAP.keys())
+                if kind is OptionalSMU:
+                    values = ["None"] + values
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'voltage_range':
-                label_val = self.lookup_range_label(val, B1500_VOLTAGE_RANGES)
+                self.param_vars[key] = (var, param)
+            elif isinstance(kind, Choice):
+                label_val = kind.display_value(val)
                 var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_VOLTAGE_RANGES], state="readonly")
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in kind.options], state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'current_range':
-                label_val = self.lookup_range_label(val, B1500_CURRENT_RANGES)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CURRENT_RANGES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'cmu_channel':
-                label_val = self.lookup_range_label(val, B1500_CMU_CHANNELS)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_CHANNELS], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'cmu_mode':
-                label_val = self.lookup_range_label(val, self.cmu_mode_options)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in self.cmu_mode_options], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'cmu_sweep_range':
-                label_val = self.lookup_range_label(val, B1500_CMU_SWEEP_RANGES)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_SWEEP_RANGES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'cmu_integration_mode':
-                label_val = self.lookup_range_label(val, B1500_CMU_INTEGRATION_MODES)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in B1500_CMU_INTEGRATION_MODES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'wgfmu_voltage_range':
-                label_val = self.lookup_range_label(val, WGFMU_MEASURE_VOLTAGE_RANGES)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in WGFMU_MEASURE_VOLTAGE_RANGES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'wgfmu_channel':
-                label_val = self.lookup_wgfmu_label(val)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=list(WGFMU_CHANNEL_MAP.keys()), state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'wgfmu_current_range':
-                label_val = self.lookup_range_label(val, WGFMU_MEASURE_CURRENT_RANGES)
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in WGFMU_MEASURE_CURRENT_RANGES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
-            elif cast == 'cv_sweep_type':
-                label_val = next((lbl for v, lbl in CV_SWEEP_TYPES if v == val), CV_SWEEP_TYPES[0][1])
-                var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in CV_SWEEP_TYPES], state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                self.param_vars[key] = (var, cast)
+                self.param_vars[key] = (var, param)
             else:
                 var = tk.StringVar(value=str(val))
                 entry = ttk.Entry(self.params_frame, textvariable=var)
                 entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.params_frame.grid_columnconfigure(1, weight=1)
-                self.param_vars[key] = (var, cast)
+                self.param_vars[key] = (var, param)
 
         # CV-specific: keep MFCMU range options consistent with entered frequency.
         if proc_name == 'CVSweep':
@@ -908,14 +688,37 @@ class MainUI:
             self.params_frame.grid_rowconfigure(spacer_row, weight=1)
             spacer = ttk.Frame(self.params_frame)
             spacer.grid(row=spacer_row, column=0, columnspan=2, sticky="nsew")
-            self._render_cv_calibration_section(calib_row)
+            self._render_cv_calibration_section(calib_row, self._procedure_actions(proc_name, section="CMU Calibration"))
             self._refresh_cv_calibration_readout()
 
-        # Add preview button for PUNDFatigue
-        if proc_name == 'PUNDFatigue':
-            row_idx = len(fields)
-            preview_btn = ttk.Button(self.params_frame, text="Preview Sequence", command=self._show_pund_fatigue_preview)
-            preview_btn.grid(row=row_idx, column=0, columnspan=2, pady=10)
+        self._render_procedure_actions(proc_name, start_row=len(fields))
+
+    def _procedure_actions(self, proc_name: str, section: str | None = None):
+        proc_class = self.procedure_classes.get(proc_name)
+        if proc_class is None:
+            return ()
+        actions = proc_class.ui_actions()
+        if section is None:
+            return tuple(action for action in actions if action.section is None)
+        return tuple(action for action in actions if action.section == section)
+
+    def _make_action_command(self, action_def):
+        def command():
+            callback = getattr(self, action_def.callback)
+            callback(*action_def.args)
+        return command
+
+    def _render_procedure_actions(self, proc_name: str, start_row: int):
+        actions = self._procedure_actions(proc_name)
+        for offset, action_def in enumerate(actions):
+            btn = ttk.Button(
+                self.params_frame,
+                text=action_def.label,
+                command=self._make_action_command(action_def),
+            )
+            btn.grid(row=start_row + offset, column=0, columnspan=2, pady=10)
+            if action_def.tooltip:
+                attach_tooltip(btn, action_def.tooltip)
 
     def _show_pund_fatigue_preview(self):
         """Show preview dialog for PUNDFatigue measurement schedule."""
@@ -969,38 +772,21 @@ class MainUI:
         proc_name = self.proc_var.get()
         fields = self.procedure_fields.get(proc_name, [])
         settings = {}
-        for key, _, cast in fields:
-            var, _ = self.param_vars.get(key, (None, cast))
+        for param in fields:
+            key, kind = param.key, param.kind
+            var, _ = self.param_vars.get(key, (None, param))
             if var is None:
                 continue
             try:
-                if cast is bool:
+                if kind is bool:
                     settings[key] = bool(var.get())
-                elif cast == 'smu':
-                    settings[key] = SMU_CHANNEL_MAP.get(var.get(), var.get())
-                elif cast == 'voltage_range':
-                    settings[key] = self.lookup_range_value(var.get(), B1500_VOLTAGE_RANGES)
-                elif cast == 'current_range':
-                    settings[key] = self.lookup_range_value(var.get(), B1500_CURRENT_RANGES)
-                elif cast == 'cmu_channel':
-                    settings[key] = int(self.lookup_range_value(var.get(), B1500_CMU_CHANNELS))
-                elif cast == 'cmu_mode':
-                    settings[key] = int(self.lookup_range_value(var.get(), self.cmu_mode_options))
-                elif cast == 'cmu_sweep_range':
-                    settings[key] = float(self.lookup_range_value(var.get(), B1500_CMU_SWEEP_RANGES))
-                elif cast == 'cmu_integration_mode':
-                    settings[key] = int(self.lookup_range_value(var.get(), B1500_CMU_INTEGRATION_MODES))
-                elif cast == 'wgfmu_voltage_range':
-                    settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_VOLTAGE_RANGES)
-                elif cast == 'wgfmu_channel':
-                    settings[key] = WGFMU_CHANNEL_MAP.get(var.get(), var.get())
-                elif cast == 'wgfmu_current_range':
-                    settings[key] = self.lookup_range_value(var.get(), WGFMU_MEASURE_CURRENT_RANGES)
-                elif cast == 'cv_sweep_type':
-                    settings[key] = self.lookup_range_value(var.get(), CV_SWEEP_TYPES)
-                elif cast is int:
+                elif kind in (SMU, OptionalSMU, WGFMUChannel):
+                    settings[key] = kind.collect_value(var.get())
+                elif isinstance(kind, Choice):
+                    settings[key] = kind.collect_value(var.get())
+                elif kind is int:
                     settings[key] = int(float(var.get()))
-                elif cast is float:
+                elif kind is float:
                     settings[key] = float(var.get())
                 else:
                     settings[key] = var.get()
@@ -1009,30 +795,24 @@ class MainUI:
                 settings[key] = var.get()
         return settings
 
-    def _render_cv_calibration_section(self, row_idx: int):
+    def _render_cv_calibration_section(self, row_idx: int, actions=()):
         section = ttk.LabelFrame(self.params_frame, text="CMU Calibration")
         section.grid(row=row_idx, column=0, columnspan=2, sticky="ew", padx=4, pady=(8, 6))
         section.grid_columnconfigure(2, weight=1)
 
         self._cv_calib_buttons = {}
-        for row, label, cal_type, tip in (
-            [
-                (0, "Open", "open", "Open-circuit calibration"),
-                (1, "Short", "short", "Short-circuit calibration"),
-                (2, "Phase", "phase", "Phase compensation"),
-                (3, "Load", "load", "Load calibration"),
-            ]
-        ):
+        for row, action_def in enumerate(actions):
+            cal_type = action_def.args[0] if action_def.args else action_def.label.lower()
             btn = tk.Button(
                 section,
-                text=label,
+                text=action_def.label,
                 width=5,
-                command=lambda c=cal_type: self._on_cv_calibration_button(c),
+                command=self._make_action_command(action_def),
                 bg="#f2a0a0",
                 activebackground="#e38f8f",
             )
             btn.grid(row=row, column=0, sticky="ew", padx=2, pady=2)
-            attach_tooltip(btn, lambda c=cal_type, t=tip: self._build_cv_calibration_tooltip(c, t))
+            attach_tooltip(btn, lambda c=cal_type, t=action_def.tooltip or action_def.label: self._build_cv_calibration_tooltip(c, t))
             self._cv_calib_buttons[cal_type] = btn
 
         readout = ttk.Label(
@@ -1568,14 +1348,7 @@ class MainUI:
             messagebox.showerror("Temperature", "Temperature control requires a connected prober.")
             return
 
-        proc_class = {
-            'FourTerminalIV': FourTerminalIVProcedure,
-            'IVSweep': IVSweepProcedure,
-            'CVSweep': CVSweepProcedure,
-            'PUND': PUNDProcedure,
-            'PUNDFatigue': PUNDFatigueProcedure,
-            'WGFMU Sampling': WGFMUSamplingProcedure,
-        }[proc_name]
+        proc_class = self.procedure_classes[proc_name]
         settings = self.collect_settings()
         # Cache current settings/selection in memory only to avoid overwriting config files on run
         self.config.data.setdefault('procedures', {})[proc_name] = settings

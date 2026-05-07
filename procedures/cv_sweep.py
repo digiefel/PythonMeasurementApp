@@ -1,7 +1,13 @@
 import math
 
 from plotting import PlotDef, Curve
-from procedures.base import MeasurementProcedure
+from procedures.base import Choice, MeasurementProcedure, parameter, action
+from instrumentio.constants import (
+    B1500_CMU_CHANNELS,
+    B1500_CMU_INTEGRATION_MODES,
+    B1500_CMU_MEASUREMENT_MODES,
+    B1500_CMU_SWEEP_RANGES,
+)
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
@@ -20,6 +26,13 @@ from instrumentio.descriptors import (
     get_cmu_mode_name,
 )
 from si_utils import parse_si_list, format_si_value
+
+
+CV_SWEEP_TYPES = (
+    ('single', 'Single (Start → Stop)'),
+    ('double', 'Double (Start → Stop → Start)'),
+    ('butterfly', 'Butterfly (0 → Vmax → Vmin → 0)'),
+)
 
 
 class CVSweepProcedure(MeasurementProcedure):
@@ -41,40 +54,42 @@ class CVSweepProcedure(MeasurementProcedure):
     per-point and plotted live in a 2×2 panel layout alongside Z and Theta.
     """
 
+    NAME = "CVSweep"
+    PARAMETERS = (
+        parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+        parameter('cmu_channel', 'CMU Channel', -1, Choice(B1500_CMU_CHANNELS, int)),
+        parameter('sweep_type', 'Sweep Type', 'single', Choice(CV_SWEEP_TYPES, str)),
+        parameter('cmu_mode', 'C-V Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int)),
+        parameter('start_bias', 'Start Bias (V)', -2.0, float),
+        parameter('stop_bias', 'Stop Bias (V)', 2.0, float),
+        parameter('points', 'Points', 101, int),
+        parameter('measurement_range', 'MFCMU Meas Range', B1500_AUTO_RANGE, Choice(B1500_CMU_SWEEP_RANGES, float)),
+        parameter('ac_level_mv', 'AC Level (mV)', 30.0, float),
+        parameter('frequencies', 'Frequencies (e.g. 100k, 1M)', '100k', str),
+        parameter('integration_mode', 'Integration Mode', 0, Choice(B1500_CMU_INTEGRATION_MODES, int)),
+        parameter('integration_value', 'Integration (manual/PLC)', 1, int),
+        parameter('hold_time', 'Hold Time (s)', 0.0, float),
+        parameter('delay_time', 'Delay Time (s)', 0.0, float),
+        parameter('second_delay', 'Second Delay (s)', 0.0, float),
+        parameter('require_cmu_calibration', 'Require Calibration', False, bool),
+    )
+    UI_ACTIONS = (
+        action("Open", "_on_cv_calibration_button", "open", section="CMU Calibration", tooltip="Open-circuit calibration"),
+        action("Short", "_on_cv_calibration_button", "short", section="CMU Calibration", tooltip="Short-circuit calibration"),
+        action("Phase", "_on_cv_calibration_button", "phase", section="CMU Calibration", tooltip="Phase compensation"),
+        action("Load", "_on_cv_calibration_button", "load", section="CMU Calibration", tooltip="Load calibration"),
+    )
+
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
-        super().__init__(settings, output_root, output_relative, runner, fallback_root)
-
-        self.gpib_address = settings.get("gpib_address", "GPIB0::17::INSTR")
-        self.cmu_channel = int(settings.get("cmu_channel", -1))
-        self.cmu_mode = int(settings.get("cmu_mode", B1500_CMUM_Z_TDEG))
-
-        # Backward compat: old configs have double_sweep + frequency_hz
+        settings = dict(settings)
         if 'sweep_type' not in settings and 'double_sweep' in settings:
-            self.sweep_type = 'double' if bool(settings['double_sweep']) else 'single'
-        else:
-            self.sweep_type = str(settings.get('sweep_type', 'single'))
-
+            settings['sweep_type'] = 'double' if bool(settings['double_sweep']) else 'single'
         if 'frequencies' not in settings and 'frequency_hz' in settings:
-            self.frequencies = [float(settings['frequency_hz'])]
-        else:
-            self.frequencies = self._parse_frequencies(settings.get('frequencies', '100k'))
-
-        self.start_bias = float(settings.get("start_bias", -2.0))
-        self.stop_bias = float(settings.get("stop_bias", 2.0))
-        self.points = max(1, int(float(settings.get("points", 101))))
-        self.measurement_range = float(settings.get("measurement_range", B1500_AUTO_RANGE))
-
-        self.ac_level_mv = float(settings.get("ac_level_mv", 30.0))
+            settings['frequencies'] = str(settings['frequency_hz'])
+        super().__init__(settings, output_root, output_relative, runner, fallback_root)
+        self.frequencies = self._parse_frequencies(self.settings.get('frequencies', '100k'))
         self.ac_level = self.ac_level_mv / 1000.0
-        self.integration_mode = int(settings.get("integration_mode", 0))
-        self.integration_value = int(settings.get("integration_value", 1))
-
-        self.hold_time = float(settings.get("hold_time", 0.0))
-        self.delay_time = float(settings.get("delay_time", 0.0))
-        self.second_delay = float(settings.get("second_delay", 0.0))
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
-        self.require_cmu_calibration = bool(settings.get("require_cmu_calibration", False))
-
         self._validate_settings()
 
     @staticmethod
@@ -233,7 +248,8 @@ class CVSweepProcedure(MeasurementProcedure):
             return float('nan'), float('nan')
         return Z / cos_t, -sin_t / (omega * Z)
 
-    def run(self, b1500, device):
+    def measure(self, device):
+        b1500 = self.b1500
         self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
         primary_label = format_cmu_component_label(primary_name)
@@ -253,9 +269,6 @@ class CVSweepProcedure(MeasurementProcedure):
         b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
 
         results = self.perform_cv_sweep(b1500, device, primary_name, monitor_name, primary_label, monitor_label)
-
-        base = self.format_filename("CVSweep", device.name)
-        filename = f"{base}.csv"
 
         is_z_theta = self._is_z_theta_mode()
         if is_z_theta:
@@ -284,9 +297,7 @@ class CVSweepProcedure(MeasurementProcedure):
                 "Status_Combined",
             ]
 
-        self.save_data(results, filename, columns, add_timestamp=False)
-        plot_filename = f"{base}_plot.png"
-        self.runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+        self.save_measurement_outputs(results, "CVSweep", device, columns)
         self.log(f"C-V sweep completed for {device.name}")
 
     def perform_cv_sweep(self, b1500, device, primary_name, monitor_name, primary_label, monitor_label):

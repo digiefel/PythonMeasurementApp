@@ -7,7 +7,7 @@ from itertools import product
 import numpy as np
 
 from plotting import PlotDef, Curve
-from procedures.base import MeasurementProcedure
+from procedures.base import Choice, MeasurementProcedure, WGFMUChannel, parameter
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
@@ -41,30 +41,34 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
     MAX_READ_CHUNK_POINTS = 5000
     POST_COMPLETION_DRAIN_TIMEOUT_S = 30.0
 
+    NAME = "WGFMU Sampling"
+    PARAMETERS = (
+        parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
+        parameter('channel_1', 'WGFMU Channel 1', 101, WGFMUChannel),
+        parameter('channel_2', 'WGFMU Channel 2', 102, WGFMUChannel),
+        parameter('force_voltage_1', 'WGFMU Force Voltage Ch1 List (V, comma-separated)', '0.1', str),
+        parameter('force_voltage_2', 'WGFMU Force Voltage Ch2 List (V, comma-separated)', '0.1', str),
+        parameter('smu_channel_list_1', 'SMU Channel List 1 (comma-separated)', 'SMU1', str),
+        parameter('smu_channel_list_2', 'SMU Channel List 2 (comma-separated)', 'SMU2', str),
+        parameter('smu_voltage_1', 'SMU Voltage List 1 (V, comma-separated)', '0.0', str),
+        parameter('smu_voltage_2', 'SMU Voltage List 2 (V, comma-separated)', '0.0', str),
+        parameter('smu_compliance_1', 'SMU Compliance 1 (A)', 0.01, float),
+        parameter('smu_compliance_2', 'SMU Compliance 2 (A)', 0.01, float),
+        parameter('hold_time_s', 'Hold Time Before Sampling (s)', 0.0, float),
+        parameter('sampling_rate_hz', 'Sampling Rate (Hz)', 1e4, float),
+        parameter('total_samples', 'Total Samples', 100000, int),
+        parameter('meas_range_1', 'Current Range Ch1', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+        parameter('meas_range_2', 'Current Range Ch2', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+    )
+
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
-        self.gpib_address = settings.get('gpib_address', 'GPIB0::17::INSTR')
-
-        self.channel_1 = int(settings.get('channel_1', 101))
-        self.channel_2 = int(settings.get('channel_2', 102))
-
-        self.force_voltage_1_values = self._parse_float_list(settings.get('force_voltage_1', '0.1'), 'force_voltage_1')
-        self.force_voltage_2_values = self._parse_float_list(settings.get('force_voltage_2', '0.1'), 'force_voltage_2')
-
-        self.smu_channel_list_1 = self._parse_channel_list(settings.get('smu_channel_list_1', 'SMU1'), 'smu_channel_list_1')
-        self.smu_channel_list_2 = self._parse_channel_list(settings.get('smu_channel_list_2', 'SMU2'), 'smu_channel_list_2')
-        self.smu_voltage_1_values = self._parse_float_list(settings.get('smu_voltage_1', '0.0'), 'smu_voltage_1')
-        self.smu_voltage_2_values = self._parse_float_list(settings.get('smu_voltage_2', '0.0'), 'smu_voltage_2')
-        self.smu_compliance_1 = float(settings.get('smu_compliance_1', 0.01))
-        self.smu_compliance_2 = float(settings.get('smu_compliance_2', 0.01))
-
-        self.hold_time_s = float(settings.get('hold_time_s', 0.0))
-
-        self.sampling_rate_hz = float(settings.get('sampling_rate_hz', 1e4))
-        self.total_samples = int(float(settings.get('total_samples', 100000)))
-
-        self.meas_range_1 = int(settings.get('meas_range_1', WGFMU_MEASURE_CURRENT_RANGES[0][0]))
-        self.meas_range_2 = int(settings.get('meas_range_2', WGFMU_MEASURE_CURRENT_RANGES[0][0]))
+        self.force_voltage_1_values = self._parse_float_list(self.force_voltage_1, 'force_voltage_1')
+        self.force_voltage_2_values = self._parse_float_list(self.force_voltage_2, 'force_voltage_2')
+        self.smu_channel_list_1 = self._parse_channel_list(self.smu_channel_list_1, 'smu_channel_list_1')
+        self.smu_channel_list_2 = self._parse_channel_list(self.smu_channel_list_2, 'smu_channel_list_2')
+        self.smu_voltage_1_values = self._parse_float_list(self.smu_voltage_1, 'smu_voltage_1')
+        self.smu_voltage_2_values = self._parse_float_list(self.smu_voltage_2, 'smu_voltage_2')
 
     @staticmethod
     def _split_csv(raw_value):
@@ -361,35 +365,24 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         device_name,
     ):
         return [
-            "# Procedure: WGFMU_Sampling",
-            f"# Device: {device_name}",
             f"# Combination: {combo_index}/{total_combinations}",
-            f"# Timestamp: {self.get_run_timestamp()}",
-            f"# GPIB Address: {self.gpib_address}",
             f"# SMU Channel 1: {smu_channel_1}",
             f"# SMU Voltage 1: {smu_voltage_1:.9e} V",
-            f"# SMU Compliance 1: {self.smu_compliance_1:.9e} A",
             f"# SMU Channel 2: {smu_channel_2}",
             f"# SMU Voltage 2: {smu_voltage_2:.9e} V",
-            f"# SMU Compliance 2: {self.smu_compliance_2:.9e} A",
-            f"# WGFMU Channel 1: {self.channel_1}",
             f"# WGFMU Force Voltage 1: {force_voltage_1:.9e} V",
-            f"# WGFMU Meas Range 1: {self.meas_range_1}",
-            f"# WGFMU Channel 2: {self.channel_2}",
             f"# WGFMU Force Voltage 2: {force_voltage_2:.9e} V",
-            f"# WGFMU Meas Range 2: {self.meas_range_2}",
-            f"# Requested Sampling Rate: {self.sampling_rate_hz:.9e} Hz",
             f"# Effective Sampling Rate: {effective_rate_hz:.9e} Hz",
             f"# Sample Interval: {sample_interval:.9e} s",
             f"# Integration Time: {integration_time_s:.9e} s",
-            f"# Hold Time: {hold_time_s:.9e} s",
-            f"# Total Samples: {self.total_samples}",
             f"# Sampling Duration: {sampling_duration_s:.9e} s",
         ]
 
     def _write_combo_file(self, path, header_lines, rows):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
+            for line in self.csv_metadata_lines():
+                f.write(line + '\n')
             for line in header_lines:
                 f.write(line + '\n')
             f.write("Time_s,Current_1_A,Current_2_A\n")
@@ -436,7 +429,8 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             finally:
                 raise
 
-    def run(self, b1500, device):
+    def measure(self, device):
+        b1500 = self.b1500
         self.check_stop(b1500)
 
         (
@@ -715,8 +709,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 )
                 self._save_combo_data(base, combo_index, header_lines, combo_rows)
 
-            plot_filename = f"{base}_plot.png"
-            runner.plot.save_png(plot_filename, self.output_root, self.output_relative, self.fallback_root)
+            self.save_plot_png(f"{base}_plot.png")
 
             self.log(
                 f"WGFMU Sampling complete: {total_combinations} file(s) written"
