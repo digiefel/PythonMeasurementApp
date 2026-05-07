@@ -6,13 +6,13 @@ from models import load_devices_csv
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
-    'output_dir': 'C:/Users/EMN Lab/Documents/DATA/Davide',
-    'fallback_output_dir': os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_output')),
+    'output_dir': 'C:/Users/EMN Lab/Desktop/PythonMeasurementApp/_DEFAULT_OUTPUT_/',
+    'fallback_output_dir': 'C:/Users/EMN Lab/Desktop/PythonMeasurementApp/_DEFAULT_OUTPUT_/',
     # Global ASU configuration (applies to procedures that support it)
     'asu_channels': ["SMU2"],
     'asu_path_mode': 1,
     'asu_range_mode': 0,
-    'devices_csv_path': 'TASE_devices.csv',
+    'devices_csv_path': 'devices.csv',
     'cmu_calibration': {},
     'procedures': {},
     'last_selection': {
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
 }
 
 class Config:
-    def __init__(self, config_path: str, devices_csv_path: str = 'TASE_devices.csv'):
+    def __init__(self, config_path: str, devices_csv_path: str = 'devices.csv'):
         app_root = os.path.dirname(__file__)
         self.config_root = os.path.join(app_root, "saved_configs")
         self.config_path = self._resolve_config_path(config_path)

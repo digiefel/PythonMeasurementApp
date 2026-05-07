@@ -81,7 +81,7 @@ class MainUI:
             "y_pos": tk_top,
         }
         
-        self.config = Config('global_config.json', 'TASE_devices.csv')
+        self.config = Config('global_config.json', 'devices.csv')
         self.runner = MeasurementRunner(self.config)
         self.runner.log_callback = self._post_log
         self.runner.status_callback = self._post_status
