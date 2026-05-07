@@ -2,7 +2,9 @@ __pycache__
 .venv
 .venv32
 .vscode
+.vs
 
 test_output
 
 *.log
+log.txt
