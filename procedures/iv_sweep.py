@@ -80,7 +80,7 @@ class IVSweepProcedure(MeasurementProcedure):
 
         # make sure that all channels are open unless otherwise configured
         b1500.set_switch(B1500_CH_ALL, False)
-        # Enable SMUs
+        # Enable the force pair; optional sense SMUs are enabled below as high-impedance voltage probes.
         b1500.set_switch(high, True)
         b1500.set_switch(low, True)
         # use the other SMUs to sense voltage (i.e. force zero current)
@@ -108,6 +108,7 @@ class IVSweepProcedure(MeasurementProcedure):
         b1500.force_voltage(low, 0.0, self.current_compliance)
 
         # Program voltage sweep on high terminal
+        # The B1500 performs the actual ramp; _build_voltage_vector mirrors it for fallback plot/CSV x values.
         sweep_mode = B1500_SWP_VF_DBLLIN if self.double_sweep else B1500_SWP_VF_SGLLIN
         b1500.set_iv_sweep(
             high,
@@ -187,6 +188,7 @@ class IVSweepProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
+        # start_measure streams interleaved records: high I, low I, optional sense V, source V, and timestamps.
         b1500.start_measure(
             channels,
             modes,
@@ -240,12 +242,14 @@ class IVSweepProcedure(MeasurementProcedure):
                     sense_low_voltages.append(value)
             elif data_type == 4:  # source output (voltage)
                 if channel in (high, B1500_CH_NOCH, B1500_CH_ALL) and len(v_source_values) < max_points:
+                    # Source-output voltage is the programmed sweep value, not a separate voltage measurement.
                     v_source_values.append(value)
                     v_source_status.append(status)
             elif data_type == 5:  # timestamp
                 timestamps.append(value)
 
             # Update plot with any newly paired points
+            # High and low current records can arrive at different times, so plot only complete pairs.
             while plotted < min(len(high_currents), len(low_currents), max_points):
                 v_val = v_source_values[plotted] if plotted < len(v_source_values) else voltages[plotted]
                 ip_val = high_currents[plotted]
@@ -276,6 +280,7 @@ class IVSweepProcedure(MeasurementProcedure):
             ip_val = high_currents[i]
             in_val = low_currents[i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
+            # Collapse per-record status bits into one CSV status column for the point.
             status_combined = 0
             if i < len(i_high_status):
                 status_combined |= i_high_status[i]
@@ -293,6 +298,7 @@ class IVSweepProcedure(MeasurementProcedure):
         if len(ds.x) < 2:
             return
         try:
+            # Re-fit the full positive current trace after each point to show a live incremental resistance.
             fit = linear_fit(ds.x, ds.y)
         except Exception:
             return

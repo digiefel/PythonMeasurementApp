@@ -46,6 +46,8 @@ class VanDerPauwProcedure(MeasurementProcedure):
             b1500.reset()
             b1500.enable_error_detect(True)
 
+            # This procedure currently only reserves the Van der Pauw terminal definitions.
+            # The helper below should be called four times once the sweep configurations are wired in.
             # Perform the I-V sweep
             # For Van der Pauw, we will do sweeps in both configurations:
             # 1) Force current A->B, sense voltage C-D
@@ -77,7 +79,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         
         self.check_stop(b1500)
 
-        # Enable all four SMUs
+        # Enable all four SMUs: two current-force terminals and two zero-current voltage probes.
         b1500.set_switch(source_channel, True)
         b1500.set_switch(return_channel, True)
         b1500.set_switch(sense_high, True)
@@ -97,6 +99,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
 
         # Hold the return SMU at 0 V with a safe current compliance
         b1500.force_voltage(return_channel, 0.0, self.current_compliance)
+        # Sense channels force 0 A so their measured voltages do not intentionally load the sample.
         b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
         b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
 
@@ -124,7 +127,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
             power_compliance=self.power_compliance
         )
 
-        # Configure multi-channel measurement and run sweepMiv to capture data
+        # Configure the same interleaved stream shape as four_terminal_iv_sweep.py.
         channels = [source_channel, sense_high, return_channel, sense_low]
         modes = [B1500_IM_MODE, B1500_VM_MODE, B1500_IM_MODE, B1500_VM_MODE]
         ranges = [B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE]
@@ -172,6 +175,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
                     })
             if channel in data_by_ch and data_type in (1, 2): # I measure, V measure
                 if len(data_by_ch[channel]) < max_points:
+                    # Store records per channel; all downstream pairing is by sweep-point index.
                     data_by_ch[channel].append(value)
                     status_by_ch[channel].append(status)
             elif data_type in (3, 4):  # source output data
@@ -183,6 +187,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
                 timestamps.append(value)
 
             # Push live plot when we have paired sense readings and source current
+            # Van der Pauw resistance uses a differential voltage between the two sense terminals.
             paired = min(len(data_by_ch[sense_high]), len(data_by_ch[sense_low]), len(data_by_ch[source_channel]), max_points)
             while plotted < paired:
                 idx = plotted
@@ -201,6 +206,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
             v_high = data_by_ch[sense_high][i]
             v_low = data_by_ch[sense_low][i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
+            # Keep raw high/low voltages in the CSV; combine status bits for quick bad-point filtering.
             status_combined = 0
             if i < len(status_by_ch[sense_high]):
                 status_combined |= status_by_ch[sense_high][i]

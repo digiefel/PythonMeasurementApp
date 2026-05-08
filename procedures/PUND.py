@@ -53,6 +53,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 		vectors = [(edge, self.base_voltage)]
 		for s in signs:
+			# Each logical pulse is high level, return to base, then an optional delay/gap before the next pulse.
 			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
 			            (pulse_width, self.base_voltage), 
 			            (gap, self.base_voltage)]
@@ -103,6 +104,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 			# Compute sample interval and points per WGFMU constraints:
 			# - interval >= 10 ns, in 10 ns resolution
+			# The default target is 1000 samples per pulse period, then rounded to hardware resolution.
 			MIN_INTERVAL = 1e-8
 			RESOLUTION = 1e-8
 			raw_interval = 1e-3 / self.frequency
@@ -121,6 +123,7 @@ class PUNDProcedure(MeasurementProcedure):
 				delay_points = 0
 				delay_interval = sample_interval
 
+			# Channel 1 owns the voltage waveform. Channel 2 stays at 0 V but measures current through FastIV.
 			wgfmu.create_pattern(pattern_pg, self.base_voltage)
 			for dt, voltage in vectors:
 				if dt > 0:
@@ -132,6 +135,7 @@ class PUNDProcedure(MeasurementProcedure):
 					wgfmu.add_vector(pattern_iv, dt, 0.0)
 
 			# Measure event for active portion (full rate)
+			# The active event excludes repetition_delay so pulse edges remain densely sampled.
 			wgfmu.set_measure_event(
 				pattern_pg,
 				"meas_active",
@@ -153,6 +157,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 			# Measure event for repetition_delay portion (sparse)
 			if delay_points > 0:
+				# Long idle delays are sampled sparsely to keep file size and transfer time reasonable.
 				wgfmu.set_measure_event(
 					pattern_pg,
 					"meas_delay",
@@ -194,6 +199,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 			# Build Curve elements with color gradient for each rep
 			# Blues for voltage, oranges for current
+			# Plot at most 50 repetitions, but always include the first and last repetitions.
 			max_reps_to_plot = min(self.repetition_count, 50)
 			step = max(1, self.repetition_count // max_reps_to_plot)
 			reps_to_plot = list(range(0, self.repetition_count, step))
@@ -288,6 +294,7 @@ class PUNDProcedure(MeasurementProcedure):
 							rep_batches[rep_idx]['i'].append((rel_t, cur * 1e6))
 
 							# Accumulate first 50 samples per rep for baseline
+							# Baseline correction makes the IV/QV loops easier to compare across repetitions.
 							if rep_idx not in i_baseline:
 								samples = i_baseline_samples.setdefault(rep_idx, [])
 								if len(samples) < 50:
@@ -297,6 +304,7 @@ class PUNDProcedure(MeasurementProcedure):
 
 							# IV and QV use baseline-corrected current, only once baseline is ready
 							if rep_idx in i_baseline:
+								# Negate current so positive switching charge plots in the expected direction.
 								cur_adj = -(cur - i_baseline[rep_idx])
 								rep_batches[rep_idx]['iv'].append((v, cur_adj * 1e6))
 
@@ -306,6 +314,7 @@ class PUNDProcedure(MeasurementProcedure):
 								else:
 									dt = rel_t - last_t_per_rep[rep_idx]
 									if dt > 0:
+										# Integrate current over time to accumulate charge for the Q-V loop.
 										q_accum[rep_idx] += cur_adj * dt
 									last_t_per_rep[rep_idx] = rel_t
 								rep_batches[rep_idx]['qv'].append((v, q_accum[rep_idx] * 1e9))

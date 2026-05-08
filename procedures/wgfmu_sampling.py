@@ -75,6 +75,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         if raw_value is None:
             return []
         if isinstance(raw_value, (list, tuple)):
+            # Saved configs may restore lists, while the UI supplies comma-separated text.
             tokens = []
             for item in raw_value:
                 if item is None:
@@ -107,6 +108,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
 
         channels = []
         for token in tokens:
+            # Accept either "SMU1" style names from the UI or numeric channel ids from saved files.
             mapped = SMU_CHANNEL_MAP.get(token, SMU_CHANNEL_MAP.get(token.upper(), token))
             try:
                 channel = int(float(mapped))
@@ -132,6 +134,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         wgfmu.connect(self.channel_1)
         wgfmu.connect(self.channel_2)
 
+        # FastIV mode lets each WGFMU channel force a constant voltage while measuring current.
         wgfmu.set_operation_mode(self.channel_1, WGFMU_OPERATION_MODE_FASTIV)
         wgfmu.set_operation_mode(self.channel_2, WGFMU_OPERATION_MODE_FASTIV)
 
@@ -146,6 +149,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
     def _apply_smu_biases(self, b1500, smu_channel_1, smu_voltage_1, smu_channel_2, smu_voltage_2):
+        # SMUs provide the slow DC biases that surround the two high-speed WGFMU channels.
         b1500.set_switch(smu_channel_1, True)
         b1500.set_switch(smu_channel_2, True)
         b1500.force_voltage(smu_channel_1, smu_voltage_1, self.smu_compliance_1, B1500_AUTO_RANGE)
@@ -155,6 +159,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
     def _release_smu_channels(b1500, channels):
         for channel in channels:
             try:
+                # Best-effort cleanup because failed cleanup should not hide the original measurement error.
                 b1500.zero_output(channel)
             except Exception:
                 pass
@@ -190,6 +195,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 f"(minimum supported is {min_rate_hz:.6g} Hz)."
             )
 
+        # WGFMU timing is quantized to 10 ns; effective_rate_hz reflects the rounded interval.
         sample_interval = max(requested_interval, self.MIN_SAMPLE_INTERVAL_S)
         sample_interval = round(sample_interval / self.SAMPLE_INTERVAL_RESOLUTION_S) * self.SAMPLE_INTERVAL_RESOLUTION_S
         if sample_interval <= 0:
@@ -213,6 +219,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 f"({self.MAX_VECTOR_INTERVAL_S:.6g} s)."
             )
 
+        # Averaging cannot exceed the instrument maximum even if the requested sampling interval is long.
         integration_time_s = min(sample_interval, self.MAX_AVERAGING_TIME_S)
         integration_clamped = integration_time_s < sample_interval
 
@@ -307,6 +314,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         state['sum_i2'] = 0.0
 
     def _new_psd_state(self, fs):
+        # PSD state is accumulated incrementally so long recordings do not need a second pass over all samples.
         freqs = np.fft.rfftfreq(self.PSD_WINDOW_LEN, d=1.0 / fs)
         return {
             'fs': fs,
@@ -342,6 +350,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         if not force and not psd_state['dirty']:
             return
         count = psd_state['count']
+        # replace_source redraws the whole spectrum because the averaged PSD changes at every window.
         avg_psd_i1 = psd_state['sum_psd_i1'] / count
         avg_psd_i2 = psd_state['sum_psd_i2'] / count
         freqs = psd_state['freqs_list']
@@ -384,6 +393,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
     def _write_combo_file(self, path, header_lines, rows):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
+            # Base metadata contains all procedure parameters; combo header adds the current Cartesian-product values.
             for line in self.csv_metadata_lines():
                 f.write(line + '\n')
             for line in header_lines:
@@ -461,6 +471,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         if total_combinations <= 0:
             raise ValueError("No parameter combinations available to run")
 
+        # Keep the UI responsive by reducing only plotted points; every raw sample is still written to CSV.
         plot_bucket_size = max(1, math.ceil(self.total_samples / self.MAX_PLOT_POINTS))
 
         self.log(f"Starting WGFMU Sampling on {device.name}")
@@ -613,6 +624,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 )
 
                 self.check_stop(b1500)
+                # Both WGFMU channels run the same-duration pattern so their samples can be paired by index.
                 wgfmu.add_sequence(self.channel_1, pattern_1, 1.0)
                 wgfmu.add_sequence(self.channel_2, pattern_2, 1.0)
                 wgfmu.execute()
@@ -630,9 +642,11 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                     status, _elapsed, _total, measured_1, _total_1, measured_2, _total_2 = (
                         wgfmu.poll(self.channel_1, self.channel_2)
                     )
+                    # Pair only samples available on both channels; otherwise channel skew would corrupt rows.
                     available = min(measured_1, measured_2, expected_total)
 
                     if available > next_index:
+                        # Read in chunks to bound VISA transfer time and keep stop requests responsive.
                         chunk_size = min(available - next_index, self.MAX_READ_CHUNK_POINTS)
                         read_until = next_index + chunk_size
                         plot_i1 = []
@@ -640,6 +654,7 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                         samples_1 = wgfmu.read_chunk(self.channel_1, next_index, chunk_size)
                         samples_2 = wgfmu.read_chunk(self.channel_2, next_index, chunk_size)
                         for (t1, i1), (_, i2) in zip(samples_1, samples_2):
+                            # Remove the pre-sampling hold so CSV time starts at the first measured sample.
                             t_val = t1 - hold_time_s
                             combo_rows.append((t_val, i1, i2))
                             self._push_plot_sample(t_val, i1, i2, plot_state, plot_i1, plot_i2)

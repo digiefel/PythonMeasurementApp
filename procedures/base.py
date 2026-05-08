@@ -13,6 +13,7 @@ from runner import MeasurementRunner, MeasurementAbortRequested, MeasurementSkip
 
 @dataclass(frozen=True)
 class Choice:
+    # Generic dropdown for instrument constants; built-in Python types still cover normal text/number/bool fields.
     options: tuple[tuple[Any, str], ...] = ()
     value_type: type = str
 
@@ -35,6 +36,7 @@ class Choice:
 class SMU:
     @staticmethod
     def coerce(value):
+        # UI labels like "SMU1" and saved numeric values both become B1500 channel integers.
         return int(float(SMU_CHANNEL_MAP.get(str(value), value)))
 
     @classmethod
@@ -70,6 +72,7 @@ class OptionalSMU:
 class WGFMUChannel:
     @staticmethod
     def coerce(value):
+        # WGFMU channels use a separate numbering scheme from SMUs, so keep the type distinct.
         return int(float(WGFMU_CHANNEL_MAP.get(str(value), value)))
 
     @classmethod
@@ -174,6 +177,7 @@ class MeasurementProcedure(ABC):
     def _coerce_parameter_value(self, value, kind):
         if value is None:
             return None
+        # Keep procedure declarations simple: normal Python types for normal fields, custom types for instruments.
         if kind is bool:
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")
@@ -278,7 +282,7 @@ class MeasurementProcedure(ABC):
         """
         primary_path = self.make_output_path(filename, add_timestamp=add_timestamp)
         
-        # Attempt primary save in a separate thread with timeout
+        # Attempt primary save in a separate thread so a blocked network path cannot hang the measurement worker.
         result = {}
         write_thread = threading.Thread(
             target=self._threaded_write,
@@ -334,6 +338,7 @@ class MeasurementProcedure(ABC):
     ):
         """Save the standard CSV plus matching plot PNG for a procedure."""
         base = self.format_filename(procedure_tag, device.name)
+        # Most procedures only need this one call: metadata CSV first, then a PNG of the live plot.
         csv_path = self.save_data(data, f"{base}.csv", headers, add_timestamp=False)
         plot_path = None
         if save_plot:
@@ -381,11 +386,13 @@ class MeasurementProcedure(ABC):
         seen = set()
         for param in self.PARAMETERS:
             seen.add(param.key)
+            # Declared PARAMETERS are saved first in UI order so the CSV header is readable.
             lines.append(f"#   {param.key}: {self._format_metadata_value(self.settings.get(param.key, param.default))}")
 
         for key in sorted(self.settings):
             if key in seen or key == "cmu_calibration":
                 continue
+            # Extra runner/config settings are included too, which avoids per-procedure metadata plumbing.
             lines.append(f"#   {key}: {self._format_metadata_value(self.settings[key])}")
 
         if extra:

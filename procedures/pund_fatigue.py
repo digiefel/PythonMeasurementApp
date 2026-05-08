@@ -61,6 +61,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 		vectors = [(edge, self.base_voltage)]
 		for s in signs:
+			# Measured cycles use the full five-pulse PUND sequence so polarization and non-switching currents separate.
 			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
 			            (pulse_width, self.base_voltage), 
 			            (gap, self.base_voltage)]
@@ -77,6 +78,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 		vectors = [(edge, self.base_voltage)]
 		for s in signs:
+			# Fatigue cycles are shorter PN stress pulses; they are repeated in hardware without measurement events.
 			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
 			            (pulse_width, self.base_voltage), 
 			            (gap, self.base_voltage)]
@@ -190,6 +192,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 		vectors_meas = self._build_pund_pattern()
 		vectors_fat = self._build_pn_pattern()
+		# Timing estimates use the actual vector durations, including pulse_delay and edge segments.
 		pattern_duration_meas = sum(dt for dt, _ in vectors_meas)
 		pattern_duration_fat = sum(dt for dt, _ in vectors_fat)
 		
@@ -226,6 +229,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
 			# Compute sampling parameters for measure pattern
+			# As in PUND, sample at roughly 1000 points per period and quantize to WGFMU 10 ns timing.
 			MIN_INTERVAL = 1e-8
 			RESOLUTION = 1e-8
 			raw_interval = 1e-3 / self.frequency
@@ -268,11 +272,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			# Build sequence: interleave fatigue bursts with measure cycles
 			prev_cycle = 0
 			for mc in measure_cycles:
+				# Hardware repetition compresses long fatigue runs into one sequence entry between measured cycles.
 				fatigue_count = mc - prev_cycle - 1
 				if fatigue_count > 0:
 					wgfmu.add_sequence(self.channel_1, pattern_fat_pg, fatigue_count)
 					wgfmu.add_sequence(self.channel_2, pattern_fat_iv, fatigue_count)
 				# Measure cycle
+				# Only measured PUND cycles have measure events, so returned samples are grouped contiguously.
 				wgfmu.add_sequence(self.channel_1, pattern_meas_pg, 1)
 				wgfmu.add_sequence(self.channel_2, pattern_meas_iv, 1)
 				prev_cycle = mc
@@ -300,6 +306,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			runner = self.runner
 			# Build Curve elements with logarithmic color gradient for each measured cycle
 			# Blues for voltage, oranges for current
+			# Limit displayed cycles so million-cycle runs remain responsive while first/last are visible.
 			max_cycles_to_plot = min(len(measure_cycles), 50)
 			step_plot = max(1, len(measure_cycles) // max_cycles_to_plot)
 			cycles_to_plot_idx = list(range(0, len(measure_cycles), step_plot))
@@ -403,6 +410,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 							cycle_batches[meas_idx]['i'].append((rel_t, cur * 1e6))
 
 							# Accumulate first 50 samples per cycle for baseline
+							# Baseline correction is per measured cycle because leakage/drift can change with fatigue.
 							if meas_idx not in i_baseline:
 								samples = i_baseline_samples.setdefault(meas_idx, [])
 								if len(samples) < 50:
@@ -412,6 +420,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 							# IV and QV use baseline-corrected current, only once baseline is ready
 							if meas_idx in i_baseline:
+								# Keep the same current sign convention as the plain PUND procedure.
 								cur_adj = -(cur - i_baseline[meas_idx])
 								cycle_batches[meas_idx]['iv'].append((v, cur_adj * 1e6))
 
@@ -421,6 +430,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 								else:
 									dt = rel_t - last_t_per_cycle[meas_idx]
 									if dt > 0:
+										# Integrate corrected current to build the Q-V loop for this measured cycle.
 										q_accum[meas_idx] += cur_adj * dt
 									last_t_per_cycle[meas_idx] = rel_t
 								cycle_batches[meas_idx]['qv'].append((v, q_accum[meas_idx] * 1e9))
@@ -453,6 +463,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			# Group by measurement cycle
 			all_rows = []
 			for meas_idx, cycle_num in enumerate(measure_cycles):
+				# Reattach the physical cycle number to each contiguous block of returned WGFMU samples.
 				offset = meas_idx * sample_points
 				for i in range(sample_points):
 					if offset + i < len(data[0]) and offset + i < len(data[1]):

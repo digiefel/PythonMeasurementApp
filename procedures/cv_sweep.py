@@ -82,6 +82,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
         settings = dict(settings)
+        # Accept old saved settings while new procedure definitions expose one sweep_type field.
         if 'sweep_type' not in settings and 'double_sweep' in settings:
             settings['sweep_type'] = 'double' if bool(settings['double_sweep']) else 'single'
         if 'frequencies' not in settings and 'frequency_hz' in settings:
@@ -94,6 +95,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
     @staticmethod
     def _freq_key(freq_hz: float) -> str:
+        # Use stable text keys for calibration JSON; raw float strings can differ by representation.
         return f"{float(freq_hz):.12g}"
 
     def _entry_freq_keys(self, entry: dict) -> set[str]:
@@ -123,6 +125,7 @@ class CVSweepProcedure(MeasurementProcedure):
         result = entry.get("result")
         if isinstance(result, dict):
             try:
+                # Newer phase entries store the instrument return code under result.result; zero means OK.
                 return int(result.get("result", 0)) == 0
             except Exception:
                 return False
@@ -131,6 +134,7 @@ class CVSweepProcedure(MeasurementProcedure):
     def _calibration_gaps(self):
         """Return missing calibration coverage by type for current channel/frequencies."""
         channel_data = self.cmu_calibration.get(str(self.cmu_channel), {})
+        # Coverage is checked per selected frequency because CMU open/short/load corrections are frequency-specific.
         selected_keys = {self._freq_key(f) for f in self.frequencies}
 
         missing = {
@@ -204,6 +208,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
     def _expected_points(self):
         if self.sweep_type == 'double':
+            # Double sweep reuses the turnaround endpoint, so the streamed point count is N forward + N-1 back.
             return max(1, (2 * self.points) - 1)
         return self.points
 
@@ -221,6 +226,7 @@ class CVSweepProcedure(MeasurementProcedure):
         total_span = sum(spans)
         if total_span == 0:
             raise ValueError("Butterfly sweep: all voltage spans are zero.")
+        # Allocate the requested visible points in proportion to voltage span, then remove shared leg boundaries.
         pool = self.points + 2  # +2 to account for 2 boundary dedup skips
         raw = [max(2, round(pool * s / total_span)) for s in spans]
         # Ensure sum(raw) - 2 = self.points by adjusting middle leg
@@ -247,6 +253,7 @@ class CVSweepProcedure(MeasurementProcedure):
         sin_t = math.sin(theta_rad)
         if abs(cos_t) < 1e-15 or abs(Z) < 1e-30 or omega < 1e-15:
             return float('nan'), float('nan')
+        # Convert the series-like Z/theta stream into the parallel RC values users usually inspect.
         return Z / cos_t, -sin_t / (omega * Z)
 
     def measure(self, device):
@@ -267,6 +274,7 @@ class CVSweepProcedure(MeasurementProcedure):
         b1500.reset()
         b1500.set_timeout(10000)
         b1500.enable_error_detect(True)
+        # Leave the CMU at the final bias level until the explicit cleanup in perform_cv_sweep.
         b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
 
         results = self.perform_cv_sweep(b1500, device, primary_name, monitor_name, primary_label, monitor_label)
@@ -309,6 +317,7 @@ class CVSweepProcedure(MeasurementProcedure):
         theta_unit = "deg" if is_degrees else "rad"
 
         if is_z_theta:
+            # Z-theta mode is special: the instrument streams Z and angle, while Rp/Cp are derived locally.
             elements_z, elements_theta, elements_rp, elements_cp = [], [], [], []
             for i, freq in enumerate(self.frequencies):
                 color = f'C{i % 10}'
@@ -331,6 +340,7 @@ class CVSweepProcedure(MeasurementProcedure):
                     row_ratios=(1.0, 1.0), column_ratios=(1.0, 1.0)
                 )
         else:
+            # Other CMU modes stream two named parameters directly from the B1500 descriptor table.
             elements = []
             for i, freq in enumerate(self.frequencies):
                 color = f'C{i % 10}'
@@ -349,6 +359,7 @@ class CVSweepProcedure(MeasurementProcedure):
         all_results = []
 
         try:
+            # Start from all switches open so the selected CMU channel is the only active path.
             b1500.set_switch(B1500_CH_ALL, False)
             b1500.set_switch(self.cmu_channel, True)
             b1500.set_cmu_integ(self.integration_mode, self.integration_value)
@@ -359,6 +370,7 @@ class CVSweepProcedure(MeasurementProcedure):
                 b1500.set_cmu_freq(self.cmu_channel, freq)
                 tag = self._freq_label(freq)
 
+                # Plot source names are frequency-tagged so multiple frequency sweeps can share one figure.
                 if is_z_theta:
                     p_source  = f"z_{tag}"
                     m_source  = f"theta_{tag}"
@@ -384,10 +396,12 @@ class CVSweepProcedure(MeasurementProcedure):
                     )
 
                 for row in rows:
+                    # Prefix every row with frequency so the CSV stays self-describing after concatenating sweeps.
                     all_results.append([freq] + row)
 
         finally:
             try:
+                # Cleanup runs on success, instrument error, or user abort to avoid leaving the DUT biased.
                 b1500.zero_output(B1500_CH_ALL)
             except Exception as e:
                 self.log(f"Warning: failed to zero outputs after C-V sweep: {e}")
@@ -397,6 +411,7 @@ class CVSweepProcedure(MeasurementProcedure):
                 self.log(f"Warning: failed to open switches after C-V sweep: {e}")
 
         if all_results:
+            # The summary intentionally uses the same column positions for all modes after Frequency/Bias.
             p_vals = [row[2] for row in all_results]
             m_vals = [row[3] for row in all_results]
             self.log(
@@ -428,11 +443,13 @@ class CVSweepProcedure(MeasurementProcedure):
         )
 
         def on_point(_, source_v, para1, para2, time_s, s1, s2):
+            # stream_cv_sweep calls this once per bias point with source voltage, two CMU values, time, and statuses.
             self.check_stop(b1500)
             self.runner.plot.append_point(p_source, source_v, para1)
             self.runner.plot.append_point(m_source, source_v, para2)
             self._report_status(nonzero_statuses, s1, s2)
             if rp_source is not None:
+                # Only Z-theta sweeps have derived Rp/Cp columns and plot traces.
                 rp, cp = self._rp_cp_from_z_theta(para1, para2, freq, is_degrees)
                 if math.isfinite(rp):
                     self.runner.plot.append_point(rp_source, source_v, rp)
@@ -453,6 +470,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
         for seg_idx, (seg_start, seg_stop, npts) in enumerate(segments):
             self.check_stop(b1500)
+            # Only the first leg applies hold_time; later legs continue the already-biased waveform.
             hold = self.hold_time if seg_idx == 0 else 0.0
             first_point_skip = seg_idx > 0  # skip shared boundary with prior leg
 
@@ -465,6 +483,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
             def on_point(step, source_v, para1, para2, time_s, s1, s2, _skip=first_point_skip):
                 if _skip and step == 0:
+                    # Segment boundaries duplicate the previous endpoint; skip them for clean CSV/plot traces.
                     return
                 self.check_stop(b1500)
                 self.runner.plot.append_point(p_source, source_v, para1)
@@ -485,6 +504,7 @@ class CVSweepProcedure(MeasurementProcedure):
         return rows
 
     def _report_status(self, seen, s1, s2):
+        # CMU streaming reports para1/para2 status separately; report each unique status once to the UI.
         if s1 and (self.cmu_channel, 8, s1) not in seen:
             seen.add((self.cmu_channel, 8, s1))
             self.runner.report_status({

@@ -77,7 +77,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         
         self.check_stop(b1500)
 
-        # Enable all four SMUs
+        # Enable all four SMUs: two force current, two force zero current as voltage probes.
         b1500.set_switch(source_channel, True)
         b1500.set_switch(return_channel, True)
         b1500.set_switch(sense_high, True)
@@ -97,6 +97,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
 
         # Hold the return SMU at 0 V with a safe current compliance
         b1500.force_voltage(return_channel, 0.0, self.current_compliance)
+        # Sense SMUs force 0 A, which makes their voltage readings high-impedance probes.
         b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
         b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
 
@@ -124,7 +125,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             power_compliance=self.power_compliance
         )
 
-        # Configure multi-channel measurement and run sweepMiv to capture data
+        # Configure the interleaved measurement stream: source/return current plus two sense voltages.
         channels = [source_channel, sense_high, return_channel, sense_low]
         modes = [B1500_IM_MODE, B1500_VM_MODE, B1500_IM_MODE, B1500_VM_MODE]
         ranges = [B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE]
@@ -140,7 +141,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                     ]),
         ])
 
-        # Start streaming for live plot updates and full capture
+        # Start streaming for live plot updates and full capture.
+        # source_output gives the programmed current value; timestamp gives one time record per point.
         b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
 
         data_by_ch = {ch: [] for ch in channels}
@@ -168,6 +170,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                     })
             if channel in data_by_ch and data_type in (1, 2): # I measure, V measure
                 if len(data_by_ch[channel]) < max_points:
+                    # Each channel gets its own aligned list; pairing happens by index after enough data arrives.
                     data_by_ch[channel].append(value)
                     status_by_ch[channel].append(status)
             elif data_type in (3, 4):  # source output data
@@ -179,6 +182,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                 timestamps.append(value)
 
             # Push live plot when we have paired sense readings and source current
+            # The resistance fit uses V_high - V_low against the programmed current point.
             paired = min(len(data_by_ch[sense_high]), len(data_by_ch[sense_low]), len(data_by_ch[source_channel]), max_points)
             while plotted < paired:
                 idx = plotted
@@ -202,6 +206,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             v_high = data_by_ch[sense_high][i]
             v_low = data_by_ch[sense_low][i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
+            # Store separate sense voltages, but OR all statuses so bad points are easy to filter.
             status_combined = 0
             if i < len(status_by_ch[sense_high]):
                 status_combined |= status_by_ch[sense_high][i]
