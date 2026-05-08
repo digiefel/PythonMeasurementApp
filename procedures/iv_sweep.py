@@ -55,7 +55,7 @@ class IVSweepProcedure(MeasurementProcedure):
             # Do not abort the sweep on compliance; hold final level at end.
             b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_START)
 
-            results = self.perform_breakdown_sweep(b1500, device)
+            results = self.perform_iv_sweep(b1500, device)
 
             self.save_measurement_outputs(
                 results,
@@ -68,7 +68,7 @@ class IVSweepProcedure(MeasurementProcedure):
             self.log(f'Error during IV sweep: {str(e)}')
             raise
 
-    def perform_breakdown_sweep(self, b1500, device):
+    def perform_iv_sweep(self, b1500, device):
         """Run a voltage sweep on the high SMU and record voltage/current pairs."""
         runner = self.runner
         high = self.high_channel
