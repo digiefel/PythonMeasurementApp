@@ -35,6 +35,7 @@ from procedures.iv_sweep import IVSweepProcedure
 from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
+from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
 from procedures.pund_wakeup import PUNDWakeUpProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
@@ -48,6 +49,7 @@ PROCEDURE_CLASSES = {
     'CVSweep': CVSweepProcedure,
     'PUND': PUNDProcedure,
     'PUNDFatigue': PUNDFatigueProcedure,
+    'PUNDFatigueV2': PUNDFatigueV2Procedure,
     'PUNDWakeUp': PUNDWakeUpProcedure,
     'WGFMU Sampling': WGFMUSamplingProcedure,
 }
@@ -725,14 +727,22 @@ class MainUI:
     def _show_pund_fatigue_preview(self):
         """Show preview dialog for PUNDFatigue measurement schedule."""
         try:
-            cycle_count = float(self.param_vars.get('cycle_count', (tk.StringVar(value='1e6'), float))[0].get())
-            frequency = float(self.param_vars.get('frequency', (tk.StringVar(value='1e3'), float))[0].get())
-            ppd = int(float(self.param_vars.get('points_per_decade', (tk.StringVar(value='10'), int))[0].get()))
+            if self.proc_var.get() == 'PUNDFatigueV2':
+                cycle_count = float(self.param_vars.get('fatigue_count', (tk.StringVar(value='1e6'), float))[0].get())
+                frequency = float(self.param_vars.get('fatigue_freq', (tk.StringVar(value='1e4'), float))[0].get())
+                ppd = int(float(self.param_vars.get('reads_per_decade', (tk.StringVar(value='10'), int))[0].get()))
+                preview = PUNDFatigueV2Procedure.get_preview_info(cycle_count, frequency, ppd)
+                ppd_label = "Reads per Decade"
+            else:
+                cycle_count = float(self.param_vars.get('cycle_count', (tk.StringVar(value='1e6'), float))[0].get())
+                frequency = float(self.param_vars.get('frequency', (tk.StringVar(value='1e3'), float))[0].get())
+                ppd = int(float(self.param_vars.get('points_per_decade', (tk.StringVar(value='10'), int))[0].get()))
+                preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
+                ppd_label = "Points per Decade"
         except ValueError as e:
             messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {e}")
             return
 
-        preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
         measure_cycles = preview['measure_cycles']
 
         # Format duration
@@ -748,7 +758,7 @@ class MainUI:
         lines = [
             f"Cycle Count: {cycle_count:.2e}",
             f"Frequency: {frequency:.0f} Hz",
-            f"Points per Decade: {ppd}",
+            f"{ppd_label}: {ppd}",
             f"Decades: {preview['decades']:.1f}",
             f"",
             f"Total Measurements: {preview['total_measurements']}",
