@@ -35,6 +35,7 @@ from procedures.iv_sweep import IVSweepProcedure
 from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
 from procedures.pund_fatigue import PUNDFatigueProcedure
+from procedures.pund_wakeup import PUNDWakeUpProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
 from plotting import PlotBridge
@@ -47,6 +48,7 @@ PROCEDURE_CLASSES = {
     'CVSweep': CVSweepProcedure,
     'PUND': PUNDProcedure,
     'PUNDFatigue': PUNDFatigueProcedure,
+    'PUNDWakeUp': PUNDWakeUpProcedure,
     'WGFMU Sampling': WGFMUSamplingProcedure,
 }
 
