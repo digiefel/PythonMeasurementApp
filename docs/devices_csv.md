@@ -72,6 +72,26 @@ site position + subsite position + device position
 
 If no site coordinate row is given, the site position is treated as `(0, 0)`.
 
+Site coordinate rows are also a convenient way to list the relative positions of
+sites on a chip. They do not create subsites by themselves.
+
+```csv
+Site,Subsite,Device,X,Y
+S01,,,0,0
+S02,,,2000,0
+S03,,,0,2000
+S04,,,2000,2000
+```
+
+This creates four empty sites:
+
+```text
+S01 at (0, 0)
+S02 at (2000, 0)
+S03 at (0, 2000)
+S04 at (2000, 2000)
+```
+
 ## Adding Subsite Coordinates
 
 A row with `Site`, `Subsite`, `X`, and `Y`, but no `Device`, gives that subsite
@@ -116,16 +136,26 @@ Site,Subsite,Device,X,Y
 ,FeCap,A08,200,100
 ,FeCap,A09,300,100
 ,FeCap,A10,400,100
-S01,FeCap,,1000,2000
-S02,FeCap,,1000,2000
-S03,FeCap,,1000,2000
-S04,FeCap,,1000,2000
-S05,FeCap,,1000,2000
-S06,FeCap,,1000,2000
-S07,FeCap,,1000,2000
-S08,FeCap,,1000,2000
-S09,FeCap,,1000,2000
-S10,FeCap,,1000,2000
+S01,,,0,0
+S02,,,2000,0
+S03,,,4000,0
+S04,,,6000,0
+S05,,,8000,0
+S06,,,0,2000
+S07,,,2000,2000
+S08,,,4000,2000
+S09,,,6000,2000
+S10,,,8000,2000
+S01,FeCap,,100,100
+S02,FeCap,,100,100
+S03,FeCap,,100,100
+S04,FeCap,,100,100
+S05,FeCap,,100,100
+S06,FeCap,,100,100
+S07,FeCap,,100,100
+S08,FeCap,,100,100
+S09,FeCap,,100,100
+S10,FeCap,,100,100
 ```
 
 This creates 10 sites. Each site gets one `FeCap` subsite. Each `FeCap` subsite
@@ -198,6 +228,7 @@ filter or run by tag yet.
 - A row with `Site,Subsite,Device` filled defines one exact measurement target.
 - A row with empty `Site` can define something reusable for every subsite with
   that name.
+- Site-only rows define site positions.
 - A row with empty `Device` defines a site or subsite position.
 - The order of rows does not matter.
 - More specific rows can change the position from a more general row.

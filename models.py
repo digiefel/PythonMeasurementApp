@@ -91,11 +91,24 @@ class CsvDefinition:
 @dataclass
 class MergedDefinition:
     kind: str
-    key: tuple[str, ...]
+    key: tuple[Optional[str], Optional[str], Optional[str]]
     x: float
     y: float
     tags: set[str]
     rows: list[int]
+
+    @property
+    def coords(self) -> tuple[float, float]:
+        return self.x, self.y
+
+
+@dataclass
+class ResolvedDefinition:
+    x: float
+    y: float
+    tags: set[str]
+    rows: list[int]
+    source: Optional[MergedDefinition]
 
     @property
     def coords(self) -> tuple[float, float]:
@@ -140,12 +153,7 @@ class DeviceCsvCompiler:
         self.decisions: list[str] = []
         self.overrides: list[str] = []
         self.shared_positions: list[str] = []
-
-        self.site_defs: OrderedDict[tuple[str], MergedDefinition] = OrderedDict()
-        self.subsite_templates: OrderedDict[tuple[str], MergedDefinition] = OrderedDict()
-        self.subsite_defs: OrderedDict[tuple[str, str], MergedDefinition] = OrderedDict()
-        self.device_templates: OrderedDict[tuple[str, str], MergedDefinition] = OrderedDict()
-        self.device_defs: OrderedDict[tuple[str, str, str], MergedDefinition] = OrderedDict()
+        self.definitions_by_path: OrderedDict[tuple[Optional[str], Optional[str], Optional[str]], MergedDefinition] = OrderedDict()
 
     def compile(self) -> DeviceCsvCompilation:
         self._read_definitions()
@@ -259,37 +267,28 @@ class DeviceCsvCompiler:
 
     def _merge_definitions(self):
         for definition in self.definitions:
-            if definition.kind == "site":
-                self._upsert(self.site_defs, (definition.site,), definition)
-            elif definition.kind == "subsite_template":
-                self._upsert(self.subsite_templates, (definition.subsite,), definition)
-            elif definition.kind == "subsite":
-                self._upsert(self.subsite_defs, (definition.site, definition.subsite), definition)
-            elif definition.kind == "device_template":
-                self._upsert(self.device_templates, (definition.subsite, definition.device), definition)
-            elif definition.kind == "device":
-                self._upsert(self.device_defs, (definition.site, definition.subsite, definition.device), definition)
+            self._upsert(self._definition_path(definition), definition)
 
-    def _upsert(self, target: OrderedDict, key: tuple[str, ...], definition: CsvDefinition):
-        current = target.get(key)
+    def _upsert(self, path: tuple[Optional[str], Optional[str], Optional[str]], definition: CsvDefinition):
+        current = self.definitions_by_path.get(path)
         if current is None:
-            target[key] = MergedDefinition(
+            self.definitions_by_path[path] = MergedDefinition(
                 kind=definition.kind,
-                key=key,
+                key=path,
                 x=definition.x,
                 y=definition.y,
                 tags=set(definition.tags),
                 rows=[definition.row],
             )
             self.decisions.append(
-                f"Row {definition.row}: remembered {self._kind_label(definition.kind)} {self._key_label(definition.kind, key)} at {self._coords(definition.coords)}"
+                f"Row {definition.row}: remembered {self._kind_label(definition.kind)} {self._key_label(definition.kind, path)} at {self._coords(definition.coords)}"
             )
             return
 
         if current.coords != definition.coords:
             self.errors.append(
                 f"Rows {current.rows[0]} and {definition.row}: conflicting {self._kind_label(definition.kind)} "
-                f"{self._key_label(definition.kind, key)} coordinates "
+                f"{self._key_label(definition.kind, path)} coordinates "
                 f"{self._coords(current.coords)} vs {self._coords(definition.coords)}."
             )
             return
@@ -298,28 +297,24 @@ class DeviceCsvCompiler:
         current.rows.append(definition.row)
         self.decisions.append(
             f"Row {definition.row}: merged duplicate {self._kind_label(definition.kind)} "
-            f"{self._key_label(definition.kind, key)} with row {current.rows[0]}"
+            f"{self._key_label(definition.kind, path)} with row {current.rows[0]}"
+        )
+
+    @staticmethod
+    def _definition_path(definition: CsvDefinition) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        return (
+            definition.site or None,
+            definition.subsite or None,
+            definition.device or None,
         )
 
     def _build_tree(self) -> list[Site]:
-        site_names = OrderedDict()
-        for (site_name,) in self.site_defs:
-            site_names[site_name] = None
-        for site_name, _subsite_name in self.subsite_defs:
-            site_names.setdefault(site_name, None)
-        for site_name, _subsite_name, _device_name in self.device_defs:
-            site_names.setdefault(site_name, None)
-
-        subsite_names_by_site: dict[str, OrderedDict[str, None]] = defaultdict(OrderedDict)
-        for site_name, subsite_name in self.subsite_defs:
-            subsite_names_by_site[site_name].setdefault(subsite_name, None)
-        for site_name, subsite_name, _device_name in self.device_defs:
-            subsite_names_by_site[site_name].setdefault(subsite_name, None)
+        site_names = self._concrete_site_names()
+        subsite_names_by_site = self._concrete_subsite_names_by_site()
 
         sites = []
         for site_name in site_names:
-            site_def = self.site_defs.get((site_name,))
-            site = self._make_site(site_name, site_def)
+            site = self._make_site(site_name)
             for subsite_name in subsite_names_by_site.get(site_name, {}):
                 subsite = self._make_subsite(site, subsite_name)
                 self._add_devices(site, subsite)
@@ -330,122 +325,128 @@ class DeviceCsvCompiler:
         self._record_shared_positions(sites)
         return sites
 
-    def _make_site(self, site_name: str, site_def: Optional[MergedDefinition]) -> Site:
-        if site_def is None:
+    def _concrete_site_names(self) -> OrderedDict[str, None]:
+        names = OrderedDict()
+        for site_name, _subsite_name, _device_name in self.definitions_by_path:
+            if site_name is not None:
+                names.setdefault(site_name, None)
+        return names
+
+    def _concrete_subsite_names_by_site(self) -> dict[str, OrderedDict[str, None]]:
+        names_by_site: dict[str, OrderedDict[str, None]] = defaultdict(OrderedDict)
+        for site_name, subsite_name, _device_name in self.definitions_by_path:
+            if site_name is not None and subsite_name is not None:
+                names_by_site[site_name].setdefault(subsite_name, None)
+        return names_by_site
+
+    def _make_site(self, site_name: str) -> Site:
+        resolved = self._resolve_path((site_name, None, None), f"site {site_name}")
+        if resolved.source is None:
             self.decisions.append(f"Created site {site_name} at default position (0, 0)")
             return Site(site_name, x=0.0, y=0.0)
         self.decisions.append(
-            f"Created site {site_name} at {self._coords(site_def.coords)} from row(s) {self._rows(site_def.rows)}"
+            f"Created site {site_name} at {self._coords(resolved.coords)} from row(s) {self._rows(resolved.rows)}"
         )
-        return Site(site_name, x=site_def.x, y=site_def.y, tags=site_def.tags, source_rows=site_def.rows)
+        return Site(site_name, x=resolved.x, y=resolved.y, tags=resolved.tags, source_rows=resolved.rows)
 
     def _make_subsite(self, site: Site, subsite_name: str) -> Subsite:
-        template = self.subsite_templates.get((subsite_name,))
-        concrete = self.subsite_defs.get((site.name, subsite_name))
-        if concrete is not None:
-            tags = set(template.tags) if template else set()
-            tags.update(concrete.tags)
-            rows = list(template.rows) if template else []
-            rows.extend(concrete.rows)
-            if template and template.coords != concrete.coords:
-                self.overrides.append(
-                    f"{site.name}/{subsite_name}: row(s) {self._rows(concrete.rows)} override "
-                    f"subsite template row(s) {self._rows(template.rows)} "
-                    f"from {self._coords(template.coords)} to {self._coords(concrete.coords)}"
-                )
-            self.decisions.append(
-                f"Created subsite {site.name}/{subsite_name} at {self._coords(concrete.coords)} from row(s) {self._rows(concrete.rows)}"
-            )
-            return Subsite(
-                subsite_name,
-                x=concrete.x,
-                y=concrete.y,
-                tags=tags,
-                absolute_x=site.x + concrete.x,
-                absolute_y=site.y + concrete.y,
-                source_rows=rows,
-            )
-
-        if template is not None:
-            self.decisions.append(
-                f"Created subsite {site.name}/{subsite_name} from template row(s) {self._rows(template.rows)} at {self._coords(template.coords)}"
-            )
-            return Subsite(
-                subsite_name,
-                x=template.x,
-                y=template.y,
-                tags=template.tags,
-                absolute_x=site.x + template.x,
-                absolute_y=site.y + template.y,
-                source_rows=template.rows,
-            )
-
-        self.decisions.append(f"Created subsite {site.name}/{subsite_name} at default position (0, 0)")
-        return Subsite(subsite_name, x=0.0, y=0.0, absolute_x=site.x, absolute_y=site.y)
+        path = (site.name, subsite_name, None)
+        resolved = self._resolve_path(path, f"{site.name}/{subsite_name}")
+        source_text = (
+            f"from row(s) {self._rows(resolved.rows)}"
+            if resolved.source is not None
+            else "at default position"
+        )
+        self.decisions.append(
+            f"Created subsite {site.name}/{subsite_name} at {self._coords(resolved.coords)} {source_text}"
+        )
+        return Subsite(
+            subsite_name,
+            x=resolved.x,
+            y=resolved.y,
+            tags=resolved.tags,
+            absolute_x=site.x + resolved.x,
+            absolute_y=site.y + resolved.y,
+            source_rows=resolved.rows,
+        )
 
     def _add_devices(self, site: Site, subsite: Subsite):
-        device_names = OrderedDict()
-        for template_subsite, device_name in self.device_templates:
-            if template_subsite == subsite.name:
-                device_names.setdefault(device_name, None)
-        for site_name, subsite_name, device_name in self.device_defs:
-            if site_name == site.name and subsite_name == subsite.name:
-                device_names.setdefault(device_name, None)
-
-        for device_name in device_names:
-            template = self.device_templates.get((subsite.name, device_name))
-            concrete = self.device_defs.get((site.name, subsite.name, device_name))
-            if concrete is not None:
-                tags = set(template.tags) if template else set()
-                tags.update(concrete.tags)
-                rows = list(template.rows) if template else []
-                rows.extend(concrete.rows)
-                if template and template.coords != concrete.coords:
-                    self.overrides.append(
-                        f"{site.name}/{subsite.name}/{device_name}: row(s) {self._rows(concrete.rows)} override "
-                        f"device template row(s) {self._rows(template.rows)} "
-                        f"from {self._coords(template.coords)} to {self._coords(concrete.coords)}"
-                    )
-                self.decisions.append(
-                    f"Created device {site.name}/{subsite.name}/{device_name} at {self._coords(concrete.coords)} from row(s) {self._rows(concrete.rows)}"
-                )
-                device = Device(
-                    device_name,
-                    concrete.x,
-                    concrete.y,
-                    tags=tags,
-                    absolute_x=subsite.absolute_x + concrete.x,
-                    absolute_y=subsite.absolute_y + concrete.y,
-                    source_rows=rows,
-                )
-            else:
-                assert template is not None
-                self.decisions.append(
-                    f"Created device {site.name}/{subsite.name}/{device_name} from template row(s) "
-                    f"{self._rows(template.rows)} at {self._coords(template.coords)}"
-                )
-                device = Device(
-                    device_name,
-                    template.x,
-                    template.y,
-                    tags=template.tags,
-                    absolute_x=subsite.absolute_x + template.x,
-                    absolute_y=subsite.absolute_y + template.y,
-                    source_rows=template.rows,
-                )
+        for device_name in self._device_names(site.name, subsite.name):
+            path = (site.name, subsite.name, device_name)
+            resolved = self._resolve_path(path, f"{site.name}/{subsite.name}/{device_name}")
+            self.decisions.append(
+                f"Created device {site.name}/{subsite.name}/{device_name} at "
+                f"{self._coords(resolved.coords)} from row(s) {self._rows(resolved.rows)}"
+            )
+            device = Device(
+                device_name,
+                resolved.x,
+                resolved.y,
+                tags=resolved.tags,
+                absolute_x=subsite.absolute_x + resolved.x,
+                absolute_y=subsite.absolute_y + resolved.y,
+                source_rows=resolved.rows,
+            )
             subsite.devices.append(device)
+
+    def _device_names(self, site_name: str, subsite_name: str) -> OrderedDict[str, None]:
+        names = OrderedDict()
+        for site, subsite, device in self.definitions_by_path:
+            if site is None and subsite == subsite_name and device is not None:
+                names.setdefault(device, None)
+        for site, subsite, device in self.definitions_by_path:
+            if site == site_name and subsite == subsite_name and device is not None:
+                names.setdefault(device, None)
+        return names
+
+    def _resolve_path(self, path: tuple[str, Optional[str], Optional[str]], label: str) -> ResolvedDefinition:
+        candidates = self._matching_definitions(path)
+        if not candidates:
+            return ResolvedDefinition(0.0, 0.0, set(), [], None)
+
+        tags = set()
+        rows = []
+        for definition in candidates:
+            tags.update(definition.tags)
+            rows.extend(definition.rows)
+
+        chosen = candidates[-1]
+        if len(candidates) > 1 and candidates[0].coords != chosen.coords:
+            self.overrides.append(
+                f"{label}: row(s) {self._rows(chosen.rows)} override "
+                f"row(s) {self._rows(candidates[0].rows)} "
+                f"from {self._coords(candidates[0].coords)} to {self._coords(chosen.coords)}"
+            )
+        return ResolvedDefinition(chosen.x, chosen.y, tags, rows, chosen)
+
+    def _matching_definitions(self, path: tuple[str, Optional[str], Optional[str]]) -> list[MergedDefinition]:
+        site_name, subsite_name, device_name = path
+        paths = []
+        if subsite_name is None:
+            paths.append((site_name, None, None))
+        elif device_name is None:
+            paths.extend([
+                (None, subsite_name, None),
+                (site_name, subsite_name, None),
+            ])
+        else:
+            paths.extend([
+                (None, subsite_name, device_name),
+                (site_name, subsite_name, device_name),
+            ])
+        return [self.definitions_by_path[p] for p in paths if p in self.definitions_by_path]
 
     def _record_unused_templates(self, sites: list[Site]):
         concrete_subsite_names = {subsite.name for site in sites for subsite in site.subsites}
-        for (subsite_name,), definition in self.subsite_templates.items():
-            if subsite_name not in concrete_subsite_names:
+        for path, definition in self.definitions_by_path.items():
+            site_name, subsite_name, device_name = path
+            if site_name is None and subsite_name is not None and device_name is None and subsite_name not in concrete_subsite_names:
                 self.warnings.append(
-                    f"Subsite template '{subsite_name}' from row(s) {self._rows(definition.rows)} did not match any concrete subsite."
+                    f"Reusable subsite '{subsite_name}' from row(s) {self._rows(definition.rows)} did not match any concrete subsite."
                 )
-        for (subsite_name, device_name), definition in self.device_templates.items():
-            if subsite_name not in concrete_subsite_names:
+            if site_name is None and subsite_name is not None and device_name is not None and subsite_name not in concrete_subsite_names:
                 self.warnings.append(
-                    f"Device template '{subsite_name}/{device_name}' from row(s) {self._rows(definition.rows)} did not match any concrete subsite."
+                    f"Reusable device '{subsite_name}/{device_name}' from row(s) {self._rows(definition.rows)} did not match any concrete subsite."
                 )
 
     def _record_shared_positions(self, sites: list[Site]):
@@ -487,21 +488,26 @@ class DeviceCsvCompiler:
 
     @staticmethod
     def _kind_label(kind: str) -> str:
+        if kind == "subsite_template":
+            return "reusable subsite"
+        if kind == "device_template":
+            return "reusable device"
         return kind.replace("_", " ")
 
     @staticmethod
-    def _key_label(kind: str, key: tuple[str, ...]) -> str:
+    def _key_label(kind: str, key: tuple[Optional[str], Optional[str], Optional[str]]) -> str:
+        site_name, subsite_name, device_name = key
         if kind == "site":
-            return key[0]
+            return site_name or ""
         if kind == "subsite_template":
-            return key[0]
+            return subsite_name or ""
         if kind == "subsite":
-            return f"{key[0]}/{key[1]}"
+            return f"{site_name}/{subsite_name}"
         if kind == "device_template":
-            return f"{key[0]}/{key[1]}"
+            return f"{subsite_name}/{device_name}"
         if kind == "device":
-            return f"{key[0]}/{key[1]}/{key[2]}"
-        return "/".join(key)
+            return f"{site_name}/{subsite_name}/{device_name}"
+        return "/".join(part or "" for part in key)
 
     @staticmethod
     def _coords(coords: tuple[float, float]) -> str:
