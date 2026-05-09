@@ -56,6 +56,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 	RESOLUTION = 1e-8
 	STATUS_COMPLETED = 10000
 	POST_COMPLETION_DRAIN_TIMEOUT_S = 30.0
+	PUND_SIGNS = (-1, 1, 1, -1, -1)
 
 	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
 		super().__init__(settings, output_root, output_relative, runner, fallback_root)
@@ -113,31 +114,37 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		return vectors
 
 	def _build_triangle_fatigue_vectors(self):
-		"""Seamless triangular PN fatigue cycle, then optional idle delay."""
-		ramp = (2.0 / self.fatigue_freq) / 3.0
-		vectors = [
-			(ramp, self._positive_level()),
-			(ramp, self._negative_level()),
-			(ramp, self._idle_voltage()),
-		]
+		"""Triangular PN fatigue pulses, then optional idle delay."""
+		vectors = self._build_triangular_pn_vectors(self.fatigue_freq)
 		self._append_idle_hold(vectors, self.fatigue_delay)
 		return vectors
 
-	def _build_pund_like_vectors(self, frequency):
-		"""Four square PUND pulses with base holds between pulses."""
-		pulse = 1.0 / frequency
+	def _build_triangular_pulse_vectors(self, frequency, signs):
+		"""Triangular PUND timing: ramp out, ramp back, base hold."""
+		T = 1.0 / frequency
+		pulse_width = 0.4 * T
+		gap = 0.2 * T
+		edge = 0.1 * T
+
+		vectors = [(edge, self.base_voltage)]
+		for sign in signs:
+			vectors += [
+				(pulse_width, self._positive_level() if sign > 0 else self._negative_level()),
+				(pulse_width, self.base_voltage),
+				(gap, self.base_voltage),
+			]
+		vectors[-1] = (edge, self._idle_voltage())
+		return vectors
+
+	def _build_triangular_pn_vectors(self, frequency):
+		"""Triangular PN pulses without a base hold between P and N."""
+		half_period = 0.5 / frequency
 		vectors = []
-		for idx, level in enumerate((
-			self._positive_level(),
-			self._positive_level(),
-			self._negative_level(),
-			self._negative_level(),
-		)):
-			self._append_square_level(vectors, level, pulse)
-			if idx < 3:
-				self._append_square_level(vectors, self.base_voltage, pulse)
-			else:
-				vectors.append((self.MIN_INTERVAL, self._idle_voltage()))
+		for level in (self._positive_level(), self._negative_level()):
+			vectors.append((half_period, level))
+			vectors.append((half_period, self.base_voltage))
+		if vectors and self._idle_voltage() != self.base_voltage:
+			vectors[-1] = (vectors[-1][0], self._idle_voltage())
 		return vectors
 
 	def _build_fatigue_vectors(self):
@@ -145,38 +152,28 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			return self._build_square_fatigue_vectors()
 		if self.fatigue_pulse_type == 'triangle':
 			return self._build_triangle_fatigue_vectors()
-		vectors = self._build_pund_like_vectors(self.fatigue_freq)
+		vectors = self._build_triangular_pulse_vectors(self.fatigue_freq, self.PUND_SIGNS)
 		self._append_idle_hold(vectors, self.fatigue_delay)
 		return vectors
 
-	def _build_pn_read_vectors(self):
-		"""Seamless triangular PN read pulse with total ramp duration 2/read_pulse_freq."""
-		ramp = (2.0 / self.read_pulse_freq) / 3.0
-		return [
-			(ramp, self._positive_level()),
-			(ramp, self._negative_level()),
-			(ramp, self._idle_voltage()),
-		]
-
-	def _build_pund_read_vectors(self):
-		return self._build_pund_like_vectors(self.read_pulse_freq)
-
 	def _build_read_vectors(self):
 		if self.read_pulse_type == 'pn':
-			return self._build_pn_read_vectors()
+			return self._build_triangular_pn_vectors(self.read_pulse_freq)
 		if self.read_pulse_type == 'pund':
-			return self._build_pund_read_vectors()
+			return self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS)
 
 		vectors = []
-		vectors.extend(self._build_pn_read_vectors())
+		vectors.extend(self._build_triangular_pn_vectors(self.read_pulse_freq))
 		self._append_idle_hold(vectors, 1.0 / self.read_pulse_freq)
-		vectors.extend(self._build_pund_read_vectors())
+		vectors.extend(self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS))
 		return vectors
 
 	def _read_phase_spans(self):
 		"""Return plotted read phases as (key, label, start_s, end_s)."""
-		pn_duration = sum(dt for dt, _ in self._build_pn_read_vectors())
-		pund_duration = sum(dt for dt, _ in self._build_pund_read_vectors())
+		pn_duration = sum(dt for dt, _ in self._build_triangular_pn_vectors(self.read_pulse_freq))
+		pund_duration = sum(
+			dt for dt, _ in self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS)
+		)
 
 		if self.read_pulse_type == 'pn':
 			return [('pn', 'PN', 0.0, pn_duration)]
@@ -191,12 +188,12 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		]
 
 	@staticmethod
-	def _phase_for_time(rel_t, phase_spans):
+	def _phase_for_time(read_time_s, phase_spans):
 		for phase in phase_spans:
 			_key, _label, start, end = phase
-			if start <= rel_t < end:
+			if start <= read_time_s < end:
 				return phase
-		if phase_spans and rel_t == phase_spans[-1][3]:
+		if phase_spans and read_time_s == phase_spans[-1][3]:
 			return phase_spans[-1]
 		return None
 
@@ -400,7 +397,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		read_duration = sum(dt for dt, _ in read_vectors)
 		phase_spans = self._read_phase_spans()
 		sample_interval = self._sample_interval()
-		sample_points = max(1, int(read_duration / sample_interval))
+		sample_points = max(1, int(round(read_duration / sample_interval)))
 		expected_total = sample_points * len(read_cycles)
 		source_map = self._configure_plot(device, read_cycles, read_duration)
 
@@ -465,6 +462,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			plotted_count = 0
 			data_ch1 = []
 			data_ch2 = []
+			read_start_times_s: dict[int, float] = {}
 			i_baseline_samples: dict[int, list] = {}
 			i_baseline: dict[int, float] = {}
 			q_accum: dict[tuple[int, str], float] = {}
@@ -490,11 +488,16 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 
 						read_idx = sample_index // sample_points
 						sample_in_read = sample_index % sample_points
+						timestamp = t_v if t_v is not None else t_i
+						if timestamp is None:
+							read_time_s = sample_in_read * sample_interval
+						else:
+							read_start_s = read_start_times_s.setdefault(read_idx, timestamp)
+							read_time_s = max(0.0, timestamp - read_start_s)
 						if read_idx >= len(read_cycles) or read_idx not in source_map:
 							continue
 
-						rel_t = sample_in_read * sample_interval
-						phase = self._phase_for_time(rel_t, phase_spans)
+						phase = self._phase_for_time(read_time_s, phase_spans)
 						if phase is None:
 							continue
 						phase_key, _phase_label, _start, _end = phase
@@ -503,8 +506,8 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 
 						batch_key = (read_idx, phase_key)
 						batch = batches.setdefault(batch_key, {'v': [], 'i': [], 'iv': [], 'qv': []})
-						batch['v'].append((rel_t, voltage))
-						batch['i'].append((rel_t, current * 1e6))
+						batch['v'].append((read_time_s, voltage))
+						batch['i'].append((read_time_s, current * 1e6))
 
 						if read_idx not in i_baseline:
 							samples = i_baseline_samples.setdefault(read_idx, [])
@@ -518,12 +521,12 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 							batch['iv'].append((voltage, current_adj * 1e6))
 							if batch_key not in q_accum:
 								q_accum[batch_key] = 0.0
-								last_t_per_phase[batch_key] = rel_t
+								last_t_per_phase[batch_key] = read_time_s
 							else:
-								dt = rel_t - last_t_per_phase[batch_key]
+								dt = read_time_s - last_t_per_phase[batch_key]
 								if dt > 0:
 									q_accum[batch_key] += current_adj * dt
-								last_t_per_phase[batch_key] = rel_t
+								last_t_per_phase[batch_key] = read_time_s
 							batch['qv'].append((voltage, q_accum[batch_key] * 1e9))
 
 					plot_batch = {}
@@ -558,9 +561,10 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 				for i in range(sample_points):
 					row_idx = offset + i
 					if row_idx < len(data_ch1) and row_idx < len(data_ch2):
-						_t_v, voltage = data_ch1[row_idx]
-						_t_i, current = data_ch2[row_idx]
-						all_rows.append([cycle_num, i * sample_interval, voltage, current])
+						t_v, voltage = data_ch1[row_idx]
+						t_i, current = data_ch2[row_idx]
+						timestamp = t_v if t_v is not None else t_i
+						all_rows.append([cycle_num, timestamp, voltage, current])
 
 			self.save_measurement_outputs(
 				all_rows,
