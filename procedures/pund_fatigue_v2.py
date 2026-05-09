@@ -276,7 +276,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			if dt > 0:
 				wgfmu.add_vector(pattern_name, dt, voltage)
 
-	def _create_pattern_pair(self, wgfmu, pg_name, iv_name, initial_pg, pg_vectors, measure_points=None, sample_interval=None):
+	def _create_pattern_pair(self, wgfmu, pg_name, iv_name, initial_pg, pg_vectors, measure_points=None, sample_interval=None, measure_start=0.0):
 		wgfmu.create_pattern(pg_name, initial_pg)
 		self._add_vectors(wgfmu, pg_name, pg_vectors)
 
@@ -287,7 +287,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			wgfmu.set_measure_event(
 				pg_name,
 				"meas",
-				0.0,
+				measure_start,
 				measure_points,
 				sample_interval,
 				sample_interval,
@@ -296,7 +296,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			wgfmu.set_measure_event(
 				iv_name,
 				"meas",
-				0.0,
+				measure_start,
 				measure_points,
 				sample_interval,
 				sample_interval,
@@ -395,13 +395,18 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		read_vectors = self._build_read_vectors()
 		fatigue_duration = sum(dt for dt, _ in fatigue_vectors)
 		read_duration = sum(dt for dt, _ in read_vectors)
+		settle_duration = 1.0 / self.fatigue_freq
 		phase_spans = self._read_phase_spans()
 		sample_interval = self._sample_interval()
 		sample_points = max(1, int(round(read_duration / sample_interval)))
 		expected_total = sample_points * len(read_cycles)
 		source_map = self._configure_plot(device, read_cycles, read_duration)
 
-		total_time = (self.fatigue_count_int * fatigue_duration) + (len(read_cycles) * read_duration)
+		total_time = (
+			(self.fatigue_count_int * fatigue_duration)
+			+ (len(read_cycles) * settle_duration)
+			+ (len(read_cycles) * read_duration)
+		)
 		self.log(f"Starting PUND Fatigue V2 on {device.name}")
 		self.log(
 			f"  {self.fatigue_count_int:.2e} {self.fatigue_pulse_type} fatigue cycles, "
@@ -429,9 +434,10 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 				read_pg,
 				read_iv,
 				initial_pg,
-				read_vectors,
+				[(settle_duration, initial_pg), *read_vectors],
 				measure_points=sample_points,
 				sample_interval=sample_interval,
+				measure_start=settle_duration,
 			)
 
 			prev_cycle = 0

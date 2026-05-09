@@ -223,7 +223,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
             if dt > 0:
                 wgfmu.add_vector(pattern_name, dt, voltage)
 
-    def _create_pattern_pair(self, wgfmu, pg_name, iv_name, initial_pg, pg_vectors, measure_points=None, sample_interval=None):
+    def _create_pattern_pair(self, wgfmu, pg_name, iv_name, initial_pg, pg_vectors, measure_points=None, sample_interval=None, measure_start=0.0):
         wgfmu.create_pattern(pg_name, initial_pg)
         self._add_vectors(wgfmu, pg_name, pg_vectors)
 
@@ -234,7 +234,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
             wgfmu.set_measure_event(
                 pg_name,
                 "meas",
-                0.0,
+                measure_start,
                 measure_points,
                 sample_interval,
                 sample_interval,
@@ -243,7 +243,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
             wgfmu.set_measure_event(
                 iv_name,
                 "meas",
-                0.0,
+                measure_start,
                 measure_points,
                 sample_interval,
                 sample_interval,
@@ -322,7 +322,10 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
         source_map = self._configure_plot(device, max_read_duration)
 
         fatigue_period = (2.0 / self.fatigue_freq) + self.fatigue_delay
+        settle_duration = 1.0 / self.fatigue_freq
         total_time = sum((self.fatigue_count_int * fatigue_period) + duration for duration in read_durations)
+        if self.fatigue_count_int > 0:
+            total_time += len(read_durations) * settle_duration
         self.log(f"Starting PUND Wakeup on {device.name}")
         self.log(
             f"  Vmax values: {', '.join(f'{v:g} V' for v in self.vmax_values)}; "
@@ -339,6 +342,8 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
 
         try:
             self._configure_wgfmu(wgfmu)
+            read_prelude = [(settle_duration, initial_pg)] if self.fatigue_count_int > 0 else []
+            measure_start = settle_duration if self.fatigue_count_int > 0 else 0.0
 
             for idx, (vmax, read_vectors) in enumerate(zip(self.vmax_values, read_vectors_by_vmax)):
                 self.check_stop(b1500)
@@ -355,9 +360,10 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                     read_pg,
                     read_iv,
                     initial_pg,
-                    read_vectors,
+                    read_prelude + read_vectors,
                     measure_points=sample_points,
                     sample_interval=sample_interval,
+                    measure_start=measure_start,
                 )
 
                 if self.fatigue_count_int > 0:
