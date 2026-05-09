@@ -13,7 +13,8 @@ These are the current plotting rules for streamed plots in the DearPyGui viewer.
 
 ## Current Behavior
 
-- Axes with explicit `xlim` / `ylims` stay fixed.
+- Axes with explicit `xlim` / `ylims` use those limits as the initial view, then release
+  them so normal pan/zoom works.
 - Axes without explicit limits are live-fit from the mirrored curve data.
 - Linear axes get an 8% margin around the data span.
 - Log axes get a multiplicative margin of 8% in log space, with a minimum of 0.2 decades.

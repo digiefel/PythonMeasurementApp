@@ -229,6 +229,7 @@ class PlotViewer:
         self._linear_fits: dict[str, list[_LinearFitState]] = {}
         self._hlines_by_source: dict[str, list[_HLineState]] = {}
         self._all_hlines: list[_HLineState] = []
+        self._axis_release_tags: set[int | str] = set()
 
     def poll_queue(self) -> None:
         while True:
@@ -366,7 +367,9 @@ class PlotViewer:
         plot_state = self._plot_states.get(plot_id)
 
         if xlim is not None and plot_id in self._xaxis_tags:
-            dpg.set_axis_limits(self._xaxis_tags[plot_id], xlim[0], xlim[1])
+            axis_tag = self._xaxis_tags[plot_id]
+            dpg.set_axis_limits(axis_tag, xlim[0], xlim[1])
+            self._axis_release_tags.add(axis_tag)
             if plot_state is not None:
                 plot_state.x_fit = None
 
@@ -375,7 +378,9 @@ class PlotViewer:
             for idx, lim in ylims.items():
                 axis_idx = int(idx)
                 if axis_idx < len(yaxis_list) and lim is not None:
-                    dpg.set_axis_limits(yaxis_list[axis_idx], lim[0], lim[1])
+                    axis_tag = yaxis_list[axis_idx]
+                    dpg.set_axis_limits(axis_tag, lim[0], lim[1])
+                    self._axis_release_tags.add(axis_tag)
                     if plot_state is not None and axis_idx < len(plot_state.y_fits):
                         plot_state.y_fits[axis_idx] = None
 
@@ -411,6 +416,7 @@ class PlotViewer:
         self._linear_fits.clear()
         self._hlines_by_source.clear()
         self._all_hlines.clear()
+        self._axis_release_tags.clear()
 
     def _normalize_ratios(self, ratios: list[float] | tuple[float, ...], count: int) -> list[float]:
         if count <= 0:
@@ -630,6 +636,7 @@ class PlotViewer:
         self._xaxis_tags[plot_def.id] = x_axis
         if plot_def.xlim is not None:
             dpg.set_axis_limits(x_axis, plot_def.xlim[0], plot_def.xlim[1])
+            self._axis_release_tags.add(x_axis)
 
         yaxis_tags: list[int | str] = []
         yaxis_codes = [dpg.mvYAxis, dpg.mvYAxis2, dpg.mvYAxis3]
@@ -651,6 +658,7 @@ class PlotViewer:
             yaxis_tags.append(y_axis)
             if lim is not None:
                 dpg.set_axis_limits(y_axis, lim[0], lim[1])
+                self._axis_release_tags.add(y_axis)
 
         self._yaxis_tags[plot_def.id] = yaxis_tags
         self._plot_states[plot_def.id] = _PlotState(
@@ -1044,6 +1052,12 @@ class PlotViewer:
                 dpg.configure_item(stack_tag, width=-1, height=-1)
 
     def _release_pending_axis_limits(self) -> None:
+        if self._axis_release_tags:
+            for axis_tag in list(self._axis_release_tags):
+                if dpg.does_item_exist(axis_tag):
+                    dpg.set_axis_limits_auto(axis_tag)
+            self._axis_release_tags.clear()
+
         for plot_state in self._plot_states.values():
             managed_axes: list[_AxisFitState] = []
             if plot_state.x_fit is not None:

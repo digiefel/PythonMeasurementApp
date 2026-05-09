@@ -35,6 +35,8 @@ class PlotDef:
   ImPlot supports up to 3 y-axes per plot.
 - `yscales` maps 1:1 to `ylabels`. Supported: `"linear"`, `"log"`.
 - `ylims` maps 1:1 to `ylabels`. `None` entries mean auto-range.
+- `xlim` and non-`None` `ylims` set the initial view for those axes; they do not stay
+  as hard pan/zoom constraints.
 - `xlink` references another PlotDef's `id`. Linked plots share pan/zoom on x-axis.
 - `elements` is a list of visual primitives (Curve, Histogram, LinearFit, HLine, VLine).
 - If `xlim`/`ylims` are left as `None`, the viewer live-fits those axes while data is
