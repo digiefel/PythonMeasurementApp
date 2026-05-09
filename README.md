@@ -9,7 +9,7 @@ Key goals: Simplicity, ease of config editing, automatic movement, and extensibi
 - **Language**: Python 3.x
 - **GUI**: Tkinter (built-in, lightweight)
 - **Instrument Control**: pyvisa for GPIB communication
-- **Config Handling**: pandas for CSV, json for global settings
+- **Config Handling**: CSV-based device trees, json for global settings
 - **Movement**: subprocess calls to sentio subsite_move (assumed command-line tool)
 - **Logging**: Console + GUI text area
 - **Data Saving**: CSV files in hierarchical folders (output/{Site}/{Subsite}/{Device}/)
@@ -24,8 +24,8 @@ PythonMeasurementApp/
 ├── procedures/
 │   ├── base.py            # Abstract MeasurementProcedure class
 │   └── cv_sweep.py        # Example concrete procedure
-├── requirements.txt       # Dependencies: pyvisa, pandas
-├── devices.csv            # Sample device config (Site, Subsite, Device, X, Y)
+├── requirements.txt       # Python dependencies
+├── saved_configs/devices.csv # Device tree source CSV
 ├── global_config.json     # Auto-generated global settings (GPIB, output dir, procedure settings)
 ├── bindings.py            # Python bindings to B1500 and WGFMU C APIs
 └── README.md              # This file
@@ -33,7 +33,6 @@ PythonMeasurementApp/
 
 ## Dependencies
 - pyvisa: For instrument communication
-- pandas: For CSV parsing
 - tkinter: Built-in for GUI
 - ctypes: Built-in for C DLL bindings (for B1500/WGFMU)
 - pythonnet: For C# DLL bindings (optional alternative)
@@ -81,7 +80,7 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - `fallback_output_dir`: `output` resolves to the same local folder
 
 ## How to Run
-1. Prepare one or more device CSV files (columns: `Site,Subsite,Device,X,Y`).
+1. Prepare one or more device CSV files. See `docs/devices_csv.md` for the full format.
 2. Double-click `Run Measurement App.cmd` to launch the GUI.
 3. In the Selection panel, choose a `Devices CSV` source (dropdown or `Browse...`).
 4. Select site/subsite/device/procedure.
@@ -89,10 +88,11 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 
 ## Key Classes and Methods
 ### models.py
-- `Device(name, x, y)`: Represents a device with position.
-- `Subsite(name, devices)`: List of devices.
-- `Site(name, subsites)`: List of subsites.
-- `load_devices_csv(csv_path)`: Parses CSV into Site list.
+- `Device(name, x, y, tags=None)`: Represents a measurement target with local subsite position, absolute chip position, and optional tags.
+- `Subsite(name, devices, x=0, y=0, tags=None)`: Coordinate frame and selection group with local site position.
+- `Site(name, subsites, x=0, y=0, tags=None)`: Chip-level region with local chip position.
+- `load_devices_csv(csv_path)`: Loads a device CSV into a Site/Subsite/Device tree.
+- `compile_devices_csv(csv_path)`: Returns the loaded tree plus validation/debug information.
 
 ### config.py
 - `Config(config_path, devices_csv_path)`: Loads/saves global JSON and devices CSV.
@@ -170,7 +170,7 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - Hacky solutions
 
 ## Config Files
-- **Device CSV files**: Flat CSV catalogs for devices. Columns: Site, Subsite, Device, X, Y.
+- **Device CSV files**: CSV catalogs for measurement targets. Required columns: `Site,Subsite,Device,X,Y`; optional column: `Tags`. See `docs/devices_csv.md`.
 - **global_config.json**: Stores global app settings including the active `devices_csv_path`.
 
 ## Procedures

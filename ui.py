@@ -583,11 +583,11 @@ class MainUI:
                     origin = self.runner.prober_ctrl.subsite_origin
                     
                     if set_home_checked and device:
-                        
                         prober_pos = (device.x, device.y)
                     elif origin:
-                        # Origin already set, compute relative position
-                        prober_pos = (pos[0] - origin[0], pos[1] - origin[1])
+                        # Origin already set, compute local position inside the selected subsite.
+                        chip_x, chip_y = pos[0] - origin[0], pos[1] - origin[1]
+                        prober_pos = (chip_x - subsite.absolute_x, chip_y - subsite.absolute_y)
                     else:
                         # No origin set and not simulating - show absolute position
                         # This won't align with device coords but shows raw prober position
@@ -613,10 +613,10 @@ class MainUI:
                     origin = self.runner.prober_ctrl.subsite_origin
                     
                     if set_home_checked and device:
-                        # Same simulation as above
                         dialog.update_prober_position((device.x, device.y))
                     elif origin:
-                        dialog.update_prober_position((pos[0] - origin[0], pos[1] - origin[1]))
+                        chip_x, chip_y = pos[0] - origin[0], pos[1] - origin[1]
+                        dialog.update_prober_position((chip_x - subsite.absolute_x, chip_y - subsite.absolute_y))
                     else:
                         dialog.update_prober_position(pos)
             except Exception as e:
@@ -1388,8 +1388,11 @@ class MainUI:
         def target():
             if set_home:
                 if self.prober_available:
-                    self._post_log(f"Setting subsite origin to device '{device.name}' at ({device.x}um, {device.y}um).")
-                    self.runner.set_subsite_origin(device.x, device.y)
+                    self._post_log(
+                        f"Setting coordinate origin to device '{device.name}' at "
+                        f"({device.absolute_x}um, {device.absolute_y}um)."
+                    )
+                    self.runner.set_subsite_origin(device.absolute_x, device.absolute_y)
                 else:
                     self._post_log("No prober connected: skipping subsite origin setup.")
             try:
@@ -1484,8 +1487,11 @@ class MainUI:
         if not device:
             self.log("Select site, subsite, and device before setting reference.")
             return
-        self.log(f"Setting prober reference to device '{device.name}' at ({device.x}um, {device.y}um).")
-        self.runner.set_subsite_origin(device.x, device.y)
+        self.log(
+            f"Setting prober reference to device '{device.name}' at "
+            f"({device.absolute_x}um, {device.absolute_y}um)."
+        )
+        self.runner.set_subsite_origin(device.absolute_x, device.absolute_y)
 
     def prober_go_to_device(self):
         if not self.prober_available:

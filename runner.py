@@ -340,7 +340,9 @@ class MeasurementRunner:
                     f'(ref {self.temp_ref_c:.2f}C), comp=({dx:.3f}um, {dy:.3f}um)'
                 )
         origin_x, origin_y = self.prober_ctrl.subsite_origin or (0.0, 0.0)
-        return origin_x + device.x + dx, origin_y + device.y + dy
+        device_x = getattr(device, "absolute_x", device.x)
+        device_y = getattr(device, "absolute_y", device.y)
+        return origin_x + device_x + dx, origin_y + device_y + dy
 
     def move_to_device(self, device):
         """Move chuck XY to a device. Raises on failure."""
