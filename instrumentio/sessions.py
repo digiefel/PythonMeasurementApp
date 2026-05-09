@@ -183,6 +183,24 @@ class B1500Session:
         ret = dll_b1500.agb1500_setIv(self.session, channel, sweep_mode, range_, start, stop, points, hold, delay, second_delay, compliance, power_compliance)
         self._check_ret(ret, "Set IV sweep")
 
+    def set_sweep_sync(self, channel, output_mode, range_, start, stop, compliance=10.0, power_compliance=0.0):
+        """
+        Configure a synchronous sweep source.
+        output_mode must match the primary sweep output mode: B1500_IF_MODE for
+        current sweeps or B1500_VF_MODE for voltage sweeps.
+        """
+        ret = dll_b1500.agb1500_setSweepSync(
+            self.session,
+            channel,
+            output_mode,
+            range_,
+            start,
+            stop,
+            compliance,
+            power_compliance,
+        )
+        self._check_ret(ret, "Set synchronous sweep")
+
     def sweep_iv(self, channel, measurement_mode, measurement_range, expected_points):
         """Execute configured sweep on channel and return measurement data."""
         source = (ViReal64 * expected_points)()

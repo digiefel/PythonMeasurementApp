@@ -13,6 +13,7 @@ from instrumentio.codes import (
     B1500_STOP_DISABLE,
     B1500_SWP_VF_DBLLIN,
     B1500_SWP_VF_SGLLIN,
+    B1500_VF_MODE,
     B1500_VM_MODE,
 )
 from instrumentio.descriptors import describe_status_bits
@@ -21,8 +22,8 @@ from instrumentio.descriptors import describe_status_bits
 class IVSweepProcedure(MeasurementProcedure):
     """
     Two-terminal IV sweep.
-    Forces a voltage ramp on the high SMU while holding the low SMU at 0 V,
-    measuring the sourced voltage and current at each step.
+    Forces a voltage ramp across the high/low SMU pair and measures both
+    terminal currents. Optional symmetric mode drives high/low at +/- V/2.
     """
     NAME = "IVSweep"
     PARAMETERS = (
@@ -34,7 +35,9 @@ class IVSweepProcedure(MeasurementProcedure):
         parameter('start_voltage', 'Start Voltage (V)', 0.0, float),
         parameter('v_max', 'Vmax (V)', 15.0, float),
         parameter('points', 'Points', 75, int),
-        parameter('double_sweep', 'Double Sweep (return)', True, bool),
+        parameter('double_sweep', 'Double Sweep (return; ignored for butterfly)', True, bool),
+        parameter('butterfly_sweep', 'Butterfly Sweep (0 -> +Vmax -> 0 -> -Vmax -> 0)', False, bool),
+        parameter('symmetric_terminals', 'Symmetric Terminal Voltages', False, bool),
         parameter('current_compliance', 'Current Compliance (A)', 1e-3, float),
         parameter('current_range', 'Current Range (A)', B1500_AUTO_RANGE, Choice(B1500_CURRENT_RANGES, float)),
         parameter('hold_time', 'Hold Time (s)', 0.0, float),
@@ -77,6 +80,12 @@ class IVSweepProcedure(MeasurementProcedure):
         sense_low = self.sense_low
 
         self.check_stop(b1500)
+        if high == low:
+            raise ValueError("High SMU and Low SMU must be different channels.")
+        if self.butterfly_sweep and self.points < 2:
+            raise ValueError("Butterfly sweep requires at least 2 points.")
+        if self.butterfly_sweep and self.start_voltage != 0.0:
+            self.log("Butterfly sweep ignores Start Voltage and starts from 0 V.")
 
         # make sure that all channels are open unless otherwise configured
         b1500.set_switch(B1500_CH_ALL, False)
@@ -99,30 +108,13 @@ class IVSweepProcedure(MeasurementProcedure):
             if self.asu_range_mode is not None:
                 b1500.asu_range(ch, self.asu_range_mode)
 
-        # Prepare sweep vector
+        # Device-level sweep vector. In symmetric mode, each terminal gets half of this value.
+        sweep_segments = self._build_sweep_segments()
         voltages = self._build_voltage_vector()
-        max_points = len(voltages)
 
         # Hold low terminal at 0 V with compliance
         b1500.reset_timestamp()
         b1500.force_voltage(low, 0.0, self.current_compliance)
-
-        # Program voltage sweep on high terminal
-        # The B1500 performs the actual ramp; _build_voltage_vector mirrors it for fallback plot/CSV x values.
-        sweep_mode = B1500_SWP_VF_DBLLIN if self.double_sweep else B1500_SWP_VF_SGLLIN
-        b1500.set_iv_sweep(
-            high,
-            sweep_mode,
-            B1500_AUTO_RANGE,
-            self.start_voltage,
-            self.v_max,
-            self.points,
-            hold=self.hold_time,
-            delay=self.delay_time,
-            second_delay=self.second_delay,
-            compliance=self.current_compliance,
-            power_compliance=0.0
-        )
 
         self.check_stop(b1500)
 
@@ -188,6 +180,80 @@ class IVSweepProcedure(MeasurementProcedure):
 
         self.check_stop(b1500)
 
+        self.log(
+            f"IV sweep mode: {'butterfly' if self.butterfly_sweep else ('double' if self.double_sweep else 'single')}; "
+            f"symmetric terminals: {'on' if self.symmetric_terminals else 'off'}; "
+            f"expected points: {len(voltages)}"
+        )
+
+        results = []
+        nonzero_statuses = set()
+        for start, stop, is_double, points in sweep_segments:
+            segment_voltages = self._build_segment_voltage_vector(start, stop, is_double, points)
+            self._program_voltage_segment(b1500, start, stop, is_double, points)
+            rows = self._collect_voltage_segment(
+                b1500,
+                channels,
+                modes,
+                ranges,
+                segment_voltages,
+                nonzero_statuses,
+            )
+            results.extend(rows)
+
+        self.log(f'Collected {len(results)} IV sweep points')
+        return results
+
+    def _program_voltage_segment(self, b1500, start: float, stop: float, is_double: bool, points: int) -> None:
+        """Program one hardware staircase segment from device-level voltages."""
+        sweep_mode = B1500_SWP_VF_DBLLIN if is_double else B1500_SWP_VF_SGLLIN
+        primary_start = self._primary_terminal_voltage(start)
+        primary_stop = self._primary_terminal_voltage(stop)
+
+        b1500.set_iv_sweep(
+            self.high_channel,
+            sweep_mode,
+            B1500_AUTO_RANGE,
+            primary_start,
+            primary_stop,
+            points,
+            hold=self.hold_time,
+            delay=self.delay_time,
+            second_delay=self.second_delay,
+            compliance=self.current_compliance,
+            power_compliance=0.0,
+        )
+
+        if self.symmetric_terminals:
+            b1500.set_sweep_sync(
+                self.low_channel,
+                B1500_VF_MODE,
+                B1500_AUTO_RANGE,
+                self._secondary_terminal_voltage(start),
+                self._secondary_terminal_voltage(stop),
+                self.current_compliance,
+                0.0,
+            )
+
+        self.check_stop(b1500)
+
+    def _collect_voltage_segment(
+        self,
+        b1500,
+        channels,
+        modes,
+        ranges,
+        device_voltages,
+        nonzero_statuses,
+    ):
+        """Run the currently programmed segment and return CSV rows."""
+        runner = self.runner
+        high = self.high_channel
+        low = self.low_channel
+        sense_high = self.sense_high
+        sense_low = self.sense_low
+        max_points = len(device_voltages)
+
         # start_measure streams interleaved records: high I, low I, optional sense V, source V, and timestamps.
         b1500.start_measure(
             channels,
@@ -205,7 +271,6 @@ class IVSweepProcedure(MeasurementProcedure):
         v_source_values, v_source_status = [], [] # source = high SMU, but forced (not measured)
         timestamps = []
         plotted = 0
-        nonzero_statuses = set()
         floor = 1e-15
 
         while True:
@@ -242,8 +307,8 @@ class IVSweepProcedure(MeasurementProcedure):
                     sense_low_voltages.append(value)
             elif data_type == 4:  # source output (voltage)
                 if channel in (high, B1500_CH_NOCH, B1500_CH_ALL) and len(v_source_values) < max_points:
-                    # Source-output voltage is the programmed sweep value, not a separate voltage measurement.
-                    v_source_values.append(value)
+                    # Source-output voltage is the programmed high-terminal value, not a separate voltage measurement.
+                    v_source_values.append(self._device_voltage_from_primary(value))
                     v_source_status.append(status)
             elif data_type == 5:  # timestamp
                 timestamps.append(value)
@@ -251,7 +316,7 @@ class IVSweepProcedure(MeasurementProcedure):
             # Update plot with any newly paired points
             # High and low current records can arrive at different times, so plot only complete pairs.
             while plotted < min(len(high_currents), len(low_currents), max_points):
-                v_val = v_source_values[plotted] if plotted < len(v_source_values) else voltages[plotted]
+                v_val = v_source_values[plotted] if plotted < len(v_source_values) else device_voltages[plotted]
                 ip_val = high_currents[plotted]
                 in_val = low_currents[plotted]
                 runner.plot.append_point("I_pos", v_val, ip_val)
@@ -260,12 +325,12 @@ class IVSweepProcedure(MeasurementProcedure):
                 self._update_resistance_source(runner, v_val)
                 plotted += 1
 
-            if eod or plotted >= max_points:
+            if eod:
                 break
 
         # Ensure any remaining points are pushed to the plot
         for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
-            v_val = v_source_values[idx] if idx < len(v_source_values) else voltages[idx]
+            v_val = v_source_values[idx] if idx < len(v_source_values) else device_voltages[idx]
             ip_val = high_currents[idx]
             in_val = low_currents[idx]
             runner.plot.append_point("I_pos", v_val, ip_val)
@@ -276,7 +341,7 @@ class IVSweepProcedure(MeasurementProcedure):
         results = []
         point_count = min(max_points, len(high_currents), len(low_currents))
         for i in range(point_count):
-            v_val = v_source_values[i] if i < len(v_source_values) else voltages[i]
+            v_val = v_source_values[i] if i < len(v_source_values) else device_voltages[i]
             ip_val = high_currents[i]
             in_val = low_currents[i]
             t_val = timestamps[i] if i < len(timestamps) else 0.0
@@ -290,7 +355,6 @@ class IVSweepProcedure(MeasurementProcedure):
                 status_combined |= v_source_status[i]
             results.append([v_val, ip_val, in_val, t_val, status_combined])
 
-        self.log(f'Collected {len(results)} IV sweep points')
         return results
 
     def _update_resistance_source(self, runner, voltage: float) -> None:
@@ -309,12 +373,38 @@ class IVSweepProcedure(MeasurementProcedure):
             runner.plot.append_point("R_fit", voltage, resistance)
 
     def _build_voltage_vector(self):
-        if self.points < 2:
-            base = [self.v_max]
+        voltages = []
+        for start, stop, is_double, points in self._build_sweep_segments():
+            voltages.extend(self._build_segment_voltage_vector(start, stop, is_double, points))
+        return voltages
+
+    def _build_sweep_segments(self):
+        if self.butterfly_sweep:
+            amplitude = abs(self.v_max)
+            step = amplitude / (self.points - 1)
+            return [
+                (0.0, amplitude, True, self.points),
+                (-step, -amplitude, False, self.points - 1),
+                (-(amplitude - step), 0.0, False, self.points - 1),
+            ]
+        return [(self.start_voltage, self.v_max, bool(self.double_sweep), self.points)]
+
+    def _build_segment_voltage_vector(self, start: float, stop: float, is_double: bool, points: int):
+        if points < 2:
+            base = [stop]
         else:
-            step = (self.v_max - self.start_voltage) / (self.points - 1)
-            base = [self.start_voltage + i * step for i in range(self.points)]
-        if self.double_sweep and len(base) > 1:
+            step = (stop - start) / (points - 1)
+            base = [start + i * step for i in range(points)]
+        if is_double and len(base) > 1:
             # Return to the start voltage without duplicating the endpoint
             return base + base[-2::-1]
         return base
+
+    def _primary_terminal_voltage(self, device_voltage: float) -> float:
+        return device_voltage / 2.0 if self.symmetric_terminals else device_voltage
+
+    def _secondary_terminal_voltage(self, device_voltage: float) -> float:
+        return -device_voltage / 2.0 if self.symmetric_terminals else 0.0
+
+    def _device_voltage_from_primary(self, primary_voltage: float) -> float:
+        return primary_voltage * 2.0 if self.symmetric_terminals else primary_voltage
