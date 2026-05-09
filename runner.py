@@ -493,9 +493,9 @@ class MeasurementRunner:
             self._prepare_for_measurement(device)
             self.prober_set_light(False)
             self.log("Scope light off. Starting measurement.")
-        self.check_stop("Stop requested just before procedure run")
         # Run measurement procedure
         try:
+            self.check_stop("Stop requested just before procedure run")
             gpib_address = settings.get('gpib_address')
             if gpib_address is None and hasattr(proc_class, 'ui_defaults'):
                 gpib_address = proc_class.ui_defaults().get('gpib_address')
@@ -514,6 +514,9 @@ class MeasurementRunner:
                 pass
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
+        finally:
+            if has_prober:
+                self.prober_set_light(True)
         # Move out of contact after completion
         if has_prober and self.auto_separation_after_measurement:
             self.prober_separation()
