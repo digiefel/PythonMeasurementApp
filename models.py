@@ -260,7 +260,7 @@ class DeviceCsvCompiler:
             self.errors.append(f"Row {row_num}: X and Y are required.")
             return None
         try:
-            return float(x_raw), float(y_raw)
+            return -float(x_raw), -float(y_raw)
         except ValueError:
             self.errors.append(f"Row {row_num}: X and Y must be numeric. Got X={x_raw!r}, Y={y_raw!r}.")
             return None

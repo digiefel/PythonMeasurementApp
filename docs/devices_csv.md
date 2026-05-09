@@ -13,7 +13,16 @@ The most important columns are always:
 Site,Subsite,Device,X,Y
 ```
 
-`X` and `Y` are micrometer coordinates.
+`X` and `Y` are micrometer coordinates. `X` increases to the right, and `Y`
+increases up:
+
+```text
+             +Y
+              ^
+              |
+              |
+              o------> +X
+```
 
 ## The Simplest File
 
@@ -62,7 +71,7 @@ A1 is at (0, 0) inside FeCap
 A2 is at (100, 0) inside FeCap
 ```
 
-The prober target for `S01/FeCap/A2` is:
+The target position for `S01/FeCap/A2` is:
 
 ```text
 site position + subsite position + device position
@@ -109,8 +118,8 @@ This creates:
 ```text
 S01
   FeCap at (1000, 2000)
-    A1 at (0, 0), prober target (1000, 2000)
-    A2 at (100, 0), prober target (1100, 2000)
+    A1 at (0, 0), target position (1000, 2000)
+    A2 at (100, 0), target position (1100, 2000)
 ```
 
 This is useful when the same subsite shape appears at different places on the
@@ -244,10 +253,15 @@ explicitly.
 Coordinates are added by level:
 
 ```text
-prober target = site position + subsite position + device position
+target position = site position + subsite position + device position
 ```
 
 If a site or subsite was only implied by a device row, its position is `(0, 0)`.
+
+Internally, the probe station moves the chuck, not the drawn coordinate system.
+That hardware convention is opposite to the user-facing chip coordinates above.
+The app handles this when loading the CSV, so you should write coordinates in
+the natural chip convention: `X` to the right and `Y` up.
 
 Rows with the same exact meaning and the same coordinates are allowed. Their
 tags are combined. Rows with the same exact meaning and different coordinates
