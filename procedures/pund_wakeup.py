@@ -155,6 +155,40 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
         vectors.extend(self._build_pund_vectors(vmax))
         return vectors
 
+    def _read_phase_spans(self, vmax):
+        """Return plotted read phases as (key, label, start_s, end_s)."""
+        pn_duration = sum(dt for dt, _ in self._build_pn_vectors(vmax))
+        pund_duration = sum(dt for dt, _ in self._build_pund_vectors(vmax))
+
+        if self.read_pulse_type == 'pn':
+            return [('pn', 'PN', 0.0, pn_duration)]
+        if self.read_pulse_type == 'pund':
+            return [('pund', 'PUND', 0.0, pund_duration)]
+
+        gap_duration = 1.0 / self.read_pulse_freq
+        pund_start = pn_duration + gap_duration
+        return [
+            ('pn', 'PN', 0.0, pn_duration),
+            ('pund', 'PUND', pund_start, pund_start + pund_duration),
+        ]
+
+    @staticmethod
+    def _phase_for_time(rel_t, phase_spans):
+        for phase in phase_spans:
+            _key, _label, start, end = phase
+            if start <= rel_t < end:
+                return phase
+        if phase_spans and rel_t == phase_spans[-1][3]:
+            return phase_spans[-1]
+        return None
+
+    @staticmethod
+    def _phase_color(phase_key, intensity):
+        shade = 0.45 + 0.55 * intensity
+        if phase_key == 'pn':
+            return (0.12 * shade, 0.47 * shade, 0.71 * shade)
+        return (1.0 * shade, 0.5 * shade, 0.05 * shade)
+
     def _iv_vectors_for(self, vectors):
         # Channel 2 must never receive PG voltage; it mirrors timing only and always targets 0 V.
         return [(dt, 0.0) for dt, _ in vectors]
@@ -215,8 +249,13 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                 WGFMU_MEASURE_EVENT_DATA_AVERAGED,
             )
 
-    def _plot_sources(self, index):
-        return f"V_{index}", f"I_{index}", f"IV_{index}", f"QV_{index}"
+    def _plot_sources(self, index, phase_key):
+        return (
+            f"V_{index}_{phase_key}",
+            f"I_{index}_{phase_key}",
+            f"IV_{index}_{phase_key}",
+            f"QV_{index}_{phase_key}",
+        )
 
     def _configure_plot(self, device, read_duration):
         elements = []
@@ -229,17 +268,20 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
             frac = 0.2 + 0.7 * (idx / max(1, len(self.vmax_values) - 1))
             show = True
             label = f"Vmax {vmax:g} V"
-            i_color = (frac, 0.3 * frac, 0)
-            v_source, i_source, iv_source, qv_source = self._plot_sources(idx)
-            elements.append(Curve(v_source, color=(0, 0, frac), yaxis=0,
-                                  legend_label=f"V ({label})", show_in_legend=show))
-            elements.append(Curve(i_source, color=i_color, yaxis=1,
-                                  legend_label=f"I ({label})", show_in_legend=show))
-            iv_elements.append(Curve(iv_source, color=i_color,
-                                     legend_label=label, show_in_legend=show))
-            qv_elements.append(Curve(qv_source, color=i_color,
-                                     legend_label=label, show_in_legend=show))
-            source_map[idx] = (v_source, i_source, iv_source, qv_source)
+            source_map[idx] = {}
+            for phase_key, phase_label, _start, _end in self._read_phase_spans(vmax):
+                color = self._phase_color(phase_key, frac)
+                v_source, i_source, iv_source, qv_source = self._plot_sources(idx, phase_key)
+                series_label = f"{phase_label} {label}"
+                elements.append(Curve(v_source, color=color, yaxis=0,
+                                      legend_label=f"V ({series_label})", show_in_legend=show))
+                elements.append(Curve(i_source, color=color, yaxis=1,
+                                      legend_label=f"I ({series_label})", show_in_legend=show))
+                iv_elements.append(Curve(iv_source, color=color,
+                                         legend_label=series_label, show_in_legend=show))
+                qv_elements.append(Curve(qv_source, color=color,
+                                         legend_label=series_label, show_in_legend=show))
+                source_map[idx][phase_key] = (v_source, i_source, iv_source, qv_source)
 
         v_margin = max(max_abs_v * 0.1, 0.1)
         y_min = min(0.0, self.base_voltage - max_abs_v) - v_margin
@@ -271,6 +313,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
 
         sample_interval = self._sample_interval()
         read_vectors_by_vmax = [self._build_read_vectors(vmax) for vmax in self.vmax_values]
+        phase_spans_by_vmax = [self._read_phase_spans(vmax) for vmax in self.vmax_values]
         read_durations = [sum(dt for dt, _ in vectors) for vectors in read_vectors_by_vmax]
         max_read_duration = max(read_durations)
         sample_points = max(1, int(max_read_duration / sample_interval))
@@ -342,8 +385,8 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
             data_ch2 = []
             i_baseline_samples: dict[int, list] = {}
             i_baseline: dict[int, float] = {}
-            q_accum: dict[int, float] = {}
-            last_t_per_read: dict[int, float] = {}
+            q_accum: dict[tuple[int, str], float] = {}
+            last_t_per_phase: dict[tuple[int, str], float] = {}
             last_progress_time = time.monotonic()
 
             while True:
@@ -354,7 +397,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                 available = min(measured_1, measured_2, expected_total)
 
                 if available > plotted_count:
-                    batches: dict[int, dict] = {}
+                    batches: dict[tuple[int, str], dict] = {}
 
                     for sample_index in range(plotted_count, available):
                         self.check_stop(b1500)
@@ -369,7 +412,15 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                             continue
 
                         rel_t = sample_in_read * sample_interval
-                        batch = batches.setdefault(read_idx, {'v': [], 'i': [], 'iv': [], 'qv': []})
+                        phase = self._phase_for_time(rel_t, phase_spans_by_vmax[read_idx])
+                        if phase is None:
+                            continue
+                        phase_key, _phase_label, _start, _end = phase
+                        if phase_key not in source_map[read_idx]:
+                            continue
+
+                        batch_key = (read_idx, phase_key)
+                        batch = batches.setdefault(batch_key, {'v': [], 'i': [], 'iv': [], 'qv': []})
                         batch['v'].append((rel_t, voltage))
                         batch['i'].append((rel_t, current * 1e6))
 
@@ -383,19 +434,19 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                         if read_idx in i_baseline:
                             current_adj = -(current - i_baseline[read_idx])
                             batch['iv'].append((voltage, current_adj * 1e6))
-                            if read_idx not in q_accum:
-                                q_accum[read_idx] = 0.0
-                                last_t_per_read[read_idx] = rel_t
+                            if batch_key not in q_accum:
+                                q_accum[batch_key] = 0.0
+                                last_t_per_phase[batch_key] = rel_t
                             else:
-                                dt = rel_t - last_t_per_read[read_idx]
+                                dt = rel_t - last_t_per_phase[batch_key]
                                 if dt > 0:
-                                    q_accum[read_idx] += current_adj * dt
-                                last_t_per_read[read_idx] = rel_t
-                            batch['qv'].append((voltage, q_accum[read_idx] * 1e9))
+                                    q_accum[batch_key] += current_adj * dt
+                                last_t_per_phase[batch_key] = rel_t
+                            batch['qv'].append((voltage, q_accum[batch_key] * 1e9))
 
                     plot_batch = {}
-                    for read_idx, batch in batches.items():
-                        v_source, i_source, iv_source, qv_source = source_map[read_idx]
+                    for (read_idx, phase_key), batch in batches.items():
+                        v_source, i_source, iv_source, qv_source = source_map[read_idx][phase_key]
                         plot_batch[v_source] = batch['v']
                         plot_batch[i_source] = batch['i']
                         plot_batch[iv_source] = batch['iv']

@@ -173,6 +173,40 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		vectors.extend(self._build_pund_read_vectors())
 		return vectors
 
+	def _read_phase_spans(self):
+		"""Return plotted read phases as (key, label, start_s, end_s)."""
+		pn_duration = sum(dt for dt, _ in self._build_pn_read_vectors())
+		pund_duration = sum(dt for dt, _ in self._build_pund_read_vectors())
+
+		if self.read_pulse_type == 'pn':
+			return [('pn', 'PN', 0.0, pn_duration)]
+		if self.read_pulse_type == 'pund':
+			return [('pund', 'PUND', 0.0, pund_duration)]
+
+		gap_duration = 1.0 / self.read_pulse_freq
+		pund_start = pn_duration + gap_duration
+		return [
+			('pn', 'PN', 0.0, pn_duration),
+			('pund', 'PUND', pund_start, pund_start + pund_duration),
+		]
+
+	@staticmethod
+	def _phase_for_time(rel_t, phase_spans):
+		for phase in phase_spans:
+			_key, _label, start, end = phase
+			if start <= rel_t < end:
+				return phase
+		if phase_spans and rel_t == phase_spans[-1][3]:
+			return phase_spans[-1]
+		return None
+
+	@staticmethod
+	def _phase_color(phase_key, intensity):
+		shade = 0.45 + 0.55 * intensity
+		if phase_key == 'pn':
+			return (0.12 * shade, 0.47 * shade, 0.71 * shade)
+		return (1.0 * shade, 0.5 * shade, 0.05 * shade)
+
 	def _iv_vectors_for(self, vectors):
 		# Channel 2 always stays at 0 V; all PG/base/fatigue/read voltage is applied only on channel 1.
 		return [(dt, 0.0) for dt, _ in vectors]
@@ -272,8 +306,13 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 				WGFMU_MEASURE_EVENT_DATA_AVERAGED,
 			)
 
-	def _plot_sources(self, cycle_num):
-		return f"V_{cycle_num}", f"I_{cycle_num}", f"IV_{cycle_num}", f"QV_{cycle_num}"
+	def _plot_sources(self, cycle_num, phase_key):
+		return (
+			f"V_{cycle_num}_{phase_key}",
+			f"I_{cycle_num}_{phase_key}",
+			f"IV_{cycle_num}_{phase_key}",
+			f"QV_{cycle_num}_{phase_key}",
+		)
 
 	def _configure_plot(self, device, read_cycles, read_duration):
 		max_cycles_to_plot = min(len(read_cycles), 50)
@@ -288,24 +327,28 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		iv_elements = []
 		qv_elements = []
 		source_map = {}
+		phase_spans = self._read_phase_spans()
 
 		for read_idx in plot_indices:
 			cycle_num = read_cycles[read_idx]
 			log_cycle = np.log10(max(cycle_num, 1))
 			intensity = 0.2 + 0.7 * (log_cycle / max(log_max, 1))
 			show = read_idx == 0 or read_idx == len(read_cycles) - 1
-			i_color = (intensity, 0.3 * intensity, 0)
-			v_source, i_source, iv_source, qv_source = self._plot_sources(cycle_num)
 			label = f"cycle {cycle_num}"
-			elements.append(Curve(v_source, color=(0, 0, intensity), yaxis=0,
-			                      legend_label=f"V ({label})", show_in_legend=show))
-			elements.append(Curve(i_source, color=i_color, yaxis=1,
-			                      legend_label=f"I ({label})", show_in_legend=show))
-			iv_elements.append(Curve(iv_source, color=i_color,
-			                         legend_label=label, show_in_legend=show))
-			qv_elements.append(Curve(qv_source, color=i_color,
-			                         legend_label=label, show_in_legend=show))
-			source_map[read_idx] = (v_source, i_source, iv_source, qv_source)
+			source_map[read_idx] = {}
+			for phase_key, phase_label, _start, _end in phase_spans:
+				color = self._phase_color(phase_key, intensity)
+				v_source, i_source, iv_source, qv_source = self._plot_sources(cycle_num, phase_key)
+				series_label = f"{phase_label} {label}"
+				elements.append(Curve(v_source, color=color, yaxis=0,
+				                      legend_label=f"V ({series_label})", show_in_legend=show))
+				elements.append(Curve(i_source, color=color, yaxis=1,
+				                      legend_label=f"I ({series_label})", show_in_legend=show))
+				iv_elements.append(Curve(iv_source, color=color,
+				                         legend_label=series_label, show_in_legend=show))
+				qv_elements.append(Curve(qv_source, color=color,
+				                         legend_label=series_label, show_in_legend=show))
+				source_map[read_idx][phase_key] = (v_source, i_source, iv_source, qv_source)
 
 		max_abs_v = abs(self.vmax)
 		v_margin = max(max_abs_v * 0.1, 0.1)
@@ -355,6 +398,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		read_vectors = self._build_read_vectors()
 		fatigue_duration = sum(dt for dt, _ in fatigue_vectors)
 		read_duration = sum(dt for dt, _ in read_vectors)
+		phase_spans = self._read_phase_spans()
 		sample_interval = self._sample_interval()
 		sample_points = max(1, int(read_duration / sample_interval))
 		expected_total = sample_points * len(read_cycles)
@@ -423,8 +467,8 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 			data_ch2 = []
 			i_baseline_samples: dict[int, list] = {}
 			i_baseline: dict[int, float] = {}
-			q_accum: dict[int, float] = {}
-			last_t_per_read: dict[int, float] = {}
+			q_accum: dict[tuple[int, str], float] = {}
+			last_t_per_phase: dict[tuple[int, str], float] = {}
 			last_progress_time = time.monotonic()
 
 			while True:
@@ -435,7 +479,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 				available = min(measured_1, measured_2, expected_total)
 
 				if available > plotted_count:
-					batches: dict[int, dict] = {}
+					batches: dict[tuple[int, str], dict] = {}
 
 					for sample_index in range(plotted_count, available):
 						self.check_stop(b1500)
@@ -450,7 +494,15 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 							continue
 
 						rel_t = sample_in_read * sample_interval
-						batch = batches.setdefault(read_idx, {'v': [], 'i': [], 'iv': [], 'qv': []})
+						phase = self._phase_for_time(rel_t, phase_spans)
+						if phase is None:
+							continue
+						phase_key, _phase_label, _start, _end = phase
+						if phase_key not in source_map[read_idx]:
+							continue
+
+						batch_key = (read_idx, phase_key)
+						batch = batches.setdefault(batch_key, {'v': [], 'i': [], 'iv': [], 'qv': []})
 						batch['v'].append((rel_t, voltage))
 						batch['i'].append((rel_t, current * 1e6))
 
@@ -464,19 +516,19 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 						if read_idx in i_baseline:
 							current_adj = -(current - i_baseline[read_idx])
 							batch['iv'].append((voltage, current_adj * 1e6))
-							if read_idx not in q_accum:
-								q_accum[read_idx] = 0.0
-								last_t_per_read[read_idx] = rel_t
+							if batch_key not in q_accum:
+								q_accum[batch_key] = 0.0
+								last_t_per_phase[batch_key] = rel_t
 							else:
-								dt = rel_t - last_t_per_read[read_idx]
+								dt = rel_t - last_t_per_phase[batch_key]
 								if dt > 0:
-									q_accum[read_idx] += current_adj * dt
-								last_t_per_read[read_idx] = rel_t
-							batch['qv'].append((voltage, q_accum[read_idx] * 1e9))
+									q_accum[batch_key] += current_adj * dt
+								last_t_per_phase[batch_key] = rel_t
+							batch['qv'].append((voltage, q_accum[batch_key] * 1e9))
 
 					plot_batch = {}
-					for read_idx, batch in batches.items():
-						v_source, i_source, iv_source, qv_source = source_map[read_idx]
+					for (read_idx, phase_key), batch in batches.items():
+						v_source, i_source, iv_source, qv_source = source_map[read_idx][phase_key]
 						plot_batch[v_source] = batch['v']
 						plot_batch[i_source] = batch['i']
 						plot_batch[iv_source] = batch['iv']
