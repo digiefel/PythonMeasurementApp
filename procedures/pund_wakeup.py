@@ -132,14 +132,15 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
         return vectors
 
     def _build_pn_vectors(self, vmax):
-        """Triangular PN pulses without a base hold between P and N."""
+        """Triangular PN pulses with idle only before and after the PN pair."""
+        T = 1.0 / self.read_pulse_freq
+        edge = 0.1 * T
         half_period = 0.5 / self.read_pulse_freq
-        vectors = []
+        vectors = [(edge, self.base_voltage)]
         for level in (self._positive_level(vmax), self._negative_level(vmax)):
             vectors.append((half_period, level))
             vectors.append((half_period, self.base_voltage))
-        if vectors and self._idle_voltage() != self.base_voltage:
-            vectors[-1] = (vectors[-1][0], self._idle_voltage())
+        vectors.append((edge, self._idle_voltage()))
         return vectors
 
     def _build_read_vectors(self, vmax):
