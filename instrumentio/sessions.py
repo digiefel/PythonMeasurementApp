@@ -116,31 +116,22 @@ class B1500Session:
     def discover_modules(self) -> dict:
         """Query installed B1500 modules and derive friendly channel maps.
 
-        ``UNT? 1`` reports mainframe/module model strings. Some firmware includes
-        the mainframe as the first entry, followed by slot 1; others report only
-        slot entries. The parser handles both forms.
+        ``UNT?`` reports slot entries:
+        ``Slot1Model,Slot1Revision;...;Slot10Model,Slot10Revision``.
         """
-        raw = self._visa_query("UNT? 1", max_bytes=8192).strip()
+        raw = self._visa_query("UNT?", max_bytes=8192).strip()
         compact = raw.replace("\r", "").replace("\n", "")
         entries = [entry.strip() for entry in compact.split(";") if entry.strip()]
         mainframe = None
         modules = []
-        has_mainframe_entry = False
-
-        if entries:
-            first_model = entries[0].split(",", 1)[0].strip()
-            has_mainframe_entry = _is_mainframe_model(first_model)
 
         for index, entry in enumerate(entries):
             parts = [part.strip() for part in entry.split(",")]
             model = parts[0] if parts else ""
             revision = ",".join(parts[1:]) if len(parts) > 1 else ""
-            if index == 0 and has_mainframe_entry:
-                mainframe = {"model": model, "revision": revision}
-                continue
             if _is_empty_module_model(model):
                 continue
-            slot = index if has_mainframe_entry else index + 1
+            slot = index + 1
             modules.append(
                 {
                     "slot": slot,
