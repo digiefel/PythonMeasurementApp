@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from instrumentio.constants import SMU_CHANNEL_MAP, WGFMU_CHANNEL_MAP
+from instrumentio.codes import B1500_ASU_DC
 from instrumentio.bridge import RemoteB1500Session
 from runner import MeasurementRunner, MeasurementAbortRequested, MeasurementSkipRequested
 
@@ -37,12 +38,15 @@ class SMU:
     @staticmethod
     def coerce(value):
         # UI labels like "SMU1" and saved numeric values both become B1500 channel integers.
-        return int(float(SMU_CHANNEL_MAP.get(str(value), value)))
+        text = str(value).strip()
+        if text.lower().startswith("slot "):
+            text = text.split(None, 1)[1]
+        return int(float(SMU_CHANNEL_MAP.get(text, text)))
 
     @classmethod
     def display_value(cls, value):
         value = cls.coerce(value)
-        return next((label for label, channel in SMU_CHANNEL_MAP.items() if channel == value), next(iter(SMU_CHANNEL_MAP.keys())))
+        return next((label for label, channel in SMU_CHANNEL_MAP.items() if channel == value), f"Slot {value}")
 
     @classmethod
     def collect_value(cls, ui_value):
@@ -73,12 +77,15 @@ class WGFMUChannel:
     @staticmethod
     def coerce(value):
         # WGFMU channels use a separate numbering scheme from SMUs, so keep the type distinct.
-        return int(float(WGFMU_CHANNEL_MAP.get(str(value), value)))
+        text = str(value).strip()
+        if text.lower().startswith("channel "):
+            text = text.split(None, 1)[1]
+        return int(float(WGFMU_CHANNEL_MAP.get(text, text)))
 
     @classmethod
     def display_value(cls, value):
         value = cls.coerce(value)
-        return next((label for label, channel in WGFMU_CHANNEL_MAP.items() if channel == value), next(iter(WGFMU_CHANNEL_MAP.keys())))
+        return next((label for label, channel in WGFMU_CHANNEL_MAP.items() if channel == value), f"Channel {value}")
 
     @classmethod
     def collect_value(cls, ui_value):
@@ -133,9 +140,6 @@ class MeasurementProcedure(ABC):
         self.b1500 = None
         self.wgfmu = None
         self.device = None
-        self.asu_channels = []
-        self.asu_path_mode = None
-        self.asu_range_mode = None
         self._apply_declared_settings()
 
     @classmethod
@@ -170,8 +174,6 @@ class MeasurementProcedure(ABC):
             if key == "cmu_calibration" or not isinstance(key, str) or not key.isidentifier():
                 continue
             if not hasattr(self, key):
-                if key == "asu_channels" and isinstance(value, (list, tuple)):
-                    value = [SMU_CHANNEL_MAP.get(str(ch), ch) for ch in value]
                 setattr(self, key, value)
 
     def _coerce_parameter_value(self, value, kind):
@@ -216,6 +218,87 @@ class MeasurementProcedure(ABC):
     
     def log(self, message: str):
         self.runner.log(message)
+
+    @staticmethod
+    def _truthy_setting(value) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
+    @staticmethod
+    def _is_1pa_current_range(current_range) -> bool:
+        if current_range is None:
+            return False
+        try:
+            return abs(float(current_range)) == 1.0e-12
+        except (TypeError, ValueError):
+            return False
+
+    def _discovered_asu_channels(self) -> set[int]:
+        b1500_cfg = self.settings.get("b1500", {}) or {}
+        channels = set()
+
+        asu_map = b1500_cfg.get("asu_channel_map") or {}
+        if isinstance(asu_map, dict):
+            for channel in asu_map.values():
+                try:
+                    channels.add(int(channel))
+                except (TypeError, ValueError):
+                    pass
+
+        modules = b1500_cfg.get("module_inventory") or []
+        if isinstance(modules, list):
+            for module in modules:
+                if not isinstance(module, dict) or not module.get("has_asu"):
+                    continue
+                try:
+                    channels.add(int(module.get("channel", module.get("slot"))))
+                except (TypeError, ValueError):
+                    pass
+        return channels
+
+    def prepare_asu_channels(self, b1500: RemoteB1500Session, active_channels, current_range=None):
+        """Route discovered ASU-equipped active channels to the SMU path.
+
+        ASU presence is discovered from the B1500, not selected by the user. If
+        a 1 pA current range is selected, enable ASU 1 pA autorange; otherwise
+        explicitly disable it so stale external state cannot leak into a run.
+        """
+        discovered_asu = self._discovered_asu_channels()
+        active = []
+        seen = set()
+        for ch in active_channels or []:
+            if ch is None:
+                continue
+            try:
+                numeric = SMU.coerce(ch)
+            except Exception:
+                continue
+            if numeric in discovered_asu and numeric not in seen:
+                active.append(numeric)
+                seen.add(numeric)
+
+        if not active:
+            return []
+
+        range_mode = 0 if self._is_1pa_current_range(current_range) else 1
+        self.log(
+            f"ASU auto -> channels={active}, path=SMU, "
+            f"1pA={'enabled' if range_mode == 0 else 'disabled'}"
+        )
+        failures = []
+        for ch in active:
+            try:
+                b1500.asu_path(ch, B1500_ASU_DC)
+            except Exception as exc:
+                failures.append(f"path channel {ch}: {exc}")
+            try:
+                b1500.asu_range(ch, range_mode)
+            except Exception as exc:
+                failures.append(f"range channel {ch}: {exc}")
+        if failures:
+            raise RuntimeError("ASU auto-configuration failed: " + "; ".join(failures))
+        return active
 
     def check_stop(self, b1500: RemoteB1500Session):
         """Check if stop or skip was requested, abort hardware if so, then raise.

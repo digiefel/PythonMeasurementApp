@@ -3,19 +3,23 @@
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
 
 # Hardware channel helpers
-SMU_CHANNEL_MAP = {
+DEFAULT_SMU_CHANNEL_MAP = {
     "SMU1": 3,
     "SMU2": 4,
     "SMU3": 5,
     "SMU4": 6,
 }
 
-WGFMU_CHANNEL_MAP = {
+SMU_CHANNEL_MAP = dict(DEFAULT_SMU_CHANNEL_MAP)
+
+DEFAULT_WGFMU_CHANNEL_MAP = {
     "WGFMU1:RS": 101,
     "WGFMU2:RS": 102,
     "WGFMU3:RS": 201,
     "WGFMU4:RS": 202,
 }
+
+WGFMU_CHANNEL_MAP = dict(DEFAULT_WGFMU_CHANNEL_MAP)
 
 WGFMU_SLOT_MAP = {
     101: 1,
@@ -23,6 +27,28 @@ WGFMU_SLOT_MAP = {
     201: 2,
     202: 202,
 }
+
+
+def apply_smu_channel_map(channel_map):
+    """Replace the process-wide SMU label map in-place.
+
+    UI/procedure modules import ``SMU_CHANNEL_MAP`` directly, so this must keep
+    the original dict object alive and mutate its contents.
+    """
+    normalized = {}
+    for label, channel in (channel_map or {}).items():
+        label_text = str(label).strip()
+        if not label_text:
+            continue
+        normalized[label_text] = int(float(channel))
+    if not normalized:
+        return
+    SMU_CHANNEL_MAP.clear()
+    SMU_CHANNEL_MAP.update(normalized)
+
+
+def reset_smu_channel_map():
+    apply_smu_channel_map(DEFAULT_SMU_CHANNEL_MAP)
 
 # Range presets (from agb1500.h: positive = limited auto, negative = fixed, 0 = auto)
 B1500_VOLTAGE_RANGES = [

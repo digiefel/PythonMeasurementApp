@@ -2,16 +2,20 @@ import json
 import os
 from copy import deepcopy
 from typing import Optional
+from instrumentio.constants import DEFAULT_SMU_CHANNEL_MAP
 from models import load_devices_csv
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
     'output_dir': 'output',
     'fallback_output_dir': 'output',
-    # Global ASU configuration (applies to procedures that support it)
-    'asu_channels': ["SMU2"],
-    'asu_path_mode': 1,
-    'asu_range_mode': 0,
+    'b1500': {
+        'auto_discover_channels': True,
+        'smu_channel_map': deepcopy(DEFAULT_SMU_CHANNEL_MAP),
+        'asu_channel_map': {},
+        'module_inventory': [],
+        'unt_response': '',
+    },
     'devices_csv_path': 'devices.csv',
     'cmu_calibration': {},
     'procedures': {},
@@ -95,6 +99,8 @@ class Config:
     def _merge_defaults(self, data: dict) -> dict:
         merged = deepcopy(DEFAULT_CONFIG)
         merged.update(data or {})
+        for stale_key in ('asu_enabled', 'asu_channels', 'asu_auto_active_channels', 'asu_path_mode', 'asu_range_mode'):
+            merged.pop(stale_key, None)
         merged_last = merged.get('last_selection', {})
         default_last = DEFAULT_CONFIG['last_selection']
         normalized_last = deepcopy(default_last)
@@ -104,6 +110,17 @@ class Config:
         merged['last_selection'] = normalized_last
         if not merged.get('devices_csv_path'):
             merged['devices_csv_path'] = self.default_devices_csv_path
+        b1500_defaults = deepcopy(DEFAULT_CONFIG['b1500'])
+        b1500_data = merged.get('b1500', {}) or {}
+        if isinstance(b1500_data, dict):
+            b1500_defaults.update(b1500_data)
+        if not isinstance(b1500_defaults.get('smu_channel_map'), dict) or not b1500_defaults['smu_channel_map']:
+            b1500_defaults['smu_channel_map'] = deepcopy(DEFAULT_SMU_CHANNEL_MAP)
+        if not isinstance(b1500_defaults.get('module_inventory'), list):
+            b1500_defaults['module_inventory'] = []
+        if not isinstance(b1500_defaults.get('asu_channel_map'), dict):
+            b1500_defaults['asu_channel_map'] = {}
+        merged['b1500'] = b1500_defaults
         merged['output_dir'] = self._resolve_output_dir(merged.get('output_dir'))
         merged['fallback_output_dir'] = self._resolve_output_dir(merged.get('fallback_output_dir'))
         return merged

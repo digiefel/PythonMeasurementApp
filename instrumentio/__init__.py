@@ -30,11 +30,14 @@ from .constants import (
 	B1500_CMU_SWEEP_RANGES,
 	B1500_CURRENT_RANGES,
 	B1500_VOLTAGE_RANGES,
+	DEFAULT_SMU_CHANNEL_MAP,
 	SMU_CHANNEL_MAP,
 	WGFMU_CHANNEL_MAP,
 	WGFMU_FORCE_VOLTAGE_RANGES,
 	WGFMU_MEASURE_CURRENT_RANGES,
 	WGFMU_MEASURE_VOLTAGE_RANGES,
+	apply_smu_channel_map,
+	reset_smu_channel_map,
 )
 from .descriptors import (
 	describe_data_type,
@@ -50,8 +53,11 @@ from .sessions import B1500Session, WGFMUSession
 __all__ = [
 	"B1500Session",
 	"WGFMUSession",
+	"DEFAULT_SMU_CHANNEL_MAP",
 	"SMU_CHANNEL_MAP",
 	"WGFMU_CHANNEL_MAP",
+	"apply_smu_channel_map",
+	"reset_smu_channel_map",
 	"B1500_VOLTAGE_RANGES",
 	"B1500_CURRENT_RANGES",
 	"B1500_CMU_CHANNELS",

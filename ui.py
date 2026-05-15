@@ -18,6 +18,7 @@ from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH
 from instrumentio.constants import (
     SMU_CHANNEL_MAP,
     WGFMU_CHANNEL_MAP,
+    apply_smu_channel_map,
     B1500_VOLTAGE_RANGES,
     B1500_CURRENT_RANGES,
     B1500_CMU_CHANNELS,
@@ -135,10 +136,6 @@ class MainUI:
         self._cv_phase_probe_inflight = set()
         self._cv_phase_probe_lock = threading.Lock()
         self._cv_calib_readout_var = tk.StringVar(value="No calibration data")
-        # Global ASU state
-        self.asu_channels_var = tk.StringVar()
-        self.asu_path_var = tk.StringVar()
-        self.asu_range_var = tk.BooleanVar()
         self.status_labels = {}
         # Run options
         self.set_home_var = tk.BooleanVar(value=False)
@@ -168,6 +165,7 @@ class MainUI:
         self.build_layout()
         self._refresh_devices_csv_options()
         self.load_output_dir()
+        self._init_b1500_channel_maps()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
@@ -178,8 +176,183 @@ class MainUI:
         self.proc_cb.set(proc_to_use)
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
-        self.load_global_asu()
         self._init_prober_state()
+
+    def _format_smu_channel_map(self, channel_map: dict | None = None) -> str:
+        channel_map = channel_map or SMU_CHANNEL_MAP
+        return ", ".join(f"{label}=slot {channel}" for label, channel in channel_map.items())
+
+    def _format_asu_channel_map(self, channel_map: dict | None = None) -> str:
+        channel_map = channel_map or self.config.data.get('b1500', {}).get('asu_channel_map') or {}
+        return ", ".join(f"{label}=slot {channel}" for label, channel in channel_map.items()) or "none"
+
+    @staticmethod
+    def _compact_error_message(exc: Exception) -> str:
+        lines = [line.strip() for line in str(exc).splitlines() if line.strip()]
+        return lines[-1] if lines else exc.__class__.__name__
+
+    def _apply_cached_smu_channel_map(self):
+        b1500_cfg = self.config.data.setdefault('b1500', {})
+        cached_map = b1500_cfg.get('smu_channel_map') or {}
+        if cached_map:
+            apply_smu_channel_map(cached_map)
+
+    def _module_inventory_by_channel(self) -> dict[int, dict]:
+        modules = self.config.data.get('b1500', {}).get('module_inventory') or []
+        by_channel = {}
+        for module in modules:
+            try:
+                channel = int(module.get('channel', module.get('slot')))
+            except (TypeError, ValueError):
+                continue
+            by_channel[channel] = module
+        return by_channel
+
+    def _discovered_asu_channels(self) -> set[int]:
+        channels = set()
+        b1500_cfg = self.config.data.get('b1500', {}) or {}
+        asu_map = b1500_cfg.get('asu_channel_map') or {}
+        if isinstance(asu_map, dict):
+            for channel in asu_map.values():
+                try:
+                    channels.add(int(channel))
+                except (TypeError, ValueError):
+                    pass
+        for module in b1500_cfg.get('module_inventory') or []:
+            if not isinstance(module, dict) or not module.get('has_asu'):
+                continue
+            try:
+                channels.add(int(module.get('channel', module.get('slot'))))
+            except (TypeError, ValueError):
+                pass
+        return channels
+
+    @staticmethod
+    def _is_1pa_current_range(value) -> bool:
+        try:
+            return abs(float(value)) == 1.0e-12
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _without_1pa_ranges(options):
+        return [(value, label) for value, label in options if not MainUI._is_1pa_current_range(value)]
+
+    def _selected_current_range_channels(self, proc_name: str) -> list[int]:
+        if proc_name != 'IVSweep':
+            return []
+        channels = []
+        for key in ('high_channel', 'low_channel'):
+            item = self.param_vars.get(key)
+            if not item:
+                continue
+            var, param = item
+            try:
+                channels.append(param.kind.collect_value(var.get()))
+            except Exception:
+                pass
+        return channels
+
+    def _supports_1pa_current_range(self, proc_name: str) -> bool:
+        channels = self._selected_current_range_channels(proc_name)
+        if not channels:
+            return False
+        asu_channels = self._discovered_asu_channels()
+        return bool(asu_channels) and all(channel in asu_channels for channel in channels)
+
+    def _choice_options_for_param(self, proc_name: str, param: object):
+        options = list(param.kind.options)
+        if param.key == 'current_range' and not self._supports_1pa_current_range(proc_name):
+            return self._without_1pa_ranges(options)
+        return options
+
+    def _validate_smu_channel_settings(self, proc_name: str, settings: dict) -> bool:
+        module_by_channel = self._module_inventory_by_channel()
+        if not module_by_channel:
+            return True
+
+        errors = []
+        for param in self.procedure_fields.get(proc_name, []):
+            if param.kind not in (SMU, OptionalSMU):
+                continue
+            value = settings.get(param.key)
+            if value is None:
+                continue
+            try:
+                channel = param.kind.coerce(value)
+            except Exception:
+                errors.append(f"{param.label}: invalid SMU value {value!r}")
+                continue
+            module = module_by_channel.get(channel)
+            if module and module.get('kind') != 'SMU':
+                errors.append(
+                    f"{param.label}: slot {channel} is {module.get('model')} ({module.get('kind')})"
+                )
+
+        if proc_name == 'IVSweep' and self._is_1pa_current_range(settings.get('current_range')):
+            channels = []
+            for key in ('high_channel', 'low_channel'):
+                try:
+                    channels.append(SMU.coerce(settings.get(key)))
+                except Exception:
+                    pass
+            asu_channels = self._discovered_asu_channels()
+            missing = [channel for channel in channels if channel not in asu_channels]
+            if missing:
+                labels = ", ".join(self.lookup_smu_label(channel) for channel in missing)
+                errors.append(f"Current Range: 1 pA requires ASU on {labels}")
+
+        if not errors:
+            return True
+
+        message = "These settings cannot run on the discovered B1500 configuration:\n\n" + "\n".join(errors)
+        self.log(message)
+        messagebox.showerror("Invalid SMU Channel", message)
+        return False
+
+    def _init_b1500_channel_maps(self):
+        """Load cached channel maps, then refresh them from the B1500 if possible."""
+        self._apply_cached_smu_channel_map()
+        self.log(f"SMU channel map: {self._format_smu_channel_map()}")
+
+        b1500_cfg = self.config.data.setdefault('b1500', {})
+        if not b1500_cfg.get('auto_discover_channels', True):
+            self.log("B1500 channel auto-discovery disabled; using configured SMU map.")
+            return
+
+        address = self.config.data.get('gpib_address', 'GPIB0::17::INSTR')
+        try:
+            b1500 = self.runner.get_b1500(address)
+            discovery = b1500.discover_modules()
+        except Exception as exc:
+            detail = self._compact_error_message(exc)
+            self.log(f"B1500 channel auto-discovery unavailable; using configured SMU map. ({detail})")
+            return
+
+        modules = discovery.get('modules') or []
+        smu_map = discovery.get('smu_channel_map') or {}
+        asu_map = discovery.get('asu_channel_map') or {}
+        b1500_cfg['module_inventory'] = modules
+        b1500_cfg['unt_response'] = discovery.get('raw', '')
+        b1500_cfg['asu_channel_map'] = {str(label): int(channel) for label, channel in asu_map.items()}
+        if not smu_map:
+            self.log("B1500 channel auto-discovery found no SMU modules; using configured SMU map.")
+            return
+
+        normalized_map = {str(label): int(channel) for label, channel in smu_map.items()}
+        apply_smu_channel_map(normalized_map)
+        b1500_cfg['smu_channel_map'] = normalized_map
+        try:
+            self.config.save()
+        except Exception as exc:
+            self.log(f"Could not save discovered B1500 channel map: {exc}")
+        module_summary = ", ".join(
+            f"slot {module.get('slot')}: {module.get('model')} ({module.get('kind')})"
+            for module in modules
+        ) or "no modules reported"
+        self.log(f"B1500 modules: {module_summary}")
+        self.log(f"Discovered SMU channel map: {self._format_smu_channel_map(normalized_map)}")
+        self.log(f"Discovered ASU channels: {self._format_asu_channel_map(b1500_cfg['asu_channel_map'])}")
 
     def _init_prober_state(self):
         available = self.runner.prober_ctrl.initialize()
@@ -299,25 +472,12 @@ class MainUI:
         self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
-        # Global ASU config
-        ttk.Label(self.selection_frame, text="ASU Channels (comma)").grid(row=7, column=0, sticky="w")
-        self.asu_channels_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_channels_var)
-        self.asu_channels_entry.grid(row=7, column=1, sticky="ew", pady=2)
-
-        ttk.Label(self.selection_frame, text="ASU Path Mode").grid(row=8, column=0, sticky="w")
-        self.asu_path_entry = ttk.Entry(self.selection_frame, textvariable=self.asu_path_var)
-        self.asu_path_entry.grid(row=8, column=1, sticky="ew", pady=2)
-
-        ttk.Label(self.selection_frame, text="ASU 1pA Range Enable").grid(row=9, column=0, sticky="w")
-        self.asu_range_check = ttk.Checkbutton(self.selection_frame, variable=self.asu_range_var)
-        self.asu_range_check.grid(row=9, column=1, sticky="w", pady=2)
-
         self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
-        self.set_home_check.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.set_home_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
-        device_sel_frame.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        device_sel_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
@@ -328,14 +488,14 @@ class MainUI:
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
-        action_frame.grid(row=12, column=0, columnspan=2, sticky="ew", pady=6)
+        action_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
         ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
-        self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.run_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         # Stop controls (shown when running, hidden otherwise)
         self.stop_frame = tk.Frame(self.selection_frame)
@@ -666,13 +826,25 @@ class MainUI:
                 values = list(WGFMU_CHANNEL_MAP.keys()) if kind is WGFMUChannel else list(SMU_CHANNEL_MAP.keys())
                 if kind is OptionalSMU:
                     values = ["None"] + values
+                if label_val not in values:
+                    values = [label_val] + values
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
             elif isinstance(kind, Choice):
-                label_val = kind.display_value(val)
+                options = self._choice_options_for_param(proc_name, param)
+                label_val = self.lookup_range_label(val, options)
+                try:
+                    value_in_options = any(float(val) == float(option_value) for option_value, _ in options)
+                except Exception:
+                    value_in_options = False
+                if not value_in_options:
+                    label_val = kind.display_value(val)
                 var = tk.StringVar(value=label_val)
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=[label for _, label in kind.options], state="readonly")
+                labels = [label for _, label in options]
+                if label_val not in labels:
+                    labels = [label_val] + labels
+                combo = ttk.Combobox(self.params_frame, textvariable=var, values=labels, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
             else:
@@ -681,6 +853,8 @@ class MainUI:
                 entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
+
+        self._bind_current_range_filter(proc_name)
 
         # CV-specific: keep MFCMU range options consistent with entered frequency.
         if proc_name == 'CVSweep':
@@ -1293,8 +1467,8 @@ class MainUI:
         except Exception as e:
             self.log(f'Failed to load settings: {e}')
             return
-        # Refresh ASU globals and UI fields
-        self.load_global_asu()
+        self._apply_cached_smu_channel_map()
+        self.log(f"SMU channel map: {self._format_smu_channel_map()}")
         self.load_output_dir()
         self.render_param_form(proc_name)
         self.apply_last_selection(self.config.get_last_selection())
@@ -1307,7 +1481,6 @@ class MainUI:
             return
         if not self.update_output_dir_from_ui():
             return
-        self.update_global_asu_from_ui()
         settings = self.collect_settings()
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
@@ -1318,8 +1491,6 @@ class MainUI:
         if not path:
             return
         self.config.config_path = path
-        # Update config in memory before saving
-        # Global ASU settings are already merged into config.data by update_global_asu_from_ui
         self.config.set_procedure_settings(proc_name, settings)
         self.config.set_last_selection(self.build_last_selection())
         self.log(f'Saved settings to {path}')
@@ -1335,7 +1506,6 @@ class MainUI:
             return
         if not self.update_output_dir_from_ui():
             return
-        self.update_global_asu_from_ui()
         chip_id = self.chip_var.get().strip()
         if not chip_id:
             messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
@@ -1362,6 +1532,8 @@ class MainUI:
 
         proc_class = self.procedure_classes[proc_name]
         settings = self.collect_settings()
+        if not self._validate_smu_channel_settings(proc_name, settings):
+            return
         # Cache current settings/selection in memory only to avoid overwriting config files on run
         self.config.data.setdefault('procedures', {})[proc_name] = settings
         self.config.data['last_selection'] = self.build_last_selection()
@@ -1664,7 +1836,7 @@ class MainUI:
         for label, ch in SMU_CHANNEL_MAP.items():
             if str(ch) == str(value):
                 return label
-        return next(iter(SMU_CHANNEL_MAP.keys()))
+        return f"Slot {value}"
 
     def lookup_wgfmu_label(self, value):
         # Accept already a label, or map numeric back to label
@@ -1673,7 +1845,7 @@ class MainUI:
         for label, ch in WGFMU_CHANNEL_MAP.items():
             if str(ch) == str(value):
                 return label
-        return next(iter(WGFMU_CHANNEL_MAP.keys()))
+        return f"Channel {value}"
 
     def lookup_range_label(self, numeric_value, options):
         for val, label in options:
@@ -1720,6 +1892,39 @@ class MainUI:
             freq_var.trace_add('write', refresh)
         except Exception:
             pass
+
+    def _bind_current_range_filter(self, proc_name: str):
+        range_item = self.param_vars.get('current_range')
+        if not range_item:
+            return
+        range_var, range_param = range_item
+
+        def find_combo():
+            for child in self.params_frame.winfo_children():
+                if isinstance(child, ttk.Combobox) and child.cget('textvariable') == str(range_var):
+                    return child
+            return None
+
+        def refresh(*_args):
+            options = self._choice_options_for_param(proc_name, range_param)
+            labels = [label for _, label in options]
+            current = range_var.get()
+            if current and current not in labels:
+                labels = [current] + labels
+            combo = find_combo()
+            if combo is not None:
+                combo.configure(values=labels)
+
+        for key in ('high_channel', 'low_channel'):
+            item = self.param_vars.get(key)
+            if not item:
+                continue
+            var, _ = item
+            try:
+                var.trace_add('write', refresh)
+            except Exception:
+                pass
+        refresh()
 
     def _cv_range_options_for_freq(self, freq_text):
         # Frequency-dependent availability from MFCMU table:
@@ -1824,32 +2029,6 @@ class MainUI:
             raise
         self.log(f"applied temp compensation: {cx}, {cy}, {cz}")
         self.runner.set_temp_compensation(cx, cy, cz)
-
-    def load_global_asu(self):
-        asu_ch = self.config.data.get('asu_channels', [])
-        # Display as comma-separated
-        self.asu_channels_var.set(','.join(map(str, asu_ch)) if asu_ch else '')
-        self.asu_path_var.set('' if self.config.data.get('asu_path_mode') is None else str(self.config.data.get('asu_path_mode')))
-        self.asu_range_var.set(bool(self.config.data.get('asu_range_mode')))
-
-    def update_global_asu_from_ui(self):
-        # Parse channels list (accept labels or numbers)
-        raw = self.asu_channels_var.get().strip()
-        chans = []
-        if raw:
-            for token in raw.split(','):
-                tok = token.strip()
-                if not tok:
-                    continue
-                # Store the raw token to preserve labels; mapping happens at use time
-                chans.append(tok)
-        path_val = self.asu_path_var.get().strip()
-        range_val = self.asu_range_var.get()
-        self.config.data['asu_channels'] = chans
-        self.config.data['asu_path_mode'] = None if path_val == '' else int(float(path_val))
-        # Treat checkbox True as enabling the 1pA range (set to 1), False as None/disabled
-        self.config.data['asu_range_mode'] = 1 if range_val else None
-
 
 if __name__ == '__main__':
     import multiprocessing

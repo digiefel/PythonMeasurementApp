@@ -79,6 +79,11 @@ class IVSweepProcedure(MeasurementProcedure):
         sense_high = self.sense_high
         sense_low = self.sense_low
 
+        self.log(
+            "IV channels -> "
+            f"high: {high}, low: {low}, sense_high: {sense_high}, "
+            f"sense_low: {sense_low}"
+        )
         self.check_stop(b1500)
         if high == low:
             raise ValueError("High SMU and Low SMU must be different channels.")
@@ -86,6 +91,8 @@ class IVSweepProcedure(MeasurementProcedure):
             raise ValueError("Butterfly sweep requires at least 2 points.")
         if self.butterfly_sweep and self.start_voltage != 0.0:
             self.log("Butterfly sweep ignores Start Voltage and starts from 0 V.")
+
+        self.prepare_asu_channels(b1500, (high, low, sense_high, sense_low), self.current_range)
 
         # make sure that all channels are open unless otherwise configured
         b1500.set_switch(B1500_CH_ALL, False)
@@ -99,14 +106,6 @@ class IVSweepProcedure(MeasurementProcedure):
         if sense_low is not None:
             b1500.set_switch(sense_low, True)
             b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
-
-        # Apply ASU config if present
-        self.check_stop(b1500)
-        for ch in self.asu_channels:
-            if self.asu_path_mode is not None:
-                b1500.asu_path(ch, self.asu_path_mode)
-            if self.asu_range_mode is not None:
-                b1500.asu_range(ch, self.asu_range_mode)
 
         # Device-level sweep vector. In symmetric mode, each terminal gets half of this value.
         sweep_segments = self._build_sweep_segments()

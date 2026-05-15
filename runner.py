@@ -462,10 +462,8 @@ class MeasurementRunner:
 
     
     def run_procedure(self, chip_id, site, subsite, device, proc_class, settings):
-        # Apply global ASU overrides if present
-        for key in ('asu_channels', 'asu_path_mode', 'asu_range_mode'):
-            if key not in settings and key in self.config.data:
-                settings[key] = self.config.data.get(key)
+        # Inject discovered B1500 hardware metadata for procedure-level helpers.
+        settings['b1500'] = self.config.data.get('b1500', {})
         # Inject global CMU calibration into runtime settings so procedures can
         # consume a single settings payload without reaching back into config.
         settings['cmu_calibration'] = self.config.get_cmu_calibration()

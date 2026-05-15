@@ -46,6 +46,34 @@ from .descriptors import describe_data_type, describe_data_type_short, describe_
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
 
 
+def _module_has_asu(model: str) -> bool:
+    text = (model or "").upper()
+    return "E5288" in text or "ASU" in text
+
+
+def _module_kind(model: str) -> str:
+    text = (model or "").upper()
+    if _module_has_asu(model):
+        return "SMU"
+    if "SMU" in text or any(token in text for token in ("B1510", "B1511", "B1512", "B1514", "B1517", "B1518", "E5281", "E5287", "E5290", "E5291")):
+        return "SMU"
+    if "WGFMU" in text or "B1530" in text:
+        return "WGFMU"
+    if "MFCMU" in text or "B1520" in text:
+        return "CMU"
+    return "UNKNOWN"
+
+
+def _is_mainframe_model(model: str) -> bool:
+    text = (model or "").upper()
+    return any(token in text for token in ("B1500", "B1505", "E5270", "E5260"))
+
+
+def _is_empty_module_model(model: str) -> bool:
+    text = (model or "").strip().upper()
+    return text in ("", "0", "NONE", "NULL", "EMPTY", "N/A", "NA")
+
+
 class B1500Session:
     """
     High-level wrapper for B1500 instrument using ctypes bindings.
@@ -84,6 +112,63 @@ class B1500Session:
     def _visa_set_termchar(self, char_code: int, enabled: bool = True):
         dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR, char_code)
         dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR_EN, 1 if enabled else 0)
+
+    def discover_modules(self) -> dict:
+        """Query installed B1500 modules and derive friendly channel maps.
+
+        ``UNT? 1`` reports mainframe/module model strings. Some firmware includes
+        the mainframe as the first entry, followed by slot 1; others report only
+        slot entries. The parser handles both forms.
+        """
+        raw = self._visa_query("UNT? 1", max_bytes=8192).strip()
+        compact = raw.replace("\r", "").replace("\n", "")
+        entries = [entry.strip() for entry in compact.split(";") if entry.strip()]
+        mainframe = None
+        modules = []
+        has_mainframe_entry = False
+
+        if entries:
+            first_model = entries[0].split(",", 1)[0].strip()
+            has_mainframe_entry = _is_mainframe_model(first_model)
+
+        for index, entry in enumerate(entries):
+            parts = [part.strip() for part in entry.split(",")]
+            model = parts[0] if parts else ""
+            revision = ",".join(parts[1:]) if len(parts) > 1 else ""
+            if index == 0 and has_mainframe_entry:
+                mainframe = {"model": model, "revision": revision}
+                continue
+            if _is_empty_module_model(model):
+                continue
+            slot = index if has_mainframe_entry else index + 1
+            modules.append(
+                {
+                    "slot": slot,
+                    "channel": slot,
+                    "model": model,
+                    "revision": revision,
+                    "kind": _module_kind(model),
+                    "has_asu": _module_has_asu(model),
+                }
+            )
+
+        smu_modules = [module for module in modules if module["kind"] == "SMU"]
+        smu_channel_map = {
+            f"SMU{idx}": module["channel"]
+            for idx, module in enumerate(sorted(smu_modules, key=lambda item: item["slot"]), start=1)
+        }
+        asu_channel_map = {
+            label: channel
+            for label, channel in smu_channel_map.items()
+            if any(module["channel"] == channel and module.get("has_asu") for module in smu_modules)
+        }
+        return {
+            "raw": raw,
+            "mainframe": mainframe,
+            "modules": modules,
+            "smu_channel_map": smu_channel_map,
+            "asu_channel_map": asu_channel_map,
+        }
 
     @property
     def wgfmu(self):

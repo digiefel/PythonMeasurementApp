@@ -37,9 +37,6 @@ class VanDerPauwProcedure(MeasurementProcedure):
         self.check_stop(b1500)
 
         self.log(f'Starting 4-Terminal I-V Sweep on {device.name}')
-        self.log(
-            f'ASU config -> channels: {self.asu_channels}, path: {self.asu_path_mode}, range: {self.asu_range_mode}'
-        )
 
         try:
             # Initialize B1500 session
@@ -78,19 +75,13 @@ class VanDerPauwProcedure(MeasurementProcedure):
         sense_low = self.sense_low_channel
         
         self.check_stop(b1500)
+        self.prepare_asu_channels(b1500, (source_channel, return_channel, sense_high, sense_low))
 
         # Enable all four SMUs: two current-force terminals and two zero-current voltage probes.
         b1500.set_switch(source_channel, True)
         b1500.set_switch(return_channel, True)
         b1500.set_switch(sense_high, True)
         b1500.set_switch(sense_low, True)
-
-        # If requested, configure ASU path/range for low-leakage channels
-        for ch in self.asu_channels or []:
-            if self.asu_path_mode is not None:
-                b1500.asu_path(ch, self.asu_path_mode)
-            if self.asu_range_mode is not None:
-                b1500.asu_range(ch, self.asu_range_mode)
 
         self.check_stop(b1500)
 
