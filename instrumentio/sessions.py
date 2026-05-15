@@ -131,10 +131,11 @@ class B1500Session:
             revision = ",".join(parts[1:]) if len(parts) > 1 else ""
             if _is_empty_module_model(model):
                 continue
+            slot = index + 1
             modules.append(
                 {
-                    "slot": index,
-                    "channel": index,
+                    "slot": slot,
+                    "channel": slot,
                     "model": model,
                     "revision": revision,
                     "kind": _module_kind(model),
