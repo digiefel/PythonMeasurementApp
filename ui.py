@@ -833,13 +833,7 @@ class MainUI:
                 self.param_vars[key] = (var, param)
             elif isinstance(kind, Choice):
                 options = self._choice_options_for_param(proc_name, param)
-                label_val = self.lookup_range_label(val, options)
-                try:
-                    value_in_options = any(float(val) == float(option_value) for option_value, _ in options)
-                except Exception:
-                    value_in_options = False
-                if not value_in_options:
-                    label_val = kind.display_value(val)
+                label_val = self.lookup_choice_label(val, options, kind)
                 var = tk.StringVar(value=label_val)
                 labels = [label for _, label in options]
                 if label_val not in labels:
@@ -1852,6 +1846,24 @@ class MainUI:
             if float(numeric_value) == float(val):
                 return label
         return options[0][1] if options else ""
+
+    def lookup_choice_label(self, value, options, kind: Choice):
+        """Return the display label for a Choice value using the choice's type semantics."""
+        try:
+            coerced_value = kind.coerce(value)
+        except Exception:
+            coerced_value = value
+        for option_value, label in options:
+            try:
+                coerced_option = kind.coerce(option_value)
+            except Exception:
+                coerced_option = option_value
+            if coerced_value == coerced_option or str(value) == str(option_value):
+                return label
+        try:
+            return kind.display_value(value)
+        except Exception:
+            return str(value)
 
     def lookup_range_value(self, label, options):
         for val, lbl in options:
