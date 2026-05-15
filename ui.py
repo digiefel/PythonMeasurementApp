@@ -19,6 +19,7 @@ from instrumentio.constants import (
     SMU_CHANNEL_MAP,
     WGFMU_CHANNEL_MAP,
     apply_smu_channel_map,
+    apply_cmu_channel_options,
     B1500_VOLTAGE_RANGES,
     B1500_CURRENT_RANGES,
     B1500_CMU_CHANNELS,
@@ -196,6 +197,25 @@ class MainUI:
         cached_map = b1500_cfg.get('smu_channel_map') or {}
         if cached_map:
             apply_smu_channel_map(cached_map)
+        self._apply_cmu_channels_from_modules(b1500_cfg.get('module_inventory') or [])
+
+    @staticmethod
+    def _cmu_channels_from_modules(modules) -> list[int]:
+        channels = []
+        for module in modules or []:
+            if not isinstance(module, dict) or module.get('kind') != 'CMU':
+                continue
+            try:
+                channels.append(int(module.get('channel', module.get('slot'))))
+            except (TypeError, ValueError):
+                continue
+        return sorted(set(channels))
+
+    def _apply_cmu_channels_from_modules(self, modules) -> list[int]:
+        cmu_channels = self._cmu_channels_from_modules(modules)
+        if cmu_channels:
+            apply_cmu_channel_options(cmu_channels)
+        return cmu_channels
 
     def _module_inventory_by_channel(self) -> dict[int, dict]:
         modules = self.config.data.get('b1500', {}).get('module_inventory') or []
@@ -332,6 +352,7 @@ class MainUI:
         modules = discovery.get('modules') or []
         smu_map = discovery.get('smu_channel_map') or {}
         asu_map = discovery.get('asu_channel_map') or {}
+        cmu_channels = self._apply_cmu_channels_from_modules(modules)
         b1500_cfg['module_inventory'] = modules
         b1500_cfg['unt_response'] = discovery.get('raw', '')
         b1500_cfg['asu_channel_map'] = {str(label): int(channel) for label, channel in asu_map.items()}
@@ -352,6 +373,8 @@ class MainUI:
         ) or "no modules reported"
         self.log(f"B1500 modules: {module_summary}")
         self.log(f"Discovered SMU channel map: {self._format_smu_channel_map(normalized_map)}")
+        if cmu_channels:
+            self.log(f"Discovered CMU channels: {', '.join(f'slot {ch}' for ch in cmu_channels)}")
         self.log(f"Discovered ASU channels: {self._format_asu_channel_map(b1500_cfg['asu_channel_map'])}")
 
     def _init_prober_state(self):

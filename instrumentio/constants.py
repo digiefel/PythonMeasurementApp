@@ -100,9 +100,37 @@ B1500_CURRENT_RANGES = [
 ]
 
 # CMU/C-V helper option lists for UI usage.
-B1500_CMU_CHANNELS = [
+DEFAULT_CMU_CHANNELS = [
     (7, "Default CMU"),
 ]
+
+B1500_CMU_CHANNELS = list(DEFAULT_CMU_CHANNELS)
+
+
+def apply_cmu_channel_options(channels):
+    """Replace CMU channel options in-place from discovered B1500 CMU slots."""
+    normalized = []
+    seen = set()
+    for channel in channels or []:
+        try:
+            ch = int(float(channel))
+        except (TypeError, ValueError):
+            continue
+        if ch in seen:
+            continue
+        normalized.append(ch)
+        seen.add(ch)
+    if not normalized:
+        return
+
+    options = [(normalized[0], f"Default CMU (slot {normalized[0]})")]
+    for idx, ch in enumerate(normalized[1:], start=2):
+        options.append((ch, f"CMU{idx} (slot {ch})"))
+    B1500_CMU_CHANNELS[:] = options
+
+
+def reset_cmu_channel_options():
+    B1500_CMU_CHANNELS[:] = list(DEFAULT_CMU_CHANNELS)
 
 # Full MFCMU measurement mode list from the B1500 programming guide.
 B1500_CMU_MEASUREMENT_MODES_ALL = [

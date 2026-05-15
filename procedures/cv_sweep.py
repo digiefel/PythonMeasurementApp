@@ -88,10 +88,35 @@ class CVSweepProcedure(MeasurementProcedure):
         if 'frequencies' not in settings and 'frequency_hz' in settings:
             settings['frequencies'] = str(settings['frequency_hz'])
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
+        self._resolve_default_cmu_channel()
         self.frequencies = self._parse_frequencies(self.settings.get('frequencies', '100k'))
         self.ac_level = self.ac_level_mv / 1000.0
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
         self._validate_settings()
+
+    def _resolve_default_cmu_channel(self):
+        discovered = []
+        b1500_cfg = self.settings.get("b1500", {}) or {}
+        for module in b1500_cfg.get("module_inventory") or []:
+            if not isinstance(module, dict) or module.get("kind") != "CMU":
+                continue
+            try:
+                discovered.append(int(module.get("channel", module.get("slot"))))
+            except (TypeError, ValueError):
+                continue
+
+        replacement = None
+        if discovered and self.cmu_channel not in discovered:
+            replacement = sorted(set(discovered))[0]
+        elif self.cmu_channel == -1 and B1500_CMU_CHANNELS:
+            replacement = int(B1500_CMU_CHANNELS[0][0])
+
+        if replacement is not None:
+            old_channel = self.cmu_channel
+            self.cmu_channel = replacement
+            self.settings['cmu_channel'] = replacement
+            if old_channel != replacement and self.runner is not None:
+                self.log(f"CMU channel auto -> slot {replacement} (was {old_channel})")
 
     @staticmethod
     def _freq_key(freq_hz: float) -> str:
