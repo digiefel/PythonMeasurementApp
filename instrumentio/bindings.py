@@ -12,6 +12,9 @@ import os
 import platform
 
 
+_load_errors = {}
+
+
 def _load_dll(env_var: str, default_path: str):
     path = os.environ.get(env_var, default_path)
     if platform.system() != "Windows":
@@ -21,8 +24,19 @@ def _load_dll(env_var: str, default_path: str):
         return None
     try:
         return loader(path)
-    except OSError:
+    except OSError as exc:
+        _load_errors[env_var] = (path, exc)
         return None
+
+
+def require_dll(library, env_var: str):
+    """Preserve the loader's path and Windows error for connection diagnostics."""
+    if library is not None:
+        return library
+    if env_var in _load_errors:
+        path, error = _load_errors[env_var]
+        raise RuntimeError(f"Cannot load instrument library {path}: {error}") from error
+    raise RuntimeError("Instrument libraries require Windows.")
 
 
 # Define VISA types (from vpptype.h)
@@ -42,8 +56,7 @@ ViPReal64 = ct.POINTER(ViReal64)
 ViPReal32 = ct.POINTER(ViReal32)
 ViPSession = ct.POINTER(ViSession)
 
-# Load DLLs lazily and only on Windows. Importing this module stays safe on
-# systems that cannot load the vendor binaries yet.
+# This module is loaded by local sessions only, never by the remote client.
 dll_b1500 = _load_dll(
     "PYMEASUREMENT_B1500_DLL",
     r"C:\Program Files (x86)\IVI Foundation\VISA\WinNT\Bin\agb1500_32.dll",

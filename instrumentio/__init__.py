@@ -48,7 +48,14 @@ from .descriptors import (
 	get_cmu_mode_name,
 )
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
-from .sessions import B1500Session, WGFMUSession
+
+
+def __getattr__(name):
+	# Importing constants or the remote client must never load native drivers.
+	if name in ("B1500Session", "WGFMUSession"):
+		from . import sessions
+		return getattr(sessions, name)
+	raise AttributeError(name)
 
 __all__ = [
 	"B1500Session",

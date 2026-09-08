@@ -20,6 +20,7 @@ from .bindings import (
     dll_b1500,
     dll_visa32,
     dll_wgfmu,
+    require_dll,
 )
 from .codes import (
     B1500_AUTO_RANGE,
@@ -79,8 +80,7 @@ class B1500Session:
     High-level wrapper for B1500 instrument using ctypes bindings.
     """
     def __init__(self, gpib_addr="GPIB0::17::INSTR"):
-        if not dll_b1500:
-            raise RuntimeError("B1500 DLL not loaded.")
+        require_dll(dll_b1500, "PYMEASUREMENT_B1500_DLL")
         self.gpib_addr = gpib_addr
         self.session = ViSession()
         self._wgfmu = None  # Lazy-loaded WGFMU session
@@ -89,6 +89,7 @@ class B1500Session:
             raise RuntimeError(f"B1500 init failed: {ret}")
 
     def _visa_write(self, command: str):
+        require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL")
         buf = command.encode("ascii")
         ret_count = ct.c_uint32(0)
         status = dll_visa32.viWrite(self.session, buf, len(buf), ct.byref(ret_count))
@@ -96,6 +97,7 @@ class B1500Session:
             raise RuntimeError(f"viWrite failed: {status}")
 
     def _visa_read(self, max_bytes: int = 4096) -> str:
+        require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL")
         buf = ct.create_string_buffer(max_bytes)
         ret_count = ct.c_uint32(0)
         status = dll_visa32.viRead(self.session, buf, max_bytes, ct.byref(ret_count))
@@ -110,6 +112,7 @@ class B1500Session:
         return self._visa_read(max_bytes)
 
     def _visa_set_termchar(self, char_code: int, enabled: bool = True):
+        require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL")
         dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR, char_code)
         dll_visa32.viSetAttribute(self.session, VI_ATTR_TERMCHAR_EN, 1 if enabled else 0)
 
@@ -782,8 +785,7 @@ class WGFMUSession:
     """
 
     def __init__(self, address: str | None = None):
-        if not dll_wgfmu:
-            raise RuntimeError("WGFMU DLL not loaded.")
+        require_dll(dll_wgfmu, "PYMEASUREMENT_WGFMU_DLL")
         if address is not None:
             ret = dll_wgfmu.WGFMU_openSession(address.encode())
             self._check_ret(ret, "WGFMU open session")
