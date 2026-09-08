@@ -31,6 +31,7 @@ from instrumentio.constants import (
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
 from runner import MeasurementAbortRequested, MeasurementRunner
+from instrumentio.bridge import InstrumentCancelled
 from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.iv_sweep import IVSweepProcedure
@@ -1175,7 +1176,7 @@ class MainUI:
             try:
                 settings_now = self.collect_settings()
                 gpib_address = settings_now.get('gpib_address', 'GPIB0::17::INSTR')
-                b1500 = self.runner.get_b1500(gpib_address)
+                b1500 = self.runner.get_b1500(gpib_address, connect=False)
                 result_code = b1500.get_cmu_phase_compensation_result(channel, mode=0)
                 # ADJ? result meanings: 0=ok, 1=failed, 2=aborted, 3=never performed.
                 calibrated = result_code != 3
@@ -1342,7 +1343,7 @@ class MainUI:
                     self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz))
                     freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
                     self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
-            except MeasurementAbortRequested:
+            except (MeasurementAbortRequested, InstrumentCancelled):
                 self._post_log(f"CMU {cal_type} calibration aborted by user.")
                 self._post(self._cv_calib_readout_var.set, "Calibration aborted.")
                 self._post(self._refresh_cv_calibration_readout)

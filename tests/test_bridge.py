@@ -1,7 +1,9 @@
 import concurrent.futures
 import json
+import logging
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import threading
 import time
@@ -13,6 +15,9 @@ from instrumentio import bridge
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):
+        handler = logging.NullHandler()
+        logging.getLogger().addHandler(handler)
+        self.addCleanup(logging.getLogger().removeHandler, handler)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.record = Path(self.temp.name) / "calls.jsonl"
@@ -158,3 +163,47 @@ class BridgeTests(unittest.TestCase):
             self.connect(connect_error=True)
         self.assertNotIn("worker", str(caught.exception).lower())
         self.assertNotIn("Traceback", str(caught.exception))
+
+    def test_existing_stream_signature_and_timeout_are_preserved(self):
+        session = self.connect()
+        seen = []
+        session.stream_cv_sweep(1, 2, 0., 3, lambda *point: seen.append(point), timeout_s=1)
+        self.assertEqual(seen, [(i, 1., 2., 3., 4., 5, 6) for i in range(3)])
+
+    def test_invalid_timeout_is_rejected_before_execution(self):
+        session = self.connect()
+        for timeout in (-1, 0, float("inf"), float("nan")):
+            with self.assertRaises(ValueError):
+                session.echo("invalid deadline", _timeout_s=timeout)
+        self.assertNotIn("invalid deadline", self.history())
+        self.assertTrue(session.is_open)
+
+    def test_cancellation_interrupts_connection_startup(self):
+        stop = threading.Event()
+        address = json.dumps(dict(record=str(self.record), connect_delay=10))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(bridge.RemoteB1500Session, address, cancel_events=(stop,))
+            deadline = time.monotonic() + 2
+            while not self.record.exists():
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.005)
+            stop.set()
+            with self.assertRaises(bridge.InstrumentError):
+                call.result(timeout=2)
+
+    def test_parent_eof_bounds_even_a_blocked_native_operation(self):
+        command = [sys.executable, "-u", "-c", "from instrumentio import bridge_worker; bridge_worker.STOP_TIMEOUT_S=.2; import tests.fake_worker"]
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+            try:
+                process.stdin.write(json.dumps(["connect", json.dumps({"record": str(self.record)})]) + "\n")
+                process.stdin.flush()
+                self.assertEqual(json.loads(process.stdout.readline())[0], "result")
+                process.stdin.write(json.dumps(["call", "", "slow", [10], {}]) + "\n")
+                process.stdin.flush()
+                self.wait_for_call("slow_started")
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=2), 1)
+                self.assertIn("output state could not be confirmed", process.stderr.read())
+            finally:
+                if process.poll() is None:
+                    process.kill()

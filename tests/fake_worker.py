@@ -12,6 +12,7 @@ class FakeSession:
         self.options = json.loads(address)
         self.wgfmu = self
         self.record("connect")
+        time.sleep(self.options.get("connect_delay", 0))
         if self.options.get("connect_error"):
             raise RuntimeError("Simulated vendor load failure")
 
@@ -46,6 +47,10 @@ class FakeSession:
 
     def samples(self, count, callback):
         return [callback(i) for i in range(count)]
+
+    def stream_cv_sweep(self, channel, mode, rng, count, callback):
+        for index in range(count):
+            callback(index, 1., 2., 3., 4., 5, 6)
 
     def close(self):
         self.record("close")

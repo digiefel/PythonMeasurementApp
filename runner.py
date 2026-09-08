@@ -5,8 +5,7 @@ import atexit
 import logging
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 import threading
-from instrumentio.codes import B1500_CH_ALL
-from instrumentio.bridge import RemoteB1500Session
+from instrumentio.bridge import InstrumentCancelled, InstrumentError, RemoteB1500Session
 from prober import ProberController
 
 if TYPE_CHECKING:
@@ -40,7 +39,8 @@ class MeasurementRunner:
         self.temp_phase_cb: Optional[Callable[[str, int], None]] = None
         self.temp_sample_cb: Optional[Callable[[float, float, int, str], None]] = None
         self.temp_device_done_cb: Optional[Callable[[float, int, int, int], None]] = None
-        self.b1500: RemoteB1500Session
+        self.b1500: RemoteB1500Session | None = None
+        self._b1500_lock = threading.Lock()
         self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
         self.current_site = None
@@ -68,22 +68,43 @@ class MeasurementRunner:
             logger.warning("No log callback registered. Message: %s", msg)
             print("Warning: No log callback registered. Message:", msg)
 
-    def get_b1500(self, address: str) -> RemoteB1500Session:
-        """Get or create the B1500 session."""
-        if not getattr(self, 'b1500', None):
+    def get_b1500(self, address: str, *, connect: bool = True) -> RemoteB1500Session:
+        """Connect for a requested run; background probes may only reuse a session."""
+        with self._b1500_lock:
+            self.check_stop()
+            if self.skip_device_event.is_set():
+                raise MeasurementSkipRequested("Device skipped by user")
+            if self.b1500 and self.b1500.is_open and self.b1500.address == address:
+                return self.b1500
+            if not connect:
+                raise InstrumentError("Instrument is not connected.")
+            if self.b1500 is not None:
+                self._stop_instrument()
+                self.b1500 = None
             self.log(f'Opening B1500 session at {address}')
-            self.b1500 = RemoteB1500Session(address)
-        return self.b1500
+            self.b1500 = RemoteB1500Session(
+                address, cancel_events=(self.stop_event, self.skip_device_event),
+            )
+            return self.b1500
+
+    def _stop_instrument(self):
+        """Shared stop path for abort, skip, procedure errors, and app shutdown."""
+        session = self.b1500
+        if session is not None:
+            try:
+                session.cancel()
+            except InstrumentError as exc:
+                self.log(str(exc))
 
     
     def safe_stop(self):
         """
-        Universal stop method.
-        Only sets the stop_event flag. The worker thread handles the actual
-        instrument abort to avoid GPIB bus contention.
+        Stop instrument execution and separate the prober.
+        Cancellation never makes concurrent calls into the instrument driver.
         """
         self.stop_event.set()
         self.log("Stop requested.")
+        self._stop_instrument()
         
         # Separate prober for safety (this is a different bus, OK to call here)
         if self.is_prober_available():
@@ -103,6 +124,7 @@ class MeasurementRunner:
         """Signal the runner to abort the current device and continue with the next."""
         self.skip_device_event.set()
         self.log("Skip requested: aborting current device and proceeding to next.")
+        self._stop_instrument()
         if self.is_prober_available():
             try:
                 separated = self.prober_ctrl.separation()
@@ -502,14 +524,16 @@ class MeasurementRunner:
             b1500 = self.get_b1500(gpib_address)
             self.log(f'Connected to B1500 at {gpib_address}')
             proc.execute(b1500, device)
+        except InstrumentCancelled as exc:
+            if self.stop_event.is_set():
+                raise MeasurementAbortRequested("Measurement aborted by user") from exc
+            if self.skip_device_event.is_set():
+                raise MeasurementSkipRequested("Device skipped by user") from exc
+            raise
         except (MeasurementAbortRequested, MeasurementSkipRequested):
             raise
         except Exception as e:
-            try:
-                self.b1500.zero_output(B1500_CH_ALL)
-                self.b1500.set_switch(B1500_CH_ALL, False)
-            except Exception:
-                pass
+            self._stop_instrument()
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
         finally:

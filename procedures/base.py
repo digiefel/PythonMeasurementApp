@@ -301,20 +301,11 @@ class MeasurementProcedure(ABC):
         return active
 
     def check_stop(self, b1500: RemoteB1500Session):
-        """Check if stop or skip was requested, abort hardware if so, then raise.
-
-        Runs in the worker thread — the only thread that should talk to the
-        instrument to avoid GPIB bus contention. ABORT takes priority over SKIP.
-        """
+        """Check cancellation; instrument cleanup belongs to the connection."""
         abort = self.runner.stop_event.is_set()
         skip = self.runner.skip_device_event.is_set()
         if not abort and not skip:
             return
-        if b1500 is not None:
-            try:
-                b1500.abort_measure()
-            except Exception:
-                pass
         if abort:
             raise MeasurementAbortRequested("Measurement aborted by user")
         raise MeasurementSkipRequested("Device skipped by user")
