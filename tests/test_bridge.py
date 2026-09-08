@@ -51,6 +51,25 @@ class BridgeTests(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             self.assertEqual(list(executor.map(session.echo, range(40))), list(range(40)))
 
+    def test_configuration_sequences_cannot_be_interleaved_by_probes(self):
+        session = self.connect()
+        entered = threading.Event()
+        release = threading.Event()
+        def configure():
+            with session.exclusive():
+                session.echo("configure start")
+                entered.set()
+                release.wait(timeout=2)
+                session.echo("configure end")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            config = executor.submit(configure)
+            self.assertTrue(entered.wait(timeout=2))
+            probe = executor.submit(session.echo, "probe")
+            release.set()
+            config.result(timeout=2)
+            probe.result(timeout=2)
+        self.assertEqual(self.history()[-3:], ["configure start", "configure end", "probe"])
+
     def test_callbacks_are_lossless_and_return_values(self):
         session = self.connect()
         seen = []
@@ -144,6 +163,16 @@ class BridgeTests(unittest.TestCase):
         session = self.connect(close_error=True)
         with self.assertRaisesRegex(bridge.InstrumentError, "shutdown failed"):
             session.close()
+
+    def test_cleanup_hang_is_bounded_after_a_command_failure(self):
+        with patch.object(bridge, "_worker_command", return_value=[sys.executable, "-u", "-c",
+                "from instrumentio import bridge_worker; bridge_worker.STOP_TIMEOUT_S=.2; import tests.fake_worker"]):
+            session = self.connect(close_delay=10)
+        start = time.monotonic()
+        with self.assertRaises(bridge.InstrumentError):
+            session.fail()
+        self.assertLess(time.monotonic() - start, 1.5)
+        self.assertIsNotNone(session._process.poll())
 
     def test_close_is_idempotent_and_reaps_threads(self):
         session = self.connect()

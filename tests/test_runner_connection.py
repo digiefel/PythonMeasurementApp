@@ -2,7 +2,7 @@ import concurrent.futures
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 # These tests exercise runner ownership without a SENTIO installation.
 with patch.dict(sys.modules, {"prober": SimpleNamespace(ProberController=lambda log: SimpleNamespace(prober=None))}):
@@ -15,7 +15,7 @@ class RunnerConnectionTests(unittest.TestCase):
             self.runner = runner.MeasurementRunner(Mock())
         self.runner.log_callback = Mock()
         def connect(address, **kwargs):
-            session = Mock(address=address, is_open=True)
+            session = MagicMock(address=address, is_open=True)
             session.cancel.side_effect = lambda: setattr(session, "is_open", False)
             return session
         self.factory = patch.object(runner, "RemoteB1500Session", side_effect=connect).start()

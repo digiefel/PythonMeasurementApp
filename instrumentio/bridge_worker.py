@@ -44,11 +44,14 @@ def main(session_factory=None):
         finally:
             cancelled.set()
             inbox.put(None)
-            # Also bound shutdown after a parent crash, when no client remains
-            # to terminate a driver blocked in native code.
-            if not finished.wait(STOP_TIMEOUT_S):
-                logger.critical("Instrument stop timed out; output state could not be confirmed")
-                os._exit(1)
+
+    def watch_shutdown():
+        # Bound cleanup after either a command failure or a parent crash, even
+        # when the native driver will not return to the executor.
+        cancelled.wait()
+        if not finished.wait(STOP_TIMEOUT_S):
+            logger.critical("Instrument stop timed out; output state could not be confirmed")
+            os._exit(1)
 
     def receive():
         message = inbox.get()
@@ -77,6 +80,7 @@ def main(session_factory=None):
         return callback
 
     threading.Thread(target=read_commands, daemon=True).start()
+    threading.Thread(target=watch_shutdown, daemon=True).start()
     try:
         if session_factory is None:
             if struct.calcsize("P") != 4:
@@ -113,6 +117,7 @@ def main(session_factory=None):
         logger.error("Instrument executor failed:\n%s", details)
         terminal = ["error", "Instrument operation failed. See the application log for details.", details]
     finally:
+        cancelled.set()
         if session is not None:
             try:
                 session.close()

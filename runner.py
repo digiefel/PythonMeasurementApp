@@ -523,7 +523,8 @@ class MeasurementRunner:
             settings['gpib_address'] = gpib_address
             b1500 = self.get_b1500(gpib_address)
             self.log(f'Connected to B1500 at {gpib_address}')
-            proc.execute(b1500, device)
+            with b1500.exclusive():
+                proc.execute(b1500, device)
         except InstrumentCancelled as exc:
             if self.stop_event.is_set():
                 raise MeasurementAbortRequested("Measurement aborted by user") from exc

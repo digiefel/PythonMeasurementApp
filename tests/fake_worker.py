@@ -54,6 +54,7 @@ class FakeSession:
 
     def close(self):
         self.record("close")
+        time.sleep(self.options.get("close_delay", 0))
         if self.options.get("close_error"):
             raise RuntimeError("Simulated cleanup failure")
 

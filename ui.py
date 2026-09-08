@@ -1323,26 +1323,27 @@ class MainUI:
                 self._post_log(f"Calibration running on {channel_name}")
 
                 b1500 = self.runner.get_b1500(gpib_address)
-                b1500.set_timeout(120000)
-                b1500.enable_error_detect(True)
-                b1500.set_switch(B1500_CH_ALL, False)
-                b1500.set_switch(channel, True)
-                b1500.force_cmu_ac_level(channel, ac_level_v)
+                with b1500.exclusive():
+                    b1500.set_timeout(120000)
+                    b1500.enable_error_detect(True)
+                    b1500.set_switch(B1500_CH_ALL, False)
+                    b1500.set_switch(channel, True)
+                    b1500.force_cmu_ac_level(channel, ac_level_v)
 
-                if cal_type == 'phase':
-                    self.runner.check_stop("Stop requested before phase compensation")
-                    result = b1500.run_cmu_phase_compensation(channel)
-                    self._post(self._commit_cv_calibration_result, channel, cal_type, result, None)
-                    self._post_log(f"CMU {cal_type} calibration completed on {channel_name}")
-                else:
-                    result = {}
-                    for freq in frequencies_hz:
-                        self.runner.check_stop("Stop requested during CMU calibration")
-                        freq_key = self._freq_key(freq)
-                        result[freq_key] = b1500.run_cmu_correction(channel, cal_type, freq)
-                    self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz))
-                    freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
-                    self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
+                    if cal_type == 'phase':
+                        self.runner.check_stop("Stop requested before phase compensation")
+                        result = b1500.run_cmu_phase_compensation(channel)
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, None)
+                        self._post_log(f"CMU {cal_type} calibration completed on {channel_name}")
+                    else:
+                        result = {}
+                        for freq in frequencies_hz:
+                            self.runner.check_stop("Stop requested during CMU calibration")
+                            freq_key = self._freq_key(freq)
+                            result[freq_key] = b1500.run_cmu_correction(channel, cal_type, freq)
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz))
+                        freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
+                        self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
             except (MeasurementAbortRequested, InstrumentCancelled):
                 self._post_log(f"CMU {cal_type} calibration aborted by user.")
                 self._post(self._cv_calib_readout_var.set, "Calibration aborted.")

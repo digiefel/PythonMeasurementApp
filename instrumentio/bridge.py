@@ -20,6 +20,7 @@ from .protocol import InstrumentCancelled, InstrumentError, OPERATION_TIMEOUT_S,
 
 logger = logging.getLogger(__name__)
 
+
 def _worker_command():
     root = Path(__file__).resolve().parent.parent
     default = root / ".venv32" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -113,6 +114,10 @@ class RemoteB1500Session(_Proxy):
         self._check_open()
         return dict(self._info, configured_worker_python=self._info["python_executable"])
 
+    def exclusive(self):
+        """Keep a sequence of calls together; cancellation remains independent."""
+        return self._calls
+
     def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback, timeout_s=120.0):
         # Preserve the existing public timeout argument; execution is generic.
         return super().__getattr__("stream_cv_sweep")(
@@ -133,7 +138,8 @@ class RemoteB1500Session(_Proxy):
         try:
             for line in self._process.stdout:
                 message = json.loads(line)
-                if not isinstance(message, list) or not message or message[0] not in ("result", "callback", "error", "stopped"):
+                sizes = {"result": 2, "callback": 4, "error": 3, "stopped": 1}
+                if not isinstance(message, list) or not message or not isinstance(message[0], str) or len(message) != sizes.get(message[0]):
                     raise ValueError(f"Invalid instrument response: {message!r}")
                 if message[0] in ("error", "stopped"):
                     self._terminal = message
@@ -196,6 +202,8 @@ class RemoteB1500Session(_Proxy):
                         return reply[1]
                     if kind == "callback":
                         self._check_open()
+                        if not isinstance(reply[1], int) or not 0 <= reply[1] < len(callbacks) or not isinstance(reply[2], list) or not isinstance(reply[3], dict):
+                            raise InstrumentError("Instrument returned invalid callback data.")
                         result = callbacks[reply[1]](*reply[2], **reply[3])
                         # Callback return values follow the same serialization rules.
                         json.dumps(result)
@@ -205,8 +213,9 @@ class RemoteB1500Session(_Proxy):
                         raise InstrumentCancelled("Measurement stopped.")
                     else:
                         raise InstrumentError(reply[1])
-            except BaseException:
-                logger.exception("Instrument request ended: %s", message[:3])
+            except BaseException as exc:
+                if not isinstance(exc, InstrumentCancelled):
+                    logger.exception("Instrument request ended: %s", message[:3])
                 self.close()
                 raise
             finally:
@@ -234,11 +243,14 @@ class RemoteB1500Session(_Proxy):
                 self._outgoing.put(None)
                 for thread in self._threads:
                     thread.join(timeout=1)
-                for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
-                    try:
-                        stream.close()
-                    except OSError:
-                        logger.debug("Closing an already broken instrument pipe", exc_info=True)
+                if not any(thread.is_alive() for thread in self._threads):
+                    for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
+                        try:
+                            stream.close()
+                        except OSError:
+                            logger.debug("Closing an already broken instrument pipe", exc_info=True)
+                else:
+                    logger.error("Instrument I/O threads did not exit; leaving their streams to their owners")
                 self._closed = True
             if self._terminal is None:
                 self._failure = InstrumentError("Instrument did not stop; output state could not be confirmed.")
