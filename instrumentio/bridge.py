@@ -1,420 +1,248 @@
-"""Process bridge for instrument sessions.
+"""Transparent, single-flight calls to the instrument's native Python process.
 
-The main process talks to a dedicated worker interpreter over newline-delimited
-JSON messages on stdin/stdout. The worker owns the vendor DLL-backed session
-object; this avoids multiprocessing spawn importing the UI module.
+A failed or cancelled connection is never reused. Calls are not retried.
+Callbacks use acknowledgements, so no measurement events need to be dropped.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
+from pathlib import Path
 import queue
 import subprocess
 import threading
 import time
-import uuid
-from collections import deque
-from pathlib import Path
-from typing import Callable
+
+from .protocol import InstrumentCancelled, InstrumentError, OPERATION_TIMEOUT_S, STOP_TIMEOUT_S
+
+logger = logging.getLogger(__name__)
+
+def _worker_command():
+    root = Path(__file__).resolve().parent.parent
+    default = root / ".venv32" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    python = Path(os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_PYTHON", default)).expanduser().resolve()
+    if not python.is_file():
+        raise FileNotFoundError(f"Instrument interpreter not found: {python}")
+    module = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_MODULE", "instrumentio.bridge_worker")
+    return [str(python), "-u", "-m", module]
 
 
-def _make_envelope(cmd: str, payload: dict) -> dict:
-    return {
-        "cmd": cmd,
-        "req_id": uuid.uuid4().hex,
-        "payload": payload,
-    }
+class _Proxy:
+    def __init__(self, connection, target=""):
+        self._connection = connection
+        self._target = target
 
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
-def _default_worker_python() -> Path:
-    scripts_dir = "Scripts" if os.name == "nt" else "bin"
-    python_name = "python.exe" if os.name == "nt" else "python"
-    return _project_root() / ".venv32" / scripts_dir / python_name
-
-
-def _resolve_worker_python() -> str:
-    configured = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_PYTHON")
-    candidate = Path(configured).expanduser() if configured else _default_worker_python()
-    candidate = candidate.resolve()
-    if not candidate.is_file():
-        if configured:
-            raise FileNotFoundError(
-                "PYMEASUREMENT_BRIDGE_WORKER_PYTHON does not exist: "
-                f"{candidate}"
-            )
-        raise FileNotFoundError(
-            "Bridge worker python not found at default path: "
-            f"{candidate}. Create .venv32 and run the app from .venv."
-        )
-    return str(candidate)
-
-
-def _assert_worker_is_32bit(worker_python: str) -> None:
-    try:
-        out = subprocess.check_output(
-            [worker_python, "-c", "import struct; print(struct.calcsize('P') * 8)"],
-            text=True,
-            timeout=10,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Failed to verify worker python bitness: {worker_python}") from exc
-
-    bits = out.strip().splitlines()[0] if out.strip() else ""
-    if bits != "32":
-        raise RuntimeError(
-            "Bridge worker python must be 32-bit, got "
-            f"{bits or 'unknown'}-bit: {worker_python}"
-        )
-
-
-class RemoteWGFMUProxy:
-    """Proxy for WGFMUSession in the bridge worker.
-
-    Simple calls are routed via ``wgfmu_call`` through ``__getattr__``.
-    ``read_chunk`` fetches a contiguous block of samples in one round-trip.
-    ``poll`` combines get_status + get_measure_value_size for two channels
-    into one round-trip.
-    """
-
-    def __init__(self, parent: "RemoteB1500Session") -> None:
-        self._parent = parent
-
-    def clear(self) -> None:
-        self._parent._send_and_wait(
-            "wgfmu_call",
-            {"method": "clear", "args": [], "kwargs": {}},
-            timeout_s=30.0,
-        )
-
-    def abort(self, timeout_s: float = 2.0):
-        """Abort with a generous bridge timeout to cover the wait loop."""
-        return self._parent._send_and_wait(
-            "wgfmu_call",
-            {"method": "abort", "args": [float(timeout_s)], "kwargs": {}},
-            timeout_s=max(timeout_s + 5.0, 10.0),
-        )
-
-    def poll(self, channel_1: int, channel_2: int):
-        """Single round-trip: get_status + get_measure_value_size for two channels.
-
-        Returns (status, elapsed, total, measured_1, total_1, measured_2, total_2).
-        """
-        r = self._parent._send_and_wait(
-            "wgfmu_poll",
-            {"channel_1": int(channel_1), "channel_2": int(channel_2)},
-            timeout_s=10.0,
-        )
-        return (
-            r["status"], r["elapsed"], r["total"],
-            r["measured_1"], r["total_1"],
-            r["measured_2"], r["total_2"],
-        )
-
-    def read_chunk(
-        self, channel_id: int, from_index: int, count: int
-    ) -> list[tuple[float, float]]:
-        """Fetch ``count`` samples starting at ``from_index`` in one round-trip.
-
-        The caller is responsible for ensuring the requested range is available.
-        Returns a list of (time, value) tuples.
-        """
-        result = self._parent._send_and_wait(
-            "wgfmu_read_chunk",
-            {"channel_id": int(channel_id), "from_index": int(from_index), "count": int(count)},
-            timeout_s=60.0,
-        )
-        return list(zip(result["times"], result["values"]))
-
-    def __getattr__(self, name: str):
+    def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(name)
 
-        def _call(*args, **kwargs):
-            return self._parent._send_and_wait(
-                "wgfmu_call",
-                {"method": name, "args": list(args), "kwargs": kwargs},
-                timeout_s=30.0,
+        def call(*args, **kwargs):
+            timeout = kwargs.pop("_timeout_s", self._connection.timeout_s)
+            callbacks = []
+
+            def pack(value):
+                if not callable(value):
+                    return value
+                callbacks.append(value)
+                return {"__callback__": len(callbacks) - 1}
+
+            return self._connection._request(
+                ["call", self._target, name, [pack(value) for value in args],
+                 {key: pack(value) for key, value in kwargs.items()}],
+                callbacks, timeout,
             )
 
-        return _call
+        return call
 
 
-class RemoteB1500Session:
-    """Proxy for a B1500 session running in a worker process."""
+class RemoteB1500Session(_Proxy):
+    # One inactivity deadline, covering the application's 120s driver timeout.
+    DEFAULT_TIMEOUT_S = OPERATION_TIMEOUT_S
+    STOP_TIMEOUT_S = STOP_TIMEOUT_S
 
-    def __init__(self, address: str):
-        worker_python = _resolve_worker_python()
-        _assert_worker_is_32bit(worker_python)
-
-        worker_module = os.environ.get("PYMEASUREMENT_BRIDGE_WORKER_MODULE", "instrumentio.bridge_worker")
-        cmd = [worker_python, "-u", "-m", worker_module]
-
-        self._worker_python = worker_python
-        self._process = subprocess.Popen(
-            cmd,
-            cwd=str(_project_root()),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        if self._process.stdin is None or self._process.stdout is None or self._process.stderr is None:
-            raise RuntimeError("Bridge worker pipe setup failed.")
-
-        self._rsp_queue: queue.Queue = queue.Queue(maxsize=512)
-        self._write_lock = threading.Lock()
-        self._stderr_lock = threading.Lock()
-        self._stderr_lines: deque[str] = deque(maxlen=200)
-        self._wgfmu_proxy: RemoteWGFMUProxy | None = None
-
-        self._stdout_thread = threading.Thread(target=self._stdout_reader, daemon=True)
-        self._stderr_thread = threading.Thread(target=self._stderr_reader, daemon=True)
-        self._stdout_thread.start()
-        self._stderr_thread.start()
-
+    def __init__(self, address, *, timeout_s=DEFAULT_TIMEOUT_S, cancel_events=()):
+        super().__init__(self)
+        self.address = address
+        self.timeout_s = timeout_s
+        self._cancel_events = cancel_events
+        self.wgfmu = _Proxy(self, "wgfmu")
+        self._calls = threading.RLock()
+        self._closing = threading.Lock()
+        self._stopping = threading.Event()
+        self._active = False
+        self._failure = None
+        self._terminal = None
+        self._closed = False
+        self._outgoing = queue.SimpleQueue()
+        self._incoming = queue.SimpleQueue()
+        self._threads = []
+        self._process = None
         try:
-            self._send_and_wait("init_b1500", {"address": address}, timeout_s=10.0)
-        except Exception:
-            self.close()
-            raise
+            command = _worker_command()
+            self._process = subprocess.Popen(
+                command, cwd=str(Path(__file__).resolve().parent.parent),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", bufsize=1,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            for target in (self._write, self._read, self._read_stderr):
+                thread = threading.Thread(target=target, daemon=True)
+                self._threads.append(thread)
+                thread.start()
+            self._info = self._request(["connect", address], [], timeout_s)
+        except BaseException as exc:
+            logger.exception("Instrument connection failed at %s", address)
+            try:
+                self.close()
+            except InstrumentError:
+                logger.exception("Instrument connection cleanup failed")
+            if isinstance(exc, (InstrumentCancelled, KeyboardInterrupt, SystemExit)):
+                raise
+            raise InstrumentError("Could not connect to the instrument. See the application log for details.") from None
 
     @property
-    def wgfmu(self) -> RemoteWGFMUProxy:
-        if self._wgfmu_proxy is None:
-            self._wgfmu_proxy = RemoteWGFMUProxy(self)
-        return self._wgfmu_proxy
+    def is_open(self):
+        return not self._stopping.is_set() and self._failure is None and self._process.poll() is None
 
-    def bridge_info(self) -> dict:
-        info = self._send_and_wait("bridge_info", {}, timeout_s=5.0)
-        if not isinstance(info, dict):
-            raise RuntimeError(f"Invalid bridge info response: {info!r}")
-        info["configured_worker_python"] = self._worker_python
-        return info
+    def bridge_info(self):
+        """Developer diagnostics; not part of the user interface."""
+        self._check_open()
+        return dict(self._info, configured_worker_python=self._info["python_executable"])
 
-    def run_cmu_phase_compensation(self, channel: int, mode: int = 1) -> dict:
-        """Phase compensation can legitimately exceed the generic RPC timeout."""
-        return self._send_and_wait(
-            "call",
-            {
-                "method": "run_cmu_phase_compensation",
-                "args": [int(channel), int(mode)],
-                "kwargs": {},
-            },
-            timeout_s=120.0,
+    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback, timeout_s=120.0):
+        # Preserve the existing public timeout argument; execution is generic.
+        return super().__getattr__("stream_cv_sweep")(
+            cmu_channel, cmu_mode, meas_range, expected_points, callback, _timeout_s=timeout_s,
         )
 
-    def stream_cv_sweep(
-        self,
-        cmu_channel: int,
-        cmu_mode: int,
-        meas_range: float,
-        expected_points: int,
-        callback: Callable[[int, float, float, float, float, int, int], None],
-        timeout_s: float = 120.0,
-    ) -> None:
-        envelope = _make_envelope(
-            "stream_cv_sweep",
-            {
-                "cmu_channel": int(cmu_channel),
-                "cmu_mode": int(cmu_mode),
-                "meas_range": float(meas_range),
-                "expected_points": int(expected_points),
-            },
-        )
-        req_id = envelope["req_id"]
-        self._send_envelope(envelope)
+    def _check_open(self):
+        if self._failure is not None:
+            raise self._failure
+        if self._stopping.is_set():
+            raise InstrumentCancelled("Measurement stopped.")
+        if any(event.is_set() for event in self._cancel_events):
+            raise InstrumentCancelled("Measurement stopped.")
+        if self._process.poll() is not None:
+            raise InstrumentError("Instrument connection was lost.")
 
-        while True:
-            rsp = self._wait_for_response(req_id, "stream_cv_sweep", timeout_s)
-            rsp_type = rsp.get("type")
+    def _read(self):
+        try:
+            for line in self._process.stdout:
+                message = json.loads(line)
+                if not isinstance(message, list) or not message or message[0] not in ("result", "callback", "error", "stopped"):
+                    raise ValueError(f"Invalid instrument response: {message!r}")
+                if message[0] in ("error", "stopped"):
+                    self._terminal = message
+                    if message[0] == "error":
+                        self._failure = InstrumentError(message[1])
+                        logger.error("Instrument failure: %s", message[2])
+                    self._stopping.set()
+                self._incoming.put(message)
+        except Exception:
+            logger.exception("Instrument transport failed")
+        finally:
+            if self._terminal is None:
+                self._failure = InstrumentError("Instrument connection was lost; output state could not be confirmed.")
+                self._incoming.put(["error", str(self._failure), "Unexpected EOF or invalid protocol"])
 
-            if rsp_type == "error":
-                raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
+    def _read_stderr(self):
+        for line in self._process.stderr:
+            logger.error("Instrument diagnostic: %s", line.rstrip())
 
-            if rsp_type == "event":
-                payload = rsp.get("payload", {})
-                callback(
-                    int(payload["step"]),
-                    float(payload["dc_bias_v"]),
-                    float(payload["para1"]),
-                    float(payload["para2"]),
-                    float(payload["time_s"]),
-                    int(payload["status1"]),
-                    int(payload["status2"]),
-                )
-                continue
+    def _write(self):
+        try:
+            while (message := self._outgoing.get()) is not None:
+                self._process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+                self._process.stdin.flush()
+        except Exception:
+            logger.exception("Instrument transport write failed")
+            self._incoming.put(["error", "Instrument connection was lost.", "Command write failed"])
 
-            if rsp_type == "done":
-                return
+    def _request(self, message, callbacks, timeout):
+        # Validate locally before any command can reach the instrument.
+        json.dumps(message)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Instrument timeout must be finite and positive")
+        deadline = time.monotonic() + timeout
+        while not self._calls.acquire(timeout=0.05):
+            self._check_open()
+            if time.monotonic() >= deadline:
+                raise InstrumentError("Instrument is busy.")
+        try:
+            self._check_open()
+            if self._active:
+                raise InstrumentError("Instrument calls are not allowed inside a data callback.")
+            self._active = True
+            try:
+                self._outgoing.put(message)
+                deadline = time.monotonic() + timeout
+                while True:
+                    self._check_open()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise InstrumentError("Instrument did not respond in time.")
+                    try:
+                        reply = self._incoming.get(timeout=min(remaining, 0.05))
+                    except queue.Empty:
+                        continue
+                    kind = reply[0]
+                    if kind == "result":
+                        if self._stopping.is_set():
+                            raise InstrumentCancelled("Measurement stopped.")
+                        return reply[1]
+                    if kind == "callback":
+                        self._check_open()
+                        result = callbacks[reply[1]](*reply[2], **reply[3])
+                        # Callback return values follow the same serialization rules.
+                        json.dumps(result)
+                        self._outgoing.put(["return", result])
+                        deadline = time.monotonic() + timeout
+                    elif kind == "stopped":
+                        raise InstrumentCancelled("Measurement stopped.")
+                    else:
+                        raise InstrumentError(reply[1])
+            except BaseException:
+                logger.exception("Instrument request ended: %s", message[:3])
+                self.close()
+                raise
+            finally:
+                self._active = False
+        finally:
+            self._calls.release()
 
-            raise RuntimeError(f"Unexpected bridge response type for stream_cv_sweep: {rsp_type!r}")
-
-    def __getattr__(self, name: str):
-        if name.startswith("_"):
-            raise AttributeError(name)
-
-        def _call(*args, **kwargs):
-            return self._send_and_wait(
-                "call",
-                {"method": name, "args": list(args), "kwargs": kwargs},
-                timeout_s=30.0,
-            )
-
-        return _call
+    def cancel(self):
+        """Stop independently of the call lock. No driver calls run concurrently."""
+        self.close()
 
     def close(self):
-        if getattr(self, "_process", None) is None:
-            return
-        process = self._process
-        if process.poll() is None:
+        self._stopping.set()
+        with self._closing:
+            if self._closed or self._process is None:
+                return
+            self._outgoing.put(["cancel"])
             try:
-                self._send_and_wait("close", {}, timeout_s=5.0)
-            except Exception:
-                pass
-
-        if process.poll() is None:
-            try:
-                process.wait(timeout=2.0)
+                self._process.wait(timeout=self.STOP_TIMEOUT_S)
             except subprocess.TimeoutExpired:
-                process.terminate()
-                try:
-                    process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=1.0)
-
-        for stream_name in ("stdin", "stdout", "stderr"):
-            stream = getattr(process, stream_name, None)
-            if stream is not None:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-
-    def _stdout_reader(self) -> None:
-        assert self._process.stdout is not None
-        for raw in self._process.stdout:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except Exception:
-                msg = {
-                    "type": "error",
-                    "req_id": None,
-                    "payload": {"message": f"Invalid JSON from bridge worker: {line[:300]}"},
-                }
-            self._queue_response(msg)
-
-        self._queue_response(
-            {
-                "type": "worker_exit",
-                "req_id": None,
-                "payload": {"exit_code": self._process.poll()},
-            }
-        )
-
-    def _stderr_reader(self) -> None:
-        assert self._process.stderr is not None
-        for raw in self._process.stderr:
-            line = raw.rstrip("\r\n")
-            if not line:
-                continue
-            with self._stderr_lock:
-                self._stderr_lines.append(line)
-
-    def _queue_response(self, msg: dict) -> None:
-        try:
-            self._rsp_queue.put_nowait(msg)
-        except queue.Full:
-            try:
-                self._rsp_queue.get_nowait()
-            except queue.Empty:
-                pass
-            self._rsp_queue.put_nowait(msg)
-
-    def _stderr_tail(self, max_lines: int = 15) -> str:
-        with self._stderr_lock:
-            lines = list(self._stderr_lines)[-max_lines:]
-        return "\n".join(lines)
-
-    def _worker_diagnostics(self) -> str:
-        exit_code = self._process.poll()
-        state = "running" if exit_code is None else f"exited with code {exit_code}"
-        msg = f"Bridge worker ({self._worker_python}) is {state}."
-        tail = self._stderr_tail()
-        if tail:
-            msg += f"\nWorker stderr tail:\n{tail}"
-        return msg
-
-    def _send_envelope(self, envelope: dict) -> None:
-        if self._process.poll() is not None:
-            raise RuntimeError(self._worker_diagnostics())
-
-        line = json.dumps(envelope, separators=(",", ":")) + "\n"
-        with self._write_lock:
-            if self._process.poll() is not None:
-                raise RuntimeError(self._worker_diagnostics())
-            assert self._process.stdin is not None
-            try:
-                self._process.stdin.write(line)
-                self._process.stdin.flush()
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed sending bridge command {envelope.get('cmd')!r}. {self._worker_diagnostics()}"
-                ) from exc
-
-    def _wait_for_response(self, req_id: str, cmd: str, timeout_s: float) -> dict:
-        deadline = time.monotonic() + timeout_s
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f"No bridge response for {cmd}. {self._worker_diagnostics()}")
-            try:
-                rsp = self._rsp_queue.get(timeout=min(remaining, 0.5))
-            except queue.Empty:
-                if self._process.poll() is not None:
-                    raise RuntimeError(
-                        f"Bridge worker exited while waiting for {cmd}. {self._worker_diagnostics()}"
-                    )
-                continue
-
-            rsp_type = rsp.get("type")
-            if rsp_type == "worker_exit":
-                raise RuntimeError(
-                    f"Bridge worker exited while waiting for {cmd}. {self._worker_diagnostics()}"
-                )
-
-            rsp_req_id = rsp.get("req_id")
-            if rsp_type == "error" and rsp_req_id is None:
-                raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
-
-            if rsp_req_id != req_id:
-                continue
-
-            return rsp
-
-    def _send_and_wait(self, cmd: str, payload: dict, timeout_s: float) -> object:
-        envelope = _make_envelope(cmd, payload)
-        req_id = envelope["req_id"]
-        self._send_envelope(envelope)
-        rsp = self._wait_for_response(req_id, cmd, timeout_s)
-
-        rsp_type = rsp.get("type")
-        if rsp_type == "error":
-            raise RuntimeError(rsp.get("payload", {}).get("message", "Bridge worker error"))
-
-        if rsp_type == "result":
-            return rsp.get("payload", {}).get("value")
-
-        if rsp_type == "ack":
-            return rsp.get("payload", {})
-
-        raise RuntimeError(f"Unexpected bridge response type for {cmd}: {rsp_type!r}")
+                logger.error("Instrument executor unresponsive; terminating pid=%s", self._process.pid)
+                self._process.kill()
+                self._process.wait(timeout=2)
+            finally:
+                self._outgoing.put(None)
+                for thread in self._threads:
+                    thread.join(timeout=1)
+                for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
+                    try:
+                        stream.close()
+                    except OSError:
+                        logger.debug("Closing an already broken instrument pipe", exc_info=True)
+                self._closed = True
+            if self._terminal is None:
+                self._failure = InstrumentError("Instrument did not stop; output state could not be confirmed.")
+            elif self._terminal[0] == "error":
+                self._failure = InstrumentError(self._terminal[1])
+            if self._failure is not None:
+                raise self._failure

@@ -1,186 +1,130 @@
-"""B1500 bridge worker process.
-
-Runs under a dedicated 32-bit Python interpreter and communicates with the
-parent process using newline-delimited JSON messages on stdin/stdout.
-"""
+"""Single-owner instrument executor. The input thread never calls a driver."""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import queue
+import struct
 import sys
+import threading
 import traceback
 
 from app_logging import configure_logging
+from .protocol import InstrumentCancelled, STOP_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
 
-def _emit(message: dict) -> None:
-    line = json.dumps(message, separators=(",", ":"))
-    try:
-        sys.stdout.write(line + "\n")
-        sys.stdout.flush()
-    except BrokenPipeError:
-        raise SystemExit(0)
-
-
-def _emit_error(req_id: str | None, message: str) -> None:
-    _emit({"type": "error", "req_id": req_id, "payload": {"message": message}})
-
-
-def main() -> None:
+def main(session_factory=None):
     configure_logging()
-    logger.info("Instrument bridge worker process started.")
+    # Python prints and driver diagnostics must not share the protocol stream.
+    protocol_out, sys.stdout = sys.stdout, sys.stderr
+    inbox = queue.SimpleQueue()
+    cancelled = threading.Event()
+    finished = threading.Event()
     session = None
-    try:
-        for raw in sys.stdin:
-            line = raw.strip()
-            if not line:
-                continue
+    terminal = ["stopped"]
 
-            req_id = None
-            try:
-                msg = json.loads(line)
-                cmd = msg["cmd"]
-                req_id = msg.get("req_id")
-                payload = msg.get("payload", {})
+    def emit(message):
+        protocol_out.write(json.dumps(message, separators=(",", ":")) + "\n")
+        protocol_out.flush()
 
-                if cmd == "init_b1500":
-                    from instrumentio.sessions import B1500Session
-
-                    if session is not None:
-                        session.close()
-                    session = B1500Session(payload["address"])
-                    _emit({"type": "ack", "req_id": req_id, "payload": {}})
-                    continue
-
-                if cmd == "bridge_info":
-                    _emit(
-                        {
-                            "type": "result",
-                            "req_id": req_id,
-                            "payload": {
-                                "value": {
-                                    "pid": os.getpid(),
-                                    "python_executable": sys.executable,
-                                    "session_initialized": session is not None,
-                                }
-                            },
-                        }
-                    )
-                    continue
-
-                if cmd == "call":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-                    method_name = payload["method"]
-                    args = payload.get("args", [])
-                    kwargs = payload.get("kwargs", {})
-                    result = getattr(session, method_name)(*args, **kwargs)
-                    _emit({"type": "result", "req_id": req_id, "payload": {"value": result}})
-                    continue
-
-                if cmd == "stream_cv_sweep":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-
-                    def _on_point(step, dc_bias_v, para1, para2, time_s, status1, status2):
-                        _emit(
-                            {
-                                "type": "event",
-                                "req_id": req_id,
-                                "payload": {
-                                    "step": int(step),
-                                    "dc_bias_v": float(dc_bias_v),
-                                    "para1": float(para1),
-                                    "para2": float(para2),
-                                    "time_s": float(time_s),
-                                    "status1": int(status1),
-                                    "status2": int(status2),
-                                },
-                            }
-                        )
-
-                    session.stream_cv_sweep(
-                        payload["cmu_channel"],
-                        payload["cmu_mode"],
-                        payload["meas_range"],
-                        payload["expected_points"],
-                        _on_point,
-                    )
-                    _emit({"type": "done", "req_id": req_id, "payload": {}})
-                    continue
-
-                if cmd == "wgfmu_call":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-                    method_name = payload["method"]
-                    args = payload.get("args", [])
-                    kwargs = payload.get("kwargs", {})
-                    result = getattr(session.wgfmu, method_name)(*args, **kwargs)
-                    _emit({"type": "result", "req_id": req_id, "payload": {"value": result}})
-                    continue
-
-                if cmd == "wgfmu_poll":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-                    ch1 = int(payload["channel_1"])
-                    ch2 = int(payload["channel_2"])
-                    status, elapsed, total, measured_1, total_1, measured_2, total_2 = session.wgfmu.poll(ch1, ch2)
-                    _emit({
-                        "type": "result",
-                        "req_id": req_id,
-                        "payload": {"value": {
-                            "status": int(status),
-                            "elapsed": float(elapsed),
-                            "total": float(total),
-                            "measured_1": int(measured_1),
-                            "total_1": int(total_1),
-                            "measured_2": int(measured_2),
-                            "total_2": int(total_2),
-                        }},
-                    })
-                    continue
-
-                if cmd == "wgfmu_read_chunk":
-                    if session is None:
-                        raise RuntimeError("B1500 session is not initialized")
-                    channel_id = int(payload["channel_id"])
-                    from_index = int(payload["from_index"])
-                    count = int(payload["count"])
-                    to_index = from_index + count
-                    times = []
-                    values = []
-                    for idx in range(from_index, to_index):
-                        t, v = session.wgfmu.get_measure_value(channel_id, idx)
-                        times.append(t)
-                        values.append(v)
-                    _emit({
-                        "type": "result",
-                        "req_id": req_id,
-                        "payload": {"value": {"times": times, "values": values}},
-                    })
-                    continue
-
-                if cmd == "close":
-                    if session is not None:
-                        session.close()
-                        session = None
-                    _emit({"type": "ack", "req_id": req_id, "payload": {}})
+    def read_commands():
+        try:
+            for line in sys.stdin:
+                message = json.loads(line)
+                if message == ["cancel"]:
                     break
+                inbox.put(message)
+        except Exception as exc:
+            logger.exception("Invalid instrument command stream")
+            inbox.put(exc)
+        finally:
+            cancelled.set()
+            inbox.put(None)
+            # Also bound shutdown after a parent crash, when no client remains
+            # to terminate a driver blocked in native code.
+            if not finished.wait(STOP_TIMEOUT_S):
+                logger.critical("Instrument stop timed out; output state could not be confirmed")
+                os._exit(1)
 
-                raise RuntimeError(f"Unknown bridge command: {cmd}")
-            except Exception:
-                logger.exception("Bridge command failed: req_id=%s", req_id)
-                _emit_error(req_id, traceback.format_exc())
+    def receive():
+        message = inbox.get()
+        if isinstance(message, Exception):
+            raise message
+        if cancelled.is_set():
+            raise InstrumentCancelled()
+        if not isinstance(message, list) or not message:
+            raise ValueError("Invalid command envelope")
+        return message
+
+    def unpack(value):
+        if not isinstance(value, dict) or set(value) != {"__callback__"}:
+            return value
+        index = value["__callback__"]
+
+        def callback(*args, **kwargs):
+            if cancelled.is_set():
+                raise InstrumentCancelled()
+            emit(["callback", index, args, kwargs])
+            reply = receive()
+            if len(reply) != 2 or reply[0] != "return":
+                raise ValueError("Expected callback acknowledgement")
+            return reply[1]
+
+        return callback
+
+    threading.Thread(target=read_commands, daemon=True).start()
+    try:
+        if session_factory is None:
+            if struct.calcsize("P") != 4:
+                raise RuntimeError("The instrument interpreter must be 32-bit")
+            from instrumentio.sessions import B1500Session
+            session_factory = B1500Session
+        message = receive()
+        if len(message) != 2 or message[0] != "connect":
+            raise ValueError("Expected connection request")
+        session = session_factory(message[1])
+        if cancelled.is_set():
+            raise InstrumentCancelled()
+        emit(["result", {"pid": os.getpid(), "python_executable": sys.executable,
+                         "session_initialized": True}])
+        while True:
+            message = receive()
+            if len(message) != 5 or message[0] != "call":
+                raise ValueError("Expected instrument call")
+            _, target, method, args, kwargs = message
+            if target not in ("", "wgfmu") or method.startswith("_") or method == "close":
+                raise ValueError("Invalid instrument method")
+            receiver = session if not target else getattr(session, target)
+            result = getattr(receiver, method)(
+                *(unpack(value) for value in args),
+                **{key: unpack(value) for key, value in kwargs.items()},
+            )
+            if cancelled.is_set():
+                raise InstrumentCancelled()
+            emit(["result", result])
+    except InstrumentCancelled:
+        pass
+    except Exception:
+        details = traceback.format_exc()
+        logger.error("Instrument executor failed:\n%s", details)
+        terminal = ["error", "Instrument operation failed. See the application log for details.", details]
     finally:
         if session is not None:
             try:
                 session.close()
             except Exception:
-                pass
+                details = traceback.format_exc()
+                logger.error("Instrument cleanup failed:\n%s", details)
+                terminal = ["error", "Instrument shutdown failed; output state could not be confirmed.", details]
+        try:
+            emit(terminal)
+        except (OSError, ValueError):
+            logger.exception("Could not deliver instrument shutdown result")
+        finished.set()
 
 
 if __name__ == "__main__":
