@@ -1,6 +1,7 @@
 """High-level instrument sessions built on top of low-level ctypes bindings."""
 
 import ctypes as ct
+import time
 import warnings
 
 from .bindings import (
@@ -47,6 +48,18 @@ from .descriptors import describe_data_type, describe_data_type_short, describe_
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
 
 
+def _attempt_all(*operations):
+    """Attempt every cleanup step and preserve every failure."""
+    errors = []
+    for operation in operations:
+        try:
+            operation()
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise ExceptionGroup("Instrument cleanup failed", errors)
+
+
 def _module_has_asu(model: str) -> bool:
     text = (model or "").upper()
     return "E5288" in text or "ASU" in text
@@ -84,6 +97,7 @@ class B1500Session:
         self.gpib_addr = gpib_addr
         self.session = ViSession()
         self._wgfmu = None  # Lazy-loaded WGFMU session
+        self._closed = False
         ret = dll_b1500.agb1500_init(gpib_addr.encode(), 1, 1, ct.byref(self.session))
         if ret != 0:
             raise RuntimeError(f"B1500 init failed: {ret}")
@@ -201,13 +215,13 @@ class B1500Session:
             raise RuntimeError(f"{context} failed: {ret}")
 
     def reset(self):
-        dll_b1500.agb1500_reset(self.session)
+        self._check_ret(dll_b1500.agb1500_reset(self.session), "Reset")
 
     def set_timeout(self, ms):
-        dll_b1500.agb1500_timeOut(self.session, ms)
+        self._check_ret(dll_b1500.agb1500_timeOut(self.session, ms), "Set timeout")
 
     def enable_error_detect(self, enable):
-        dll_b1500.agb1500_errorQueryDetect(self.session, 1 if enable else 0)
+        self._check_ret(dll_b1500.agb1500_errorQueryDetect(self.session, 1 if enable else 0), "Set error detection")
 
     def set_switch(self, channel, state):
         """Control switch matrix channel on/off state."""
@@ -435,13 +449,10 @@ class B1500Session:
 
     def abort_measure(self):
         """Abort ongoing measurement/sweep on B1500 and WGFMU."""
-        # Abort WGFMU first if it was used
-        if self._wgfmu is not None:
-            try:
-                self._wgfmu.abort()
-            except Exception:
-                pass
-        dll_b1500.agb1500_abortMeasure(self.session)
+        _attempt_all(
+            lambda: self._wgfmu.abort() if self._wgfmu is not None else None,
+            lambda: self._check_ret(dll_b1500.agb1500_abortMeasure(self.session), "Abort measurement"),
+        )
 
     def spot_meas(self, channel, mode, range_=B1500_AUTO_RANGE):
         """Single spot measurement on a channel."""
@@ -769,14 +780,17 @@ class B1500Session:
         }
 
     def close(self):
-        # Close WGFMU session first if it was used
-        if self._wgfmu is not None:
-            try:
-                self._wgfmu.close()
-            except Exception:
-                pass
-            self._wgfmu = None
-        dll_b1500.agb1500_close(self.session)
+        """Stop outputs and release both drivers, even when a cleanup step fails."""
+        if self._closed:
+            return
+        self._closed = True
+        _attempt_all(
+            self.abort_measure,
+            lambda: self.zero_output(B1500_CH_ALL),
+            lambda: self.set_switch(B1500_CH_ALL, False),
+            lambda: self._wgfmu.close() if self._wgfmu is not None else None,
+            lambda: self._check_ret(dll_b1500.agb1500_close(self.session), "Close session"),
+        )
 
 
 class WGFMUSession:
@@ -943,26 +957,32 @@ class WGFMUSession:
         self._check_ret(ret, "WGFMU get measure value")
         return time_.value, value.value
 
+    def read_chunk(self, channel_id: int, from_index: int, count: int):
+        """Read available samples in one native call, locally or remotely."""
+        if from_index < 0 or count < 0:
+            raise ValueError("Sample index and count must be non-negative")
+        if count == 0:
+            return []
+        times = (ct.c_double * count)()
+        values = (ct.c_double * count)()
+        size = ct.c_int(count)
+        ret = dll_wgfmu.WGFMU_getMeasureValues(channel_id, from_index, ct.byref(size), times, values)
+        self._check_ret(ret, "WGFMU read samples")
+        if not 0 <= size.value <= count:
+            raise RuntimeError(f"WGFMU returned invalid sample count {size.value}")
+        return list(zip(times[:size.value], values[:size.value]))
+
     def abort(self, timeout_s: float = 2.0):
         """Abort all WGFMU channels and wait for abort to complete."""
         ret = dll_wgfmu.WGFMU_abort()
-        if ret < 0:
-            return ret  # Already failed, don't wait
-
-        # Wait for ABORT_COMPLETED or IDLE status
-        import time
-
-        start = time.time()
-        while time.time() - start < timeout_s:
-            try:
-                status, _, _ = self.get_status()
-                # 10003 = ABORT_COMPLETED, 10001 = IDLE, 10000 = COMPLETED
-                if status in (10003, 10001, 10000):
-                    return 0  # Success
-            except Exception:
-                pass
+        self._check_ret(ret, "WGFMU abort")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            status, _, _ = self.get_status()
+            if status in (WGFMU_STATUS_ABORT_COMPLETED, WGFMU_STATUS_DONE, WGFMU_STATUS_COMPLETED):
+                return 0
             time.sleep(0.01)
-        return ret  # Timeout, return original result
+        raise TimeoutError("WGFMU abort did not complete")
 
     def abort_channel(self, channel_id: int):
         """Abort a specific WGFMU channel."""
