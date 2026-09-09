@@ -39,17 +39,20 @@ PythonMeasurementApp/
 
 ## Windows Run / Setup
 
-This project targets Windows for real instrument DLL execution. Use split environments:
-- Main env (64-bit): `.venv` (run the UI from here)
-- Worker env (32-bit): `.venv32` (auto-started by the bridge)
-
-The normal lab-user entry point is:
+This project targets Windows for real instrument execution. The lab-user entry point is:
 
 ```text
 Run Measurement App.cmd
 ```
 
-Double-clicking that file checks for `uv`, creates or updates `.venv` and `.venv32`, installs `requirements.txt` into the main env, and launches `main.py`.
+Double-clicking that file prepares the application and launches the UI. Instrument
+support starts and stops automatically; there is no separate process for users
+to manage. Maintainers can find the execution contract and validation instructions
+in [Instrument connection](docs/instrument-connection.md).
+
+The remaining setup details are for maintainers. The launcher creates or updates
+`.venv` (64-bit application) and `.venv32` (32-bit native instrument support),
+installs `requirements.txt` into the application environment, and runs `main.py`.
 
 Prerequisites on the instrument PC:
 - `uv` on `PATH`

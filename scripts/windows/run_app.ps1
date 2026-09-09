@@ -29,7 +29,7 @@ if ([string]::IsNullOrWhiteSpace($WorkerPython)) {
     $WorkerPython = Join-Path $projectRoot ".venv32\Scripts\python.exe"
 }
 if (-not (Test-Path -LiteralPath $WorkerPython)) {
-    throw "Worker Python not found: $WorkerPython"
+    throw "Instrument support is missing. Run application setup again."
 }
 
 $env:PYMEASUREMENT_BRIDGE_WORKER_PYTHON = (Resolve-Path -LiteralPath $WorkerPython).Path

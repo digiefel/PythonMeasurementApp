@@ -43,15 +43,14 @@ if ([string]::IsNullOrWhiteSpace($WorkerPython)) {
 }
 
 if (-not (Test-Path -LiteralPath $WorkerPython)) {
-    Write-Host "==> Creating 32-bit worker env: $workerEnvPath"
+    Write-Host "==> Preparing instrument support"
     $workerRequest = "cpython-3.11-windows-x86-none"
-    Write-Host "==> Using worker Python request: $workerRequest"
-    & uv venv -p $workerRequest $workerEnvPath
-    if ($LASTEXITCODE -ne 0) { throw "Failed to create 32-bit worker env from $workerRequest." }
+    & uv venv -q -p $workerRequest $workerEnvPath
+    if ($LASTEXITCODE -ne 0) { throw "Could not prepare instrument support. Contact the application maintainer." }
 }
 
 if (-not (Test-Path -LiteralPath $WorkerPython)) {
-    throw "Worker Python not found: $WorkerPython"
+    throw "Instrument support is missing. Contact the application maintainer."
 }
 
 Write-Host "==> Installing/updating main packages"
@@ -61,4 +60,3 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to install main packages." }
 Write-Host ""
 Write-Host "Setup complete."
 Write-Host "Main env Python  : $mainPython"
-Write-Host "Worker env Python: $WorkerPython"
