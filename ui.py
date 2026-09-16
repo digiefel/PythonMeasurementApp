@@ -45,6 +45,7 @@ from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
 from procedures.pund_wakeup import PUNDWakeUpProcedure
 from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
+from ui_smu_calibration import calibrate_smus
 from plotting import PlotBridge
 
 logger = logging.getLogger(__name__)
@@ -438,6 +439,12 @@ class MainUI:
             self.log(f"Could not read initial contact state: {e}")
 
     def build_layout(self):
+        menu = tk.Menu(self.root)
+        instruments = tk.Menu(menu, tearoff=False)
+        instruments.add_command(label="Calibrate SMUs…", command=lambda: calibrate_smus(self))
+        menu.add_cascade(label="Instruments", menu=instruments)
+        self.root.configure(menu=menu)
+
         # Selection section
         self.selection_temp_frame = ttk.Frame(self.root)
         self.selection_temp_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
