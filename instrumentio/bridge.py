@@ -17,6 +17,8 @@ import threading
 import time
 
 from .protocol import InstrumentCancelled, InstrumentError, CONNECT_TIMEOUT_S, STOP_TIMEOUT_S
+from .emergency import PROCESS_TIMEOUT_S
+from .ownership import InstrumentLease
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +79,18 @@ class RemoteB1500Session(_Proxy):
         self._failure = None
         self._terminal = None
         self._closed = False
+        self._shutdown_error = None
+        self._cancel_requested = False
+        self._wgfmu_used = False
         self._outgoing = queue.SimpleQueue()
         self._incoming = queue.SimpleQueue()
         self._threads = []
         self._process = None
+        self._lease = None
         try:
+            self._lease = InstrumentLease(address)
             command = _worker_command()
+            self._worker_python = command[0]
             self._process = subprocess.Popen(
                 command, cwd=str(Path(__file__).resolve().parent.parent),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -185,6 +193,8 @@ class RemoteB1500Session(_Proxy):
                 raise InstrumentError("Instrument calls are not allowed inside a data callback.")
             self._active = True
             try:
+                if message[:2] == ["call", "wgfmu"]:
+                    self._wgfmu_used = True
                 self._outgoing.put(message)
                 deadline = time.monotonic() + interval
                 while True:
@@ -218,6 +228,10 @@ class RemoteB1500Session(_Proxy):
                 if not isinstance(exc, InstrumentCancelled):
                     logger.exception("Instrument request ended: %s", message[:3])
                 self.close()
+                if self._shutdown_error is not None:
+                    raise self._shutdown_error
+                if self._cancel_requested or any(event.is_set() for event in self._cancel_events):
+                    raise InstrumentCancelled("Measurement stopped.") from exc
                 raise
             finally:
                 self._active = False
@@ -225,37 +239,78 @@ class RemoteB1500Session(_Proxy):
             self._calls.release()
 
     def cancel(self):
-        """Stop independently of the call lock. No driver calls run concurrently."""
+        """Stop independently of the call lock, including blocked native calls."""
+        self._cancel_requested = True
         self.close()
+        if self._shutdown_error is not None:
+            raise self._shutdown_error
+
+    def _emergency_shutdown(self):
+        """The old process must be dead before resetting through a new session."""
+        if self._process.poll() is None:
+            raise InstrumentError("Instrument process could not be stopped.")
+        command = [self._worker_python, "-u", "-m", "instrumentio.emergency", self.address]
+        if self._wgfmu_used:
+            command.append("--wgfmu")
+        result = subprocess.run(
+            command, cwd=str(Path(__file__).resolve().parent.parent),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=PROCESS_TIMEOUT_S,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode:
+            raise RuntimeError(f"Emergency shutdown failed ({result.returncode}): {result.stderr}")
+        logger.info("Instrument emergency reset completed at %s", self.address)
 
     def close(self):
         self._stopping.set()
         with self._closing:
-            if self._closed or self._process is None:
-                return
-            self._outgoing.put(["cancel"])
             try:
-                self._process.wait(timeout=self.STOP_TIMEOUT_S)
+                self._close_process()
+            finally:
+                if self._lease is not None and (self._process is None or self._process.poll() is not None):
+                    self._lease.close()
+
+    def _close_process(self):
+        if self._closed or self._process is None:
+            return
+        self._outgoing.put(["cancel"])
+        try:
+            try:
+                # Let a returning call finish its cleanup, but do not wait five
+                # seconds before reaching hardware when acquisition is blocked.
+                grace = min(self.STOP_TIMEOUT_S, 1.0) if self._active else self.STOP_TIMEOUT_S
+                self._process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
                 logger.error("Instrument executor unresponsive; terminating pid=%s", self._process.pid)
                 self._process.kill()
                 self._process.wait(timeout=2)
-            finally:
-                self._outgoing.put(None)
-                for thread in self._threads:
-                    thread.join(timeout=1)
-                if not any(thread.is_alive() for thread in self._threads):
-                    for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
-                        try:
-                            stream.close()
-                        except OSError:
-                            logger.debug("Closing an already broken instrument pipe", exc_info=True)
-                else:
-                    logger.error("Instrument I/O threads did not exit; leaving their streams to their owners")
-                self._closed = True
-            if self._terminal is None:
-                self._failure = InstrumentError("Instrument did not stop; output state could not be confirmed.")
-            elif self._terminal[0] == "error":
-                self._failure = InstrumentError(self._terminal[1])
-            if self._failure is not None:
-                raise self._failure
+        except (OSError, subprocess.TimeoutExpired):
+            logger.exception("Could not terminate the instrument process")
+            self._shutdown_error = self._failure = InstrumentError(
+                "Instrument shutdown failed; output state could not be confirmed."
+            )
+            raise self._shutdown_error from None
+        finally:
+            self._outgoing.put(None)
+            for thread in self._threads:
+                thread.join(timeout=1)
+            if not any(thread.is_alive() for thread in self._threads):
+                for stream in (self._process.stdin, self._process.stdout, self._process.stderr):
+                    try:
+                        stream.close()
+                    except OSError:
+                        logger.debug("Closing an already broken instrument pipe", exc_info=True)
+            else:
+                logger.error("Instrument I/O threads did not exit; leaving their streams to their owners")
+            self._closed = self._process.poll() is not None
+        if self._terminal is None or self._terminal[0] == "error":
+            try:
+                self._emergency_shutdown()
+            except Exception:
+                logger.exception("Instrument emergency shutdown failed at %s", self.address)
+                self._shutdown_error = self._failure = InstrumentError(
+                    "Instrument shutdown failed; output state could not be confirmed."
+                )
+                raise self._shutdown_error from None

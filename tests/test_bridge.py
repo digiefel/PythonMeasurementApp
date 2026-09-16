@@ -24,6 +24,10 @@ class BridgeTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(bridge, "_worker_command", return_value=[sys.executable, "-u", "-m", "tests.fake_worker"]).start()
         patch.object(bridge.RemoteB1500Session, "STOP_TIMEOUT_S", 0.3).start()
+        self.emergency = patch.object(
+            bridge.RemoteB1500Session, "_emergency_shutdown",
+            side_effect=RuntimeError("Simulated emergency shutdown failure"),
+        ).start()
 
     def connect(self, **options):
         session = bridge.RemoteB1500Session(json.dumps(dict(record=str(self.record), **options)), timeout_s=2)
@@ -139,6 +143,47 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(bridge.InstrumentError):
                 call.result(timeout=2)
         self.assertIsNotNone(session._process.poll())
+
+    def test_hung_call_is_killed_before_emergency_reset_and_skip_is_preserved(self):
+        session = self.connect()
+        def reset():
+            self.assertIsNotNone(session._process.poll())
+            with self.assertRaisesRegex(RuntimeError, "already in use"):
+                bridge.InstrumentLease(session.address)
+        self.emergency.side_effect = reset
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(session.slow, 10, _timeout_s=None)
+            self.wait_for_call("slow_started")
+            session.cancel()
+            with self.assertRaises(bridge.InstrumentCancelled):
+                call.result(timeout=2)
+        self.emergency.assert_called_once()
+        self.assertNotIn("slow_finished", self.history())
+        self.assertFalse(session.is_open)
+        bridge.InstrumentLease(session.address).close()
+
+    def test_explicit_timeout_resets_hardware_but_still_reports_timeout(self):
+        session = self.connect()
+        self.emergency.side_effect = None
+        with self.assertRaisesRegex(bridge.InstrumentError, "did not respond"):
+            session.slow(10, _timeout_s=.01)
+        self.emergency.assert_called_once()
+
+    def test_successful_normal_cleanup_does_not_need_emergency_reset(self):
+        session = self.connect()
+        session.cancel()
+        self.emergency.assert_not_called()
+
+    def test_failed_shutdown_cannot_turn_into_successful_cancellation(self):
+        session = self.connect()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(session.slow, 10)
+            self.wait_for_call("slow_started")
+            with self.assertRaises(bridge.InstrumentError):
+                session.cancel()
+            with self.assertRaises(bridge.InstrumentError) as caught:
+                call.result(timeout=2)
+            self.assertNotIsInstance(caught.exception, bridge.InstrumentCancelled)
 
     def test_abrupt_exit_is_a_connection_failure(self):
         session = self.connect()

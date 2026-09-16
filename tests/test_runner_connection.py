@@ -76,3 +76,25 @@ class RunnerConnectionTests(unittest.TestCase):
                     self.runner.run_procedure("chip", SimpleNamespace(name="site"), SimpleNamespace(name="subsite"),
                                               SimpleNamespace(name="device"), procedure, {"gpib_address": "address"})
                 event.clear()
+
+    def test_failed_skip_shutdown_stops_queue_and_does_not_reconnect(self):
+        session = self.runner.get_b1500("address")
+        session.cancel.side_effect = runner.InstrumentError("Shutdown failed")
+        self.runner.safe_skip_device()
+        self.assertTrue(self.runner.stop_event.is_set())
+        with self.assertRaises(runner.MeasurementAbortRequested):
+            self.runner.get_b1500("address")
+        self.factory.assert_called_once()
+
+    def test_python_side_skip_waits_for_cleanup_before_advancing(self):
+        self.runner.config.data = {"output_dir": "unused"}
+        session = self.runner.get_b1500("address")
+        procedure = Mock()
+        def execute(*args):
+            self.runner.skip_device_event.set()
+            raise runner.MeasurementSkipRequested("skip between calls")
+        procedure.return_value.execute.side_effect = execute
+        with self.assertRaises(runner.MeasurementSkipRequested):
+            self.runner.run_procedure("chip", SimpleNamespace(name="site"), SimpleNamespace(name="subsite"),
+                                      SimpleNamespace(name="device"), procedure, {"gpib_address": "address"})
+        session.cancel.assert_called_once()
