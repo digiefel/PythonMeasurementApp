@@ -283,6 +283,10 @@ class B1500Session:
         maximum = 100 if mode == 2 else (1023 if adc == 0 else 127)
         if not 0 <= coefficient <= maximum or coefficient != int(coefficient):
             raise ValueError(f"ADC coefficient must be an integer from 1 to {maximum}, or 0 for the mode default.")
+        if coefficient == 0:
+            # setAdc rejects zero before its omitted-N branch. Use the AIT
+            # defaults explicitly (Programming Guide, printed pp. 4-40–41).
+            coefficient = (6, 3, 1)[mode] if adc == 1 else 1
         if parallel and adc != 0:
             raise ValueError("Parallel measurement requires the high-speed ADC.")
         waits = ((1, source_wait_factor, source_wait_offset),
