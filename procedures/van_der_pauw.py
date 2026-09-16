@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from procedures.base import Choice, MeasurementProcedure, SMU, parameter
 from instrumentio.constants import B1500_CURRENT_RANGES, B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
-    B1500_AUTO_RANGE, B1500_CH_ALL, B1500_CH_NOCH, B1500_IM_MODE,
+    B1500_CH_ALL, B1500_CH_NOCH, B1500_IM_MODE,
     B1500_VM_MODE, B1500_SWP_IF_SGLLIN,
 )
 from instrumentio.descriptors import describe_status_bits
@@ -193,7 +193,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('voltage_compliance', 'Voltage Compliance (V)', 10.0, float),
         parameter('power_compliance', 'Power Compliance (W)', 0.0, float),
         parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float), help='Applies to both voltage-sensing SMUs. Auto selects a range; Auto ≥ sets a lower bound; Fixed prevents range changes.'),
-        parameter('current_measurement_range', 'Current Meas Range', 1e-9, Choice(B1500_CURRENT_RANGES, float), help='Applies to source and return current measurements. Auto selects a range; Auto ≥ sets a lower bound; Fixed prevents range changes. Note: small ranges may take a long time to test.'),
+        parameter('current_measurement_range', 'Current Range (Source / Meas)', 1e-9, Choice(B1500_CURRENT_RANGES, float), help='Controls both source and measurement ranges. Auto ≥ sets a lower bound; the source always uses one range covering ±Ibias. Auto leaves range selection unrestricted. Note: ranges below 1nA can be slow.'),
         parameter('current_compliance', 'Return Current Compliance (A)', 0.01, float),
         parameter('adc_type', 'ADC Type', 0, Choice(((0, 'High-speed'), (1, 'High-resolution')), int), help='Selects the ADC for all four SMUs. High-speed supports parallel measurements.'),
         parameter('adc_mode', 'ADC Integration Mode', 0,
@@ -370,11 +370,18 @@ class VanDerPauwProcedure(MeasurementProcedure):
                 measurement_wait_offset=self.measurement_wait_offset,
             )
         b1500.force_voltage(ret, 0.0, compliance=self.current_compliance)
+        # Sense voltage at 0 A on the 1 nA source range, avoiding lower ranges.
+        # DI selects the smallest range covering the output, with this floor
+        # (Programming Guide, printed p. 4-73); this is not the measurement range.
+        # 1 nA should be enough to minimize offset currents within reasonable accuracy.
         for channel in (high, low):
-            b1500.force_current(channel, 0.0, compliance=self.voltage_compliance, range_=B1500_AUTO_RANGE)
+            b1500.force_current(channel, 0.0, compliance=self.voltage_compliance, range_=1e-9)
         b1500.reset_timestamp()
+        # WI linear sweeps use one range covering both endpoints, with the
+        # selected current range as a floor (Programming Guide, p. 4-233).
+        # Negative range values mean fixed measurement, not fixed sourcing.
         b1500.set_iv_sweep(
-            source, B1500_SWP_IF_SGLLIN, B1500_AUTO_RANGE,
+            source, B1500_SWP_IF_SGLLIN, self.current_measurement_range,
             -abs(self.ibias), abs(self.ibias), self.points,
             hold=self.hold_time, delay=self.delay_time, second_delay=self.second_delay,
             compliance=self.voltage_compliance, power_compliance=self.power_compliance,
