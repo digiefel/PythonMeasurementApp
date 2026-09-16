@@ -96,8 +96,8 @@ class WGFMUChannel:
 class ProcedureParameter:
     """One setting: UI field, runtime value, CSV metadata and hover help.
 
-    Keep operator explanations in ``help`` beside the declaration. The procedure
-    class docstring supplies its UI Help text; method docstrings explain internals.
+    Keep tooltip explanations in ``help`` beside the declaration. Procedure and
+    method docstrings explain behavior and implementation directly in the source.
     """
     key: str
     label: str

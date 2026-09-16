@@ -1,6 +1,5 @@
 ﻿import collections
 import json
-import inspect
 import logging
 import os
 import threading
@@ -488,7 +487,6 @@ class MainUI:
         self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
         self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
-        ttk.Button(self.selection_frame, text="Help", command=self.show_procedure_help).grid(row=6, column=2, padx=4)
 
         self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
         self.set_home_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
@@ -809,13 +807,6 @@ class MainUI:
 
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
-
-    def show_procedure_help(self):
-        name = self.proc_var.get()
-        procedure = PROCEDURE_CLASSES.get(name)
-        description = procedure.__doc__ if procedure else None
-        messagebox.showinfo(f"{name} — Help", inspect.cleandoc(description) if description else
-                            "No procedure overview is available. Hover over a setting for its help.", parent=self.root)
 
     def render_param_form(self, proc_name):
         # Clear previous widgets

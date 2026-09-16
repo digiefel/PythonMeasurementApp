@@ -58,8 +58,8 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 
 ## Documentation
 
-- **Procedure Help:** the Help button beside the procedure selector displays the
-  selected class docstring. Hover over a setting for its declared parameter help.
+- **Setting tooltips:** hover over a setting for the explanation declared beside
+  its parameter in the procedure source.
 - **Procedure implementation:** docstrings and comments in [procedures/](procedures/)
   explain calculations and sequencing next to the code.
 - **Instrument implementation:** [sessions.py](instrumentio/sessions.py) documents
@@ -80,8 +80,8 @@ features, not procedure copies or implementation plans.
 ## Adding a procedure
 
 Subclass `MeasurementProcedure`, declare `PARAMETERS`, implement `measure(device)`,
-and register the class in `ui.PROCEDURE_CLASSES`. Its class docstring is operator
-help; method docstrings describe implementation details. Parameter declarations
+and register the class in `ui.PROCEDURE_CLASSES`. Document the procedure in its
+class docstring and implementation details beside the relevant methods. Parameter declarations
 provide form fields, defaults, runtime attributes, hover help and CSV metadata.
 Optional `UI_ACTIONS` declare procedure-specific buttons.
 
