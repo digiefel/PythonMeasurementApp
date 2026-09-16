@@ -22,6 +22,7 @@ class ToolTip:
             tw,
             text=text,
             justify=tk.LEFT,
+            wraplength=440,
             background="#ffffe0",
             relief=tk.SOLID,
             borderwidth=1,

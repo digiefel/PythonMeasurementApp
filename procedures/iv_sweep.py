@@ -320,6 +320,7 @@ class IVSweepProcedure(MeasurementProcedure):
                 in_val = low_currents[plotted]
                 runner.plot.append_point("I_pos", v_val, ip_val)
                 runner.plot.append_point("I_neg", v_val, -in_val)
+                # Stream the log-axis source too; a final bulk append makes the view jump.
                 runner.plot.append_point("log_I", v_val, max(abs(ip_val), floor))
                 self._update_resistance_source(runner, v_val)
                 plotted += 1

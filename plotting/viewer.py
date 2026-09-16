@@ -1084,6 +1084,14 @@ class PlotViewer:
                 fit_state.pending_auto_release = False
 
     def _update_live_fits(self) -> None:
+        """Fit mirrored curve data until the user changes the view or data go idle.
+
+        Persistent DearPyGui auto_fit prevents normal pan/zoom; fitting mixed
+        linear/log axes with fit_axis_data was unreliable. Explicit initial limits
+        are released, and live bounds use an 8% margin (at least 0.2 decades for
+        log axes). Release set_axis_limits on the next frame so bounds do not
+        become pan/zoom constraints. User changes lock fitting until configure.
+        """
         now = time.monotonic()
         for plot_state in self._plot_states.values():
             if plot_state.live_fit_locked:

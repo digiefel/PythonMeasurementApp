@@ -1,5 +1,6 @@
 ﻿import collections
 import json
+import inspect
 import logging
 import os
 import threading
@@ -487,6 +488,7 @@ class MainUI:
         self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
         self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
+        ttk.Button(self.selection_frame, text="Help", command=self.show_procedure_help).grid(row=6, column=2, padx=4)
 
         self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
         self.set_home_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
@@ -808,6 +810,13 @@ class MainUI:
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
 
+    def show_procedure_help(self):
+        name = self.proc_var.get()
+        procedure = PROCEDURE_CLASSES.get(name)
+        description = procedure.__doc__ if procedure else None
+        messagebox.showinfo(f"{name} — Help", inspect.cleandoc(description) if description else
+                            "No procedure overview is available. Hover over a setting for its help.", parent=self.root)
+
     def render_param_form(self, proc_name):
         # Clear previous widgets
         for child in self.params_frame.winfo_children():
@@ -823,7 +832,8 @@ class MainUI:
         settings = self.config.get_procedure_settings(proc_name)
         for idx, param in enumerate(fields):
             key, label, kind = param.key, param.label, param.kind
-            ttk.Label(self.params_frame, text=label).grid(row=idx, column=0, sticky="w", padx=4, pady=2)
+            field_label = ttk.Label(self.params_frame, text=label)
+            field_label.grid(row=idx, column=0, sticky="w", padx=4, pady=2)
             default_val = self.procedure_defaults.get(proc_name, {}).get(key, "")
             val = settings.get(key, default_val)
             if kind is bool:
@@ -833,6 +843,7 @@ class MainUI:
                 var = tk.BooleanVar(value=bool(bool_val))
                 chk = ttk.Checkbutton(self.params_frame, variable=var)
                 chk.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
+                field_widget = chk
                 self.param_vars[key] = (var, param)
             elif kind in (SMU, OptionalSMU, WGFMUChannel):
                 label_val = kind.display_value(val)
@@ -844,6 +855,7 @@ class MainUI:
                     values = [label_val] + values
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                field_widget = combo
                 self.param_vars[key] = (var, param)
             elif isinstance(kind, Choice):
                 options = self._choice_options_for_param(proc_name, param)
@@ -854,13 +866,19 @@ class MainUI:
                     labels = [label_val] + labels
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=labels, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                field_widget = combo
                 self.param_vars[key] = (var, param)
             else:
                 var = tk.StringVar(value=str(val))
                 entry = ttk.Entry(self.params_frame, textvariable=var)
                 entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                field_widget = entry
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
+
+            if param.help:
+                attach_tooltip(field_label, param.help)
+                attach_tooltip(field_widget, param.help)
 
         self._bind_current_range_filter(proc_name)
 

@@ -5,6 +5,11 @@ command buffer. Device clear restores initial settings (SMU switches open,
 2-88). B1530A Guide 4-50: initialize resets WGFMU channels; abort alone retains
 their voltage (4-9). Exit success means these operations succeeded, not a
 measurement of the physical output voltage.
+
+References are local: docs/B1500 Programmers Guide 9018-01851.pdf, printed
+pp. 4-33–34 (AB), 2-88 (device-clear defaults), 4-161 (*OPC?); and
+docs/B1500 WGFMU Guide.pdf, pp. 4-9 and 4-50. The helper must run only after
+the old owner exits; otherwise a stale command could reapply bias after clear.
 """
 
 import ctypes as ct

@@ -9,7 +9,7 @@ thread is never blocked by rendering.
 
 ```
 WORKER THREAD          MAIN PROCESS (Tk)         VIEWER PROCESS (DearPyGui)
-Procedure.run()        PlotBridge                 DearPyGui render loop
+Procedure.measure()        PlotBridge                 DearPyGui render loop
   |                      |                          |
   |-- runner.plot -----► append_point/many/batch    |
   |                      |-- store in DataSource    |
@@ -89,7 +89,7 @@ This is a reactive/observable pattern: sources are observables, elements are obs
 
 ## Save handshake
 
-`save_png` is the only blocking bridge call:
+`save_png` waits for an acknowledgement:
 
 1. Main process resolves output path (primary, then fallback on directory error).
 2. Main sends `save_png` command with `req_id`.
@@ -102,12 +102,11 @@ This is a reactive/observable pattern: sources are observables, elements are obs
 
 | File | Process | Role |
 |------|---------|------|
-| `plot_elements.py` | Both | Dataclass definitions: `PlotDef`, `AxisDef`, `Curve`, `Histogram`, `LinearFit`, `HLine`, `VLine`, `DataSource`. |
+| `elements.py` | Both | Dataclass definitions: `PlotDef`, `AxisDef`, `Curve`, `Histogram`, `LinearFit`, `HLine`, `VLine`, `DataSource`. |
 | `stats.py` | Both | Shared statistical functions (`linear_fit`, etc.). Single implementation used by both viewer and procedures. |
-| `plot_bridge.py` | Main | Stores data sources locally. Coalesces deltas. Manages cmd/rsp queues. Exposes procedure-facing API. |
-| `viewer_dpg.py` | Viewer | DearPyGui render loop. Builds ImPlot widgets from PlotDef specs. Applies data deltas. Handles save export. |
-| `dpg_style.py` | Viewer | Color/linestyle/marker translation. Theme constants. |
-| `dpg_export.py` | Viewer | Framebuffer capture and PNG validation. |
+| `bridge.py` | Main | Stores data sources locally. Coalesces deltas. Manages cmd/rsp queues. Exposes procedure-facing API. |
+| `viewer.py` | Viewer | DearPyGui render loop. Builds ImPlot widgets from PlotDef specs. Applies data deltas. Handles save export. |
+| `style.py` | Viewer | Color/linestyle/marker translation. Theme constants. |
+| `export.py` | Viewer | Framebuffer capture and PNG validation. |
 
-`plot_manager.py` is deleted. The temperature plot (`ui_temperature.py`) stays in Tk
-and keeps its own matplotlib embed.
+The temperature plot (`ui_temperature.py`) stays in Tk and uses matplotlib.

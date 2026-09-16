@@ -94,11 +94,17 @@ class WGFMUChannel:
 
 @dataclass(frozen=True)
 class ProcedureParameter:
+    """One setting: UI field, runtime value, CSV metadata and hover help.
+
+    Keep operator explanations in ``help`` beside the declaration. The procedure
+    class docstring supplies its UI Help text; method docstrings explain internals.
+    """
     key: str
     label: str
     default: Any = ""
     kind: Any = str
     attr: str | None = None
+    help: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,8 +120,8 @@ def action(label: str, callback: str, *args, section: str | None = None, tooltip
     return ProcedureAction(label=label, callback=callback, args=tuple(args), section=section, tooltip=tooltip)
 
 
-def parameter(key: str, label: str, default: Any = "", kind: Any = str, attr: str | None = None) -> ProcedureParameter:
-    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr)
+def parameter(key: str, label: str, default: Any = "", kind: Any = str, attr: str | None = None, *, help: str | None = None) -> ProcedureParameter:
+    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr, help=help)
 
 
 class MeasurementProcedure(ABC):
