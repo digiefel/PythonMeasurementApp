@@ -15,7 +15,7 @@ import sys
 IO_TIMEOUT_MS = 2000
 PROCESS_TIMEOUT_S = 15
 VI_ATTR_TMO_VALUE = 0x3FFF001A
-
+VI_ERROR_TMO = -1073807339
 
 def _load_visa():
     visa = ct.WinDLL(os.environ.get("PYMEASUREMENT_VISA32_DLL", r"C:\Windows\SysWOW64\visa32.dll"))
@@ -37,6 +37,8 @@ def _load_visa():
 
 
 def _check(status, operation):
+    if status == VI_ERROR_TMO:
+        raise RuntimeError(f"{operation} timed out before VISA confirmed completion (0xBFFF0015)")
     if status < 0:
         raise RuntimeError(f"{operation} failed: {status} (0x{status & 0xffffffff:08X})")
 
@@ -44,7 +46,8 @@ def _check(status, operation):
 def _write(visa, session, command):
     data = (command + "\n").encode("ascii")
     count = ct.c_uint32()
-    _check(visa.viWrite(session, data, len(data), ct.byref(count)), command)
+    status = visa.viWrite(session, data, len(data), ct.byref(count))
+    _check(status, f"Sending {command}")
     if count.value != len(data):
         raise RuntimeError(f"Incomplete write of {command}: {count.value}/{len(data)} bytes")
 
@@ -102,9 +105,16 @@ def shutdown(address, *, wgfmu=False):
 def main():
     try:
         shutdown(sys.argv[1], wgfmu="--wgfmu" in sys.argv[2:])
-    except Exception:
-        import traceback
-        traceback.print_exc()
+    except Exception as exc:
+        # Preserve the failed operations across the process boundary. The outer
+        # ExceptionGroup message alone hides whether reset, acknowledgement, or
+        # connection cleanup failed.
+        def details(error):
+            if isinstance(error, BaseExceptionGroup):
+                return "; ".join(details(child) for child in error.exceptions)
+            return str(error)
+
+        print(details(exc), file=sys.stderr)
         return 1
     return 0
 

@@ -260,7 +260,8 @@ class RemoteB1500Session(_Proxy):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode:
-            raise RuntimeError(f"Emergency shutdown failed ({result.returncode}): {result.stderr}")
+            detail = result.stderr.strip() or f"reset helper exited with code {result.returncode}"
+            raise InstrumentError(f"Abort cleanup failed: {detail}")
         logger.info("Instrument emergency reset completed at %s", self.address)
 
     def close(self):
@@ -286,10 +287,11 @@ class RemoteB1500Session(_Proxy):
                 logger.error("Instrument executor unresponsive; terminating pid=%s", self._process.pid)
                 self._process.kill()
                 self._process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as exc:
             logger.exception("Could not terminate the instrument process")
             self._shutdown_error = self._failure = InstrumentError(
-                "Instrument shutdown failed; output state could not be confirmed."
+                f"Could not stop the instrument-control process: {exc}. "
+                "The emergency reset could not be attempted."
             )
             raise self._shutdown_error from None
         finally:
@@ -308,9 +310,17 @@ class RemoteB1500Session(_Proxy):
         if self._terminal is None or self._terminal[0] == "error":
             try:
                 self._emergency_shutdown()
-            except Exception:
+            except Exception as exc:
                 logger.exception("Instrument emergency shutdown failed at %s", self.address)
-                self._shutdown_error = self._failure = InstrumentError(
-                    "Instrument shutdown failed; output state could not be confirmed."
-                )
+                if isinstance(exc, subprocess.TimeoutExpired):
+                    failure = InstrumentError(
+                        f"The emergency reset helper did not finish within {PROCESS_TIMEOUT_S} seconds. "
+                        "Pausing that process in the debugger can cause this timeout. "
+                        "Check whether the instrument's voltage/current outputs are off."
+                    )
+                elif isinstance(exc, InstrumentError):
+                    failure = exc
+                else:
+                    failure = InstrumentError(f"Could not complete the emergency instrument reset: {exc}")
+                self._shutdown_error = self._failure = failure
                 raise self._shutdown_error from None

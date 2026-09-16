@@ -33,7 +33,7 @@ from instrumentio.constants import (
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
 from runner import MeasurementAbortRequested, MeasurementRunner
-from instrumentio.bridge import InstrumentCancelled
+from instrumentio.bridge import InstrumentCancelled, InstrumentError
 from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
 from procedures.van_der_pauw import VanDerPauwProcedure
@@ -170,6 +170,7 @@ class MainUI:
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
         self._init_prober_state()
+        self.log("================ APPLICATION INITIALIZED ================")
 
     def _format_smu_channel_map(self, channel_map: dict | None = None) -> str:
         channel_map = channel_map or SMU_CHANNEL_MAP
@@ -1595,6 +1596,12 @@ class MainUI:
                     self.runner.run_devices(chip_id, site, subsite, devices_to_run, proc_class, settings)
             except MeasurementAbortRequested:
                 self._post_log('Run aborted by user.')
+            except InstrumentError as e:
+                # The run is already stopped. Preserve the diagnostic without
+                # turning a handled instrument failure into an unhandled thread
+                # exception (and another debugger stop).
+                logger.error("Run stopped by an instrument error: %s", e, exc_info=True)
+                self._post_log(f'Run stopped: {e}')
             except Exception as e:
                 self._post_log(f'Run error: {e}')
                 raise
