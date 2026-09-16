@@ -40,12 +40,13 @@ class MeasurementRunner:
         self.temp_phase_cb: Optional[Callable[[str, int], None]] = None
         self.temp_sample_cb: Optional[Callable[[float, float, int, str], None]] = None
         self.temp_device_done_cb: Optional[Callable[[float, int, int, int], None]] = None
-        self.b1500: RemoteB1500Session
+        self.b1500: RemoteB1500Session | None = None
         self.prober_ctrl = ProberController(self.log)
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
         self.current_temp_c: Optional[float] = None
+        self.manual_temp_k: Optional[float] = None
         self._current_temp_step: Optional[int] = None
         # Temperature compensation coefficients (um per C)
         self.temp_comp_coeffs_xyz = (None, None, None)
@@ -60,6 +61,7 @@ class MeasurementRunner:
         self.skip_device_event = threading.Event()
         self.device_progress_cb: Optional[Callable[[int, int, float], None]] = None
         atexit.register(self.safe_stop)
+        atexit.register(self.close_b1500)
     
     def log(self, msg):
         if self.log_callback:
@@ -70,21 +72,38 @@ class MeasurementRunner:
 
     def get_b1500(self, address: str) -> RemoteB1500Session:
         """Get or create the B1500 session."""
-        if not getattr(self, 'b1500', None):
+        if self.b1500 is not None and not self.b1500.is_alive():
+            self.b1500 = None
+        if self.b1500 is None:
             self.log(f'Opening B1500 session at {address}')
             self.b1500 = RemoteB1500Session(address)
         return self.b1500
+
+    def close_b1500(self):
+        b1500 = self.b1500
+        self.b1500 = None
+        if b1500 is None:
+            return
+        try:
+            b1500.close()
+        except Exception as exc:
+            self.log(f"Warning: closing B1500 bridge failed: {exc}")
 
     
     def safe_stop(self):
         """
         Universal stop method.
-        Only sets the stop_event flag. The worker thread handles the actual
-        instrument abort to avoid GPIB bus contention.
+
+        Sets the stop_event flag and fires an out-of-band instrument abort. The
+        out-of-band abort (device clear + AB on an independent VISA session)
+        halts the measurement immediately, even while the bridge worker is
+        blocked inside a sweep read; the worker thread then unwinds via
+        check_stop.
         """
         self.stop_event.set()
         self.log("Stop requested.")
-        
+        self._abort_instrument_out_of_band()
+
         # Separate prober for safety (this is a different bus, OK to call here)
         if self.is_prober_available():
             try:
@@ -99,10 +118,44 @@ class MeasurementRunner:
             except Exception:
                 pass
 
+    def _abort_instrument_out_of_band(self):
+        """Reset the instrument to its safe state, then drop the bridge worker.
+
+        The worker may be blocked inside a sweep read and unable to service an
+        in-band abort, so a separate process issues device clear -> *RST
+        directly: the device clear ends the operation, and *RST returns the
+        initial settings, in which all output switches are OFF.
+
+        Killing the worker afterwards is what guarantees the UI recovers -- it
+        makes the blocked RPC fail immediately so the run thread unwinds and
+        resets the buttons, instead of waiting out the RPC timeout.
+        """
+        b1500 = self.b1500
+        if b1500 is None:
+            return
+        try:
+            code = b1500.abort_out_of_band()
+        except Exception as exc:
+            self.log(
+                f"CRITICAL: instrument safe-shutdown failed ({exc}). "
+                "Verify the instrument is at 0 V before approaching the probe station."
+            )
+        else:
+            if code == 0:
+                self.log("Instrument reset to initial settings (all output switches OFF).")
+            else:
+                self.log(
+                    f"CRITICAL: instrument safe-shutdown returned code {code}. "
+                    "Verify the instrument is at 0 V before approaching the probe station."
+                )
+        b1500.kill()
+        self.b1500 = None
+
     def safe_skip_device(self):
         """Signal the runner to abort the current device and continue with the next."""
         self.skip_device_event.set()
         self.log("Skip requested: aborting current device and proceeding to next.")
+        self._abort_instrument_out_of_band()
         if self.is_prober_available():
             try:
                 separated = self.prober_ctrl.separation()
@@ -292,8 +345,9 @@ class MeasurementRunner:
         """Configure the figure with temperature appended to the title if available."""
         if self.plot is None:
             return
-        if self.current_temp_c is not None:
-            title = f"{title} ({self.current_temp_c + 273.15:.0f}K)"
+        temp_k = self.current_temp_k
+        if temp_k is not None:
+            title = f"{title} ({temp_k:.0f}K)"
         self.plot.configure(
             title,
             plots,
@@ -301,6 +355,19 @@ class MeasurementRunner:
             row_ratios=row_ratios,
             column_ratios=column_ratios,
         )
+
+    @property
+    def current_temp_k(self) -> Optional[float]:
+        if self.current_temp_c is not None:
+            return self.current_temp_c + 273.15
+        return self.manual_temp_k
+
+    def set_manual_temp_k(self, temp_k: Optional[float]):
+        if temp_k is None:
+            self.manual_temp_k = None
+            return
+        self.manual_temp_k = float(temp_k)
+
     def report_status(self, status_info: Optional[Dict[str, Any]]):
         """
         Surface measurement/driver status (non-zero codes) to the UI.
@@ -505,11 +572,12 @@ class MeasurementRunner:
         except (MeasurementAbortRequested, MeasurementSkipRequested):
             raise
         except Exception as e:
-            try:
-                self.b1500.zero_output(B1500_CH_ALL)
-                self.b1500.set_switch(B1500_CH_ALL, False)
-            except Exception:
-                pass
+            if self.b1500 is not None and self.b1500.is_alive():
+                try:
+                    self.b1500.zero_output(B1500_CH_ALL)
+                    self.b1500.set_switch(B1500_CH_ALL, False)
+                except Exception:
+                    pass
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
         finally:

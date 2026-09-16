@@ -1,6 +1,7 @@
 """High-level instrument sessions built on top of low-level ctypes bindings."""
 
 import ctypes as ct
+import os
 import warnings
 
 from .bindings import (
@@ -46,6 +47,13 @@ from .descriptors import describe_data_type, describe_data_type_short, describe_
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _module_has_asu(model: str) -> bool:
     text = (model or "").upper()
     return "E5288" in text or "ASU" in text
@@ -84,9 +92,20 @@ class B1500Session:
         self.gpib_addr = gpib_addr
         self.session = ViSession()
         self._wgfmu = None  # Lazy-loaded WGFMU session
-        ret = dll_b1500.agb1500_init(gpib_addr.encode(), 1, 1, ct.byref(self.session))
+        id_query = _env_bool("PYMEASUREMENT_B1500_INIT_ID_QUERY", True)
+        reset_device = _env_bool("PYMEASUREMENT_B1500_INIT_RESET", True)
+        ret = dll_b1500.agb1500_init(
+            gpib_addr.encode(),
+            1 if id_query else 0,
+            1 if reset_device else 0,
+            ct.byref(self.session),
+        )
         if ret != 0:
-            raise RuntimeError(f"B1500 init failed: {ret}")
+            status_hex = f"0x{(int(ret) + (1 << 32)) & 0xffffffff:08X}"
+            raise RuntimeError(
+                f"B1500 init failed: {ret} ({status_hex}) "
+                f"(id_query={id_query}, reset_device={reset_device})"
+            )
 
     def _visa_write(self, command: str):
         buf = command.encode("ascii")
@@ -249,6 +268,35 @@ class B1500Session:
         """Control ASU LED (optional helper)."""
         ret = dll_b1500.agb1500_asuLed(self.session, channel, 1 if on else 0)
         self._check_ret(ret, "ASU LED")
+
+    def set_adc(self, adc_type, mode, N, coeff=0):
+        """Set integration/averaging parameters for one ADC type (HSADC or HRADC).
+
+        adc_type: 0=HSADC, 1=HRADC
+        mode: 0=Auto, 1=Manual (N averages per point), 2=PLC (N power-line cycles per point)
+        N: averaging count (1-1023 for Manual) or PLC count (0-100 for PLC); ignored in Auto
+        coeff: averaging coefficient for Auto mode (0 = instrument default)
+        """
+        ret = dll_b1500.agb1500_setAdc(self.session, adc_type, mode, N, coeff)
+        self._check_ret(ret, "Set ADC")
+
+    def set_filter(self, channel, enabled):
+        """Enable or disable the anti-aliasing filter on a channel (or all channels).
+
+        channel: use B1500_CH_ALL (0) for all channels, or a specific channel number
+        enabled: True to enable, False to disable
+        """
+        ret = dll_b1500.agb1500_setFilter(self.session, channel, 1 if enabled else 0)
+        self._check_ret(ret, "Set filter")
+
+    def set_adc_type(self, channel, adc_type):
+        """Assign the ADC type used for measurements on a channel.
+
+        channel: channel number
+        adc_type: 0=HSADC (High-Speed), 1=HRADC (High-Resolution)
+        """
+        ret = dll_b1500.agb1500_setAdcType(self.session, channel, adc_type)
+        self._check_ret(ret, "Set ADC type")
 
     def set_iv_sweep(self, channel, sweep_mode, range_, start, stop, points, hold=0.0, delay=0.0, second_delay=0.0, compliance=10.0, power_compliance=0.0):
         """

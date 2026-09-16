@@ -28,6 +28,7 @@ class TemperatureUI:
         self.setpoint_var = tk.StringVar()
         self.sweep_var = tk.StringVar()
         self.wait_var = tk.StringVar(value="0")
+        self.manual_temp_k_var = tk.StringVar(value="298")
         self.value_var = tk.StringVar(value="--")
         self.setpoint_display_var = tk.StringVar(value="--")
 
@@ -43,7 +44,10 @@ class TemperatureUI:
         self.profile_canvas = None
         self.profile_widget = None
         self.temp_frame = None
+        self.temp_label_frame = None
         self.temp_enable_cb = None
+        self.manual_temp_entry = None
+        self.manual_temp_unit_label = None
         self.mode_cb = None
         self.setpoint_entry = None
         self.sweep_entry = None
@@ -54,8 +58,19 @@ class TemperatureUI:
 
     # --- UI construction ---
     def build_panel(self, parent_frame: ttk.Frame):
-        self.temp_enable_cb = ttk.Checkbutton(parent_frame, text="Temperature", variable=self.enabled_var, command=self._toggle_controls)
-        self.temp_frame = ttk.LabelFrame(parent_frame, labelwidget=self.temp_enable_cb)
+        self.temp_label_frame = ttk.Frame(parent_frame)
+        self.temp_enable_cb = ttk.Checkbutton(
+            self.temp_label_frame,
+            text="Temperature",
+            variable=self.enabled_var,
+            command=self._toggle_controls,
+        )
+        self.temp_enable_cb.grid(row=0, column=0, sticky="w")
+        self.manual_temp_entry = ttk.Entry(self.temp_label_frame, textvariable=self.manual_temp_k_var, width=7)
+        self.manual_temp_entry.grid(row=0, column=1, sticky="w", padx=(8, 2))
+        self.manual_temp_unit_label = ttk.Label(self.temp_label_frame, text="K")
+        self.manual_temp_unit_label.grid(row=0, column=2, sticky="w")
+        self.temp_frame = ttk.LabelFrame(parent_frame, labelwidget=self.temp_label_frame)
         self.temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
         self.temp_frame.grid_columnconfigure(0, weight=1)
         self.temp_frame.grid_columnconfigure(1, weight=1)
@@ -145,6 +160,15 @@ class TemperatureUI:
             messagebox.showerror("Invalid temperature wait", "Wait after stabilization must be a number.")
             return None
         temps = []
+        manual_temp_k = None
+        if not self._prober_available:
+            try:
+                manual_temp_k = float(self.manual_temp_k_var.get() or 298.0)
+                if manual_temp_k <= 0:
+                    raise ValueError
+            except Exception:
+                messagebox.showerror("Invalid temperature", "Manual temperature must be a positive value in K.")
+                return None
         if enabled:
             if not self._prober_available:
                 messagebox.showerror("Temperature", "Temperature control requires a connected prober.")
@@ -159,6 +183,7 @@ class TemperatureUI:
             except Exception:
                 messagebox.showerror("Invalid temperature values", "Provide numeric temperature values in °C.")
                 return None
+        self.runner.set_manual_temp_k(manual_temp_k)
         return enabled, temps, wait_after, mode
 
     def start_run(self, planned_temps, wait_after_s: float, device_count: int = 1):
@@ -185,6 +210,8 @@ class TemperatureUI:
             self.sweep_var.set(str(last_sel.get('temperature_sweep_c', '')))
         if 'temperature_wait_after_s' in last_sel:
             self.wait_var.set(str(last_sel.get('temperature_wait_after_s', 0.0)))
+        if 'manual_temperature_k' in last_sel:
+            self.manual_temp_k_var.set(str(last_sel.get('manual_temperature_k', '298')))
         self._update_setpoint_display()
         self._toggle_controls()
 
@@ -195,6 +222,7 @@ class TemperatureUI:
             'temperature_setpoint_c': self.setpoint_var.get(),
             'temperature_sweep_c': self.sweep_var.get(),
             'temperature_wait_after_s': self.wait_var.get(),
+            'manual_temperature_k': self.manual_temp_k_var.get(),
         }
 
     # --- Internal helpers ---
@@ -216,6 +244,11 @@ class TemperatureUI:
         entry_state = "normal" if effective_enabled else "disabled"
         if self.temp_enable_cb is not None:
             self.temp_enable_cb.configure(state="normal" if self._prober_available else "disabled")
+        manual_state = "disabled" if self._prober_available else "normal"
+        if self.manual_temp_entry is not None:
+            self.manual_temp_entry.configure(state=manual_state)
+        if self.manual_temp_unit_label is not None:
+            self.manual_temp_unit_label.configure(state=manual_state)
         self.mode_cb.configure(state=mode_state)
         if mode == "Setpoint":
             self.setpoint_entry_label.grid()

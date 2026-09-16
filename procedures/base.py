@@ -301,20 +301,17 @@ class MeasurementProcedure(ABC):
         return active
 
     def check_stop(self, b1500: RemoteB1500Session):
-        """Check if stop or skip was requested, abort hardware if so, then raise.
+        """Raise if stop or skip was requested. ABORT takes priority over SKIP.
 
-        Runs in the worker thread — the only thread that should talk to the
-        instrument to avoid GPIB bus contention. ABORT takes priority over SKIP.
+        The instrument is already back in its safe state by the time this runs:
+        safe_stop/safe_skip_device reset it out-of-band before setting the flag,
+        because an in-band abort cannot be serviced while the worker is blocked
+        inside a sweep read. So this only has to unwind the procedure.
         """
         abort = self.runner.stop_event.is_set()
         skip = self.runner.skip_device_event.is_set()
         if not abort and not skip:
             return
-        if b1500 is not None:
-            try:
-                b1500.abort_measure()
-            except Exception:
-                pass
         if abort:
             raise MeasurementAbortRequested("Measurement aborted by user")
         raise MeasurementSkipRequested("Device skipped by user")
@@ -436,9 +433,7 @@ class MeasurementProcedure(ABC):
         site_name = site.name
         subsite_name = subsite.name
         timestamp = self.get_run_timestamp()
-        temp_k = None
-        if self.runner.current_temp_c is not None:
-            temp_k = self.runner.current_temp_c + 273.15
+        temp_k = self.runner.current_temp_k
         base = f"{chip}_{site_name}_{subsite_name}_{device_name}_{timestamp}"
         if temp_k is not None:
             base = f"{base}_{temp_k:.0f}K"
@@ -464,6 +459,9 @@ class MeasurementProcedure(ABC):
         if self.runner.current_temp_c is not None:
             lines.append(f"# Temperature_C: {self.runner.current_temp_c:.6g}")
             lines.append(f"# Temperature_K: {self.runner.current_temp_c + 273.15:.6g}")
+        elif self.runner.manual_temp_k is not None:
+            lines.append(f"# Temperature_K: {self.runner.manual_temp_k:.6g}")
+            lines.append("# Temperature_Source: manual")
 
         lines.append("# Parameters:")
         seen = set()

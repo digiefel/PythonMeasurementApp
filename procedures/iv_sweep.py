@@ -3,11 +3,13 @@ import os
 
 from plotting import PlotDef, Curve, HLine, LinearFit, linear_fit
 from procedures.base import Choice, MeasurementProcedure, MeasurementAbortRequested, OptionalSMU, SMU, parameter
-from instrumentio.constants import B1500_CURRENT_RANGES
+from instrumentio.constants import B1500_ADC_MODES, B1500_ADC_TYPES, B1500_CURRENT_RANGES
 from instrumentio.codes import (
+    B1500_ADC_MODE_AUTO,
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
     B1500_CH_NOCH,
+    B1500_HSADC,
     B1500_IM_MODE,
     B1500_LAST_START,
     B1500_STOP_DISABLE,
@@ -43,6 +45,10 @@ class IVSweepProcedure(MeasurementProcedure):
         parameter('hold_time', 'Hold Time (s)', 0.0, float),
         parameter('delay_time', 'Delay Time (s)', 0.0, float),
         parameter('second_delay', 'Second Delay (s)', 0.0, float),
+        parameter('adc_mode', 'ADC Integration Mode', B1500_ADC_MODE_AUTO, Choice(B1500_ADC_MODES, int)),
+        parameter('adc_N', 'ADC Count (Manual/PLC)', 1, int),
+        parameter('adc_type', 'ADC Type', B1500_HSADC, Choice(B1500_ADC_TYPES, int)),
+        parameter('filter_enabled', 'Anti-Aliasing Filter', False, bool),
     )
 
     def measure(self, device):
@@ -93,6 +99,22 @@ class IVSweepProcedure(MeasurementProcedure):
             self.log("Butterfly sweep ignores Start Voltage and starts from 0 V.")
 
         self.prepare_asu_channels(b1500, (high, low, sense_high, sense_low), self.current_range)
+
+        adc_type_label = next((lbl for val, lbl in B1500_ADC_TYPES if val == self.adc_type), str(self.adc_type))
+        adc_mode_label = next((lbl for val, lbl in B1500_ADC_MODES if val == self.adc_mode), str(self.adc_mode))
+        self.log(
+            f"ADC: {adc_type_label}, mode={adc_mode_label}, N={self.adc_N}; "
+            f"filter={'on' if self.filter_enabled else 'off'}"
+        )
+        # Configure the integration time/averaging for the selected ADC type...
+        b1500.set_adc(self.adc_type, self.adc_mode, self.adc_N)
+        # ...then assign that ADC type to every measured channel. Without this
+        # AAD step the channels stay on the post-reset high-speed ADC default and
+        # the integration setting above has no effect on the sweep.
+        for ch in (high, low, sense_high, sense_low):
+            if ch is not None:
+                b1500.set_adc_type(ch, self.adc_type)
+        b1500.set_filter(B1500_CH_ALL, self.filter_enabled)
 
         # make sure that all channels are open unless otherwise configured
         b1500.set_switch(B1500_CH_ALL, False)

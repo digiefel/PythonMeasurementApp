@@ -215,6 +215,17 @@ B1500_CMU_INTEGRATION_MODES = [
     (2, "PLC"),
 ]
 
+B1500_ADC_MODES = [
+    (0, "Auto"),
+    (1, "Manual"),
+    (2, "PLC"),
+]
+
+B1500_ADC_TYPES = [
+    (0, "HSADC (High-Speed)"),
+    (1, "HRADC (High-Resolution)"),
+]
+
 # MFCMU measurement range argument for sweepCv/spotCmuMeas.
 # Values are representative inputs for each documented range bucket.
 B1500_CMU_SWEEP_RANGES = [

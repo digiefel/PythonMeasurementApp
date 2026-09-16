@@ -10,11 +10,55 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import traceback
 
 from app_logging import configure_logging
 
 logger = logging.getLogger(__name__)
+
+
+class BridgeLock:
+    def __init__(self, address: str):
+        safe_address = "".join(ch if ch.isalnum() else "_" for ch in address)
+        self.path = os.path.join(tempfile.gettempdir(), f"pymeasurement_b1500_{safe_address}.lock")
+        self.file = None
+
+    def acquire(self) -> None:
+        if os.name != "nt":
+            return
+        import msvcrt
+
+        self.file = open(self.path, "a+")
+        self.file.seek(0)
+        try:
+            msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            self.file.close()
+            self.file = None
+            raise RuntimeError(
+                "B1500 bridge is already in use by another worker process. "
+                "Close the other app instance or wait for its run to finish."
+            ) from exc
+        self.file.seek(0)
+        self.file.truncate()
+        self.file.write(str(os.getpid()))
+        self.file.flush()
+
+    def release(self) -> None:
+        if self.file is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
+        finally:
+            try:
+                self.file.close()
+            finally:
+                self.file = None
 
 
 def _emit(message: dict) -> None:
@@ -30,10 +74,15 @@ def _emit_error(req_id: str | None, message: str) -> None:
     _emit({"type": "error", "req_id": req_id, "payload": {"message": message}})
 
 
+def _emit_progress(req_id: str | None, message: str) -> None:
+    _emit({"type": "progress", "req_id": req_id, "payload": {"message": message}})
+
+
 def main() -> None:
     configure_logging()
     logger.info("Instrument bridge worker process started.")
     session = None
+    session_lock = None
     try:
         for raw in sys.stdin:
             line = raw.strip()
@@ -51,8 +100,28 @@ def main() -> None:
                     from instrumentio.sessions import B1500Session
 
                     if session is not None:
+                        _emit_progress(req_id, "Closing existing B1500 session before re-initialization")
                         session.close()
-                    session = B1500Session(payload["address"])
+                        session = None
+                    if session_lock is not None:
+                        session_lock.release()
+                        session_lock = None
+                    session_lock = BridgeLock(payload["address"])
+                    session_lock.acquire()
+                    init_id_query = os.environ.get("PYMEASUREMENT_B1500_INIT_ID_QUERY", "1")
+                    init_reset = os.environ.get("PYMEASUREMENT_B1500_INIT_RESET", "1")
+                    _emit_progress(
+                        req_id,
+                        f"Starting B1500 init at {payload['address']} "
+                        f"(id_query={init_id_query}, reset={init_reset})",
+                    )
+                    try:
+                        session = B1500Session(payload["address"])
+                    except Exception:
+                        session_lock.release()
+                        session_lock = None
+                        raise
+                    _emit_progress(req_id, f"B1500 init completed at {payload['address']}")
                     _emit({"type": "ack", "req_id": req_id, "payload": {}})
                     continue
 
@@ -168,6 +237,9 @@ def main() -> None:
                     if session is not None:
                         session.close()
                         session = None
+                    if session_lock is not None:
+                        session_lock.release()
+                        session_lock = None
                     _emit({"type": "ack", "req_id": req_id, "payload": {}})
                     break
 
@@ -181,6 +253,8 @@ def main() -> None:
                 session.close()
             except Exception:
                 pass
+        if session_lock is not None:
+            session_lock.release()
 
 
 if __name__ == "__main__":

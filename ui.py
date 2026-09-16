@@ -1612,6 +1612,7 @@ class MainUI:
                 self.runner.cancel_queue_event.clear()
                 self.runner.skip_device_event.clear()
                 self.runner.device_progress_cb = None
+                self.runner.close_b1500()
                 self._post(lambda: None)  # ensure main loop wakes
                 self._run_thread = None
                 self._post(self._set_running_state, False)
@@ -1995,6 +1996,7 @@ class MainUI:
         self.runner.safe_stop()
         if self._run_thread and self._run_thread.is_alive():
             self._run_thread.join(timeout=10)
+        self.runner.close_b1500()
         self.plot_bridge.shutdown()
         self.root.destroy()
 

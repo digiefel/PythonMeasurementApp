@@ -31,6 +31,32 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+INIT_TIMEOUT_S = float(os.environ.get("PYMEASUREMENT_BRIDGE_INIT_TIMEOUT_S", "10.0"))
+DEFAULT_CALL_TIMEOUT_S = float(os.environ.get("PYMEASUREMENT_BRIDGE_CALL_TIMEOUT_S", "10.0"))
+
+B1500_CALL_TIMEOUTS = {
+    "run_cmu_correction": 120.0,
+    "run_cmu_phase_compensation": 120.0,
+    "sweep_iv": 120.0,
+    "sweep_miv": 120.0,
+    "sweep_cv": 120.0,
+    "stream_cv_sweep": 120.0,
+    # start_measure does not return until the whole sweep completes, so it must
+    # tolerate long integration (e.g. high-resolution ADC / PLC averaging).
+    # Without this it falls back to the 10 s default and the worker is killed
+    # mid-sweep, orphaning a running measurement on the instrument.
+    "start_measure": 600.0,
+    "read_data": 30.0,
+}
+
+WGFMU_CALL_TIMEOUTS = {
+    "execute": 30.0,
+    "abort": 10.0,
+    "wait_until_completed": 120.0,
+    "waitUntilCompleted": 120.0,
+}
+
+
 def _default_worker_python() -> Path:
     scripts_dir = "Scripts" if os.name == "nt" else "bin"
     python_name = "python.exe" if os.name == "nt" else "python"
@@ -138,7 +164,7 @@ class RemoteWGFMUProxy:
             return self._parent._send_and_wait(
                 "wgfmu_call",
                 {"method": name, "args": list(args), "kwargs": kwargs},
-                timeout_s=30.0,
+                timeout_s=WGFMU_CALL_TIMEOUTS.get(name, DEFAULT_CALL_TIMEOUT_S),
             )
 
         return _call
@@ -155,6 +181,7 @@ class RemoteB1500Session:
         cmd = [worker_python, "-u", "-m", worker_module]
 
         self._worker_python = worker_python
+        self._address = address
         self._process = subprocess.Popen(
             cmd,
             cwd=str(_project_root()),
@@ -171,7 +198,9 @@ class RemoteB1500Session:
         self._write_lock = threading.Lock()
         self._stderr_lock = threading.Lock()
         self._stderr_lines: deque[str] = deque(maxlen=200)
+        self._progress_lines: deque[str] = deque(maxlen=50)
         self._wgfmu_proxy: RemoteWGFMUProxy | None = None
+        self._broken = False
 
         self._stdout_thread = threading.Thread(target=self._stdout_reader, daemon=True)
         self._stderr_thread = threading.Thread(target=self._stderr_reader, daemon=True)
@@ -179,7 +208,7 @@ class RemoteB1500Session:
         self._stderr_thread.start()
 
         try:
-            self._send_and_wait("init_b1500", {"address": address}, timeout_s=10.0)
+            self._send_and_wait("init_b1500", {"address": address}, timeout_s=INIT_TIMEOUT_S)
         except Exception:
             self.close()
             raise
@@ -189,6 +218,44 @@ class RemoteB1500Session:
         if self._wgfmu_proxy is None:
             self._wgfmu_proxy = RemoteWGFMUProxy(self)
         return self._wgfmu_proxy
+
+    def abort_out_of_band(self) -> int:
+        """Reset the instrument to its safe state without going through the worker.
+
+        The worker is single-threaded and stays blocked inside the sweep read
+        for the whole measurement, so an in-band ``abort_measure`` RPC cannot be
+        processed while it matters. This runs a short separate 32-bit process
+        that opens its own VISA session and issues device clear -> *RST (see
+        instrumentio/oob_abort.py), which works regardless of what this session
+        is doing.
+
+        Runs synchronously -- it takes well under a second -- and returns the
+        exit code, 0 meaning the sequence was issued.
+        """
+        return subprocess.run(
+            [self._worker_python, "-m", "instrumentio.oob_abort", self._address],
+            cwd=str(_project_root()),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).returncode
+
+    def kill(self) -> None:
+        """Hard-kill the worker so any in-flight RPC fails immediately.
+
+        Used by the abort path: once the instrument is safe, this is what makes
+        a blocked call return so the run thread unwinds and the UI resets.
+        """
+        self._broken = True
+        process = getattr(self, "_process", None)
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
     def bridge_info(self) -> dict:
         info = self._send_and_wait("bridge_info", {}, timeout_s=5.0)
@@ -263,7 +330,7 @@ class RemoteB1500Session:
             return self._send_and_wait(
                 "call",
                 {"method": name, "args": list(args), "kwargs": kwargs},
-                timeout_s=30.0,
+                timeout_s=B1500_CALL_TIMEOUTS.get(name, DEFAULT_CALL_TIMEOUT_S),
             )
 
         return _call
@@ -272,22 +339,13 @@ class RemoteB1500Session:
         if getattr(self, "_process", None) is None:
             return
         process = self._process
-        if process.poll() is None:
+        if process.poll() is None and not self._broken:
             try:
                 self._send_and_wait("close", {}, timeout_s=5.0)
             except Exception:
                 pass
 
-        if process.poll() is None:
-            try:
-                process.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                process.terminate()
-                try:
-                    process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=1.0)
+        self._terminate_worker(timeout_s=2.0)
 
         for stream_name in ("stdin", "stdout", "stderr"):
             stream = getattr(process, stream_name, None)
@@ -296,6 +354,24 @@ class RemoteB1500Session:
                     stream.close()
                 except Exception:
                     pass
+
+    def is_alive(self) -> bool:
+        return getattr(self, "_process", None) is not None and self._process.poll() is None and not self._broken
+
+    def _terminate_worker(self, timeout_s: float = 1.0) -> None:
+        process = getattr(self, "_process", None)
+        if process is None or process.poll() is not None:
+            return
+        if process.poll() is None:
+            try:
+                process.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=1.0)
 
     def _stdout_reader(self) -> None:
         assert self._process.stdout is not None
@@ -349,10 +425,26 @@ class RemoteB1500Session:
         exit_code = self._process.poll()
         state = "running" if exit_code is None else f"exited with code {exit_code}"
         msg = f"Bridge worker ({self._worker_python}) is {state}."
+        progress = self._progress_tail()
+        if progress:
+            msg += f"\nWorker progress tail:\n{progress}"
         tail = self._stderr_tail()
         if tail:
             msg += f"\nWorker stderr tail:\n{tail}"
         return msg
+
+    def _record_progress(self, msg: dict) -> None:
+        payload = msg.get("payload", {}) or {}
+        text = payload.get("message")
+        if not text:
+            text = str(payload)
+        with self._stderr_lock:
+            self._progress_lines.append(str(text))
+
+    def _progress_tail(self, max_lines: int = 8) -> str:
+        with self._stderr_lock:
+            lines = list(self._progress_lines)[-max_lines:]
+        return "\n".join(lines)
 
     def _send_envelope(self, envelope: dict) -> None:
         if self._process.poll() is not None:
@@ -376,7 +468,13 @@ class RemoteB1500Session:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"No bridge response for {cmd}. {self._worker_diagnostics()}")
+                diagnostic = self._worker_diagnostics()
+                self._broken = True
+                self._terminate_worker(timeout_s=0.5)
+                raise TimeoutError(
+                    f"No bridge response for {cmd}. {diagnostic}\n"
+                    "The bridge worker was terminated because the command timed out."
+                )
             try:
                 rsp = self._rsp_queue.get(timeout=min(remaining, 0.5))
             except queue.Empty:
@@ -387,6 +485,10 @@ class RemoteB1500Session:
                 continue
 
             rsp_type = rsp.get("type")
+            if rsp_type == "progress":
+                self._record_progress(rsp)
+                continue
+
             if rsp_type == "worker_exit":
                 raise RuntimeError(
                     f"Bridge worker exited while waiting for {cmd}. {self._worker_diagnostics()}"

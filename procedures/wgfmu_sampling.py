@@ -67,8 +67,20 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         self.force_voltage_2_values = self._parse_float_list(self.force_voltage_2, 'force_voltage_2')
         self.smu_channel_list_1 = self._parse_channel_list(self.smu_channel_list_1, 'smu_channel_list_1')
         self.smu_channel_list_2 = self._parse_channel_list(self.smu_channel_list_2, 'smu_channel_list_2')
-        self.smu_voltage_1_values = self._parse_float_list(self.smu_voltage_1, 'smu_voltage_1')
-        self.smu_voltage_2_values = self._parse_float_list(self.smu_voltage_2, 'smu_voltage_2')
+        self.smu_voltage_1_values = self._parse_optional_float_list(self.smu_voltage_1, 'smu_voltage_1')
+        self.smu_voltage_2_values = self._parse_optional_float_list(self.smu_voltage_2, 'smu_voltage_2')
+        self.smu_bias_options_1 = self._smu_bias_options(
+            self.smu_channel_list_1,
+            self.smu_voltage_1_values,
+            'smu_channel_list_1',
+            'smu_voltage_1',
+        )
+        self.smu_bias_options_2 = self._smu_bias_options(
+            self.smu_channel_list_2,
+            self.smu_voltage_2_values,
+            'smu_channel_list_2',
+            'smu_voltage_2',
+        )
 
     @staticmethod
     def _split_csv(raw_value):
@@ -101,11 +113,13 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             values.append(value)
         return values
 
+    def _parse_optional_float_list(self, raw_value, field_name):
+        if not self._split_csv(raw_value):
+            return []
+        return self._parse_float_list(raw_value, field_name)
+
     def _parse_channel_list(self, raw_value, field_name):
         tokens = self._split_csv(raw_value)
-        if not tokens:
-            raise ValueError(f"{field_name} must contain at least one SMU channel")
-
         channels = []
         for token in tokens:
             # Accept either "SMU1" style names from the UI or numeric channel ids from saved files.
@@ -121,14 +135,31 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
 
     def _iter_parameter_combinations(self):
         # Each Cartesian-product combination is measured and saved as its own output file.
-        return product(
-            self.smu_channel_list_1,
-            self.smu_channel_list_2,
+        for (smu_channel_1, smu_voltage_1), (smu_channel_2, smu_voltage_2), force_voltage_1, force_voltage_2 in product(
+            self.smu_bias_options_1,
+            self.smu_bias_options_2,
             self.force_voltage_1_values,
             self.force_voltage_2_values,
-            self.smu_voltage_1_values,
-            self.smu_voltage_2_values,
-        )
+        ):
+            yield (
+                smu_channel_1,
+                smu_channel_2,
+                force_voltage_1,
+                force_voltage_2,
+                smu_voltage_1,
+                smu_voltage_2,
+            )
+
+    @staticmethod
+    def _smu_bias_options(channels, voltages, channel_field_name, voltage_field_name):
+        if not channels:
+            return [(None, None)]
+        if not voltages:
+            raise ValueError(
+                f"{voltage_field_name} must contain at least one numeric value "
+                f"when {channel_field_name} contains SMU channels"
+            )
+        return list(product(channels, voltages))
 
     def _configure_wgfmu_channels(self, wgfmu):
         wgfmu.connect(self.channel_1)
@@ -150,10 +181,12 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
 
     def _apply_smu_biases(self, b1500, smu_channel_1, smu_voltage_1, smu_channel_2, smu_voltage_2):
         # SMUs provide the slow DC biases that surround the two high-speed WGFMU channels.
-        b1500.set_switch(smu_channel_1, True)
-        b1500.set_switch(smu_channel_2, True)
-        b1500.force_voltage(smu_channel_1, smu_voltage_1, self.smu_compliance_1, B1500_AUTO_RANGE)
-        b1500.force_voltage(smu_channel_2, smu_voltage_2, self.smu_compliance_2, B1500_AUTO_RANGE)
+        if smu_channel_1 is not None:
+            b1500.set_switch(smu_channel_1, True)
+            b1500.force_voltage(smu_channel_1, smu_voltage_1, self.smu_compliance_1, B1500_AUTO_RANGE)
+        if smu_channel_2 is not None:
+            b1500.set_switch(smu_channel_2, True)
+            b1500.force_voltage(smu_channel_2, smu_voltage_2, self.smu_compliance_2, B1500_AUTO_RANGE)
 
     @staticmethod
     def _release_smu_channels(b1500, channels):
@@ -275,6 +308,16 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             psd[1:-1] *= 2.0
         return psd
 
+    @staticmethod
+    def _format_optional_voltage(value):
+        return "N/A" if value is None else f"{value:.9e} V"
+
+    @staticmethod
+    def _format_optional_smu(channel, voltage):
+        if channel is None:
+            return "SMU: none"
+        return f"SMU{channel}={voltage:.6g} V"
+
     def _new_plot_state(self, bucket_size):
         return {
             'bucket_size': bucket_size,
@@ -351,9 +394,9 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
             return
         count = psd_state['count']
         # replace_source redraws the whole spectrum because the averaged PSD changes at every window.
-        avg_psd_i1 = psd_state['sum_psd_i1'] / count
-        avg_psd_i2 = psd_state['sum_psd_i2'] / count
-        freqs = psd_state['freqs_list']
+        avg_psd_i1 = (psd_state['sum_psd_i1'] / count)[1:]
+        avg_psd_i2 = (psd_state['sum_psd_i2'] / count)[1:]
+        freqs = psd_state['freqs_list'][1:]
         plot.replace_source(psd1_source, freqs, avg_psd_i1.tolist())
         plot.replace_source(psd2_source, freqs, avg_psd_i2.tolist())
         psd_state['dirty'] = False
@@ -379,9 +422,9 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
         return [
             f"# Combination: {combo_index}/{total_combinations}",
             f"# SMU Channel 1: {smu_channel_1}",
-            f"# SMU Voltage 1: {smu_voltage_1:.9e} V",
+            f"# SMU Voltage 1: {self._format_optional_voltage(smu_voltage_1)}",
             f"# SMU Channel 2: {smu_channel_2}",
-            f"# SMU Voltage 2: {smu_voltage_2:.9e} V",
+            f"# SMU Voltage 2: {self._format_optional_voltage(smu_voltage_2)}",
             f"# WGFMU Force Voltage 1: {force_voltage_1:.9e} V",
             f"# WGFMU Force Voltage 2: {force_voltage_2:.9e} V",
             f"# Effective Sampling Rate: {effective_rate_hz:.9e} Hz",
@@ -580,8 +623,8 @@ class WGFMUSamplingProcedure(MeasurementProcedure):
                 self.check_stop(b1500)
                 self.log(
                     f"  Combination {combo_index}/{total_combinations}: "
-                    f"SMU{smu_channel_1}={smu_voltage_1:.6g} V, "
-                    f"SMU{smu_channel_2}={smu_voltage_2:.6g} V, "
+                    f"{self._format_optional_smu(smu_channel_1, smu_voltage_1)}, "
+                    f"{self._format_optional_smu(smu_channel_2, smu_voltage_2)}, "
                     f"WGFMU1={force_voltage_1:.6g} V, WGFMU2={force_voltage_2:.6g} V"
                 )
 
