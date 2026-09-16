@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 
 from procedures.base import Choice, MeasurementProcedure, SMU, parameter
-from instrumentio.constants import B1500_VOLTAGE_RANGES
+from instrumentio.constants import B1500_CURRENT_RANGES, B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
     B1500_AUTO_RANGE, B1500_CH_ALL, B1500_CH_NOCH, B1500_IM_MODE,
     B1500_VM_MODE, B1500_SWP_IF_SGLLIN,
@@ -104,6 +104,18 @@ def difference_percent(first, second):
 
 
 def analyze_measurement(readings_by_contacts, points):
+    """Fit V=R*I+b using measured source current; retain flagged finite readings.
+
+    Average the four top/bottom slopes into RA and the four left/right slopes
+    into RB, then solve the Van der Pauw equation. The per-current plot instead
+    pairs opposite sweep indices (+I/-I) to cancel constant voltage offsets,
+    keeping forward and swapped contact assignments separate. An unpaired zero
+    point contributes to the fit but not to these pairs. Undefined results are NaN.
+
+    Interpretation assumes a uniform sheet without holes, uniform thickness,
+    small ohmic contacts on the perimeter, and zero magnetic field.
+    Reference: https://www.nist.gov/pml/nanoscale-device-characterization-division/popular-links/hall-effect/hall-effect
+    """
     fits = {name: fit_iv_curve(rows) for name, rows in readings_by_contacts.items()}
     slopes = {name: fit.slope if fit is not None else math.nan for name, fit in fits.items()}
     ra_forward, rb_forward = direction_resistances(slopes)
@@ -144,6 +156,31 @@ def analyze_measurement(readings_by_contacts, points):
 
 
 class VanDerPauwProcedure(MeasurementProcedure):
+    """Measure sheet resistance with four perimeter contacts (TL, TR, BL, BR).
+
+    Select the SMU wired to each contact. All eight bipolar sweeps run
+    automatically: four edge configurations, each repeated with current and
+    voltage contacts exchanged. Ibias sets the limits from -|Ibias| to +|Ibias|.
+    Plot labels use the selected SMU numbers; the return SMU holds 0 V.
+
+    Each sweep fits V = R*I + b using measured source current. Top/bottom slopes
+    form RA and left/right slopes form RB; the sheet resistance Rs solves
+    exp(-pi*RA/Rs) + exp(-pi*RB/Rs) = 1.
+
+    Small plots overlay exchanged contacts; dR is their signed slope difference
+    as a percentage of mean magnitude. Red crosses mark instrument flags, which
+    do not exclude readings from fits. Only non-finite readings are excluded.
+    The main plot pairs +I/-I to cancel constant offsets, showing forward and
+    swapped results separately. Its horizontal line uses all eight fitted slopes.
+    Opposite-edge differences are saved without a pass/fail threshold.
+
+    Results assume a uniform sheet without holes, uniform thickness, small ohmic
+    perimeter contacts and zero magnetic field. A completed run saves one CSV
+    and one PNG. Settings, fits and results are in the CSV header; interrupted
+    runs save available complete readings in a partial CSV.
+
+    Hover over settings for units, timing behavior and ADC restrictions.
+    """
     NAME = "VanDerPauw"
     PARAMETERS = (
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
@@ -151,15 +188,36 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('TR_channel', 'TR (Top Right)', 'SMU2', SMU),
         parameter('BL_channel', 'BL (Bottom Left)', 'SMU3', SMU),
         parameter('BR_channel', 'BR (Bottom Right)', 'SMU4', SMU),
-        parameter('ibias', 'Ibias (A)', 1e-6, float),
-        parameter('points', 'Points', 75, int),
+        parameter('ibias', 'Ibias (A)', 1e-6, float, help='Each sweep runs from -|Ibias| to +|Ibias|. Fits use measured current, not this setpoint.'),
+        parameter('points', 'Points', 75, int, help='Points per sweep, repeated for eight contact configurations. Even counts are supported; odd counts include zero.'),
         parameter('voltage_compliance', 'Voltage Compliance (V)', 10.0, float),
         parameter('power_compliance', 'Power Compliance (W)', 0.0, float),
-        parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float)),
+        parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float), help='Applies to both voltage-sensing SMUs. Auto selects a range; Auto ≥ sets a lower bound; Fixed prevents range changes.'),
+        parameter('current_measurement_range', 'Current Meas Range', 1e-9, Choice(B1500_CURRENT_RANGES, float), help='Applies to source and return current measurements. Auto ≥1 nA prevents smaller ranges near zero. Fixed avoids range searching; choose a range covering the sweep.'),
         parameter('current_compliance', 'Return Current Compliance (A)', 0.01, float),
-        parameter('hold_time', 'Hold Time (s)', 0.0, float),
-        parameter('delay_time', 'Delay Time (s)', 0.0, float),
-        parameter('second_delay', 'Second Delay (s)', 0.0, float),
+        parameter('adc_type', 'ADC Type', 0, Choice(((0, 'High-speed'), (1, 'High-resolution')), int), help='Selects the ADC for all four SMUs. High-speed supports parallel measurements. High-resolution measurements run sequentially.'),
+        parameter('adc_mode', 'ADC Integration Mode', 0,
+                  Choice(((0, 'Auto'), (1, 'Manual'), (2, 'Power line cycles')), int),
+                  help='Auto scales instrument-selected averaging/integration. Manual uses sample count for high-speed or 80 µs units for high-resolution. PLC uses whole power line cycles (20 ms each at 50 Hz).'),
+        parameter('adc_coefficient', 'ADC Samples / Factor / PLC (0 = mode default)', 0.0, float,
+                  help='Integer coefficient. Auto/Manual: 1–1023 for high-speed, 1–127 for high-resolution. PLC: 1–100. Zero selects the mode default: HS Auto/Manual 1, HR Auto 6, HR Manual 3, PLC 1.'),
+        parameter('parallel_measurement', 'Parallel Measurement (high-speed ADC)', False, bool,
+                  help='Measure the four SMUs in parallel within each sweep step. Requires high-speed ADC; does not run separate contact sweeps concurrently.'),
+        parameter('adc_autozero', 'ADC Autozero (high-resolution ADC)', False, bool,
+                  help='Cancels high-resolution ADC offset, adding integration time. Has no effect with high-speed ADC.'),
+        parameter('auto_calibration', 'Auto Calibration (terminals must be open when idle)', False, bool,
+                  help='Allows automatic calibration after all SMU switches have been off for 30 minutes. Open the measurement terminals for calibration.'),
+        parameter('source_wait_factor', 'Source Settling Factor (0–10, step 0.1)', 1.0, float,
+                  help='Source wait = factor × instrument automatic wait + offset, before changing output. Default 1 preserves automatic timing; 0 removes its automatic component.'),
+        parameter('source_wait_offset', 'Source Settling Offset (s, step 0.0001)', 0.0, float,
+                  help='Adds 0–1 seconds to the source wait. Separate from hold and step delays.'),
+        parameter('measurement_wait_factor', 'Measurement Settling Factor (0–10, step 0.1)', 1.0, float,
+                  help='Measurement wait = factor × instrument automatic wait + offset. Default 1 preserves automatic settling even when Delay Time is zero. Reducing it may measure before the device settles.'),
+        parameter('measurement_wait_offset', 'Measurement Settling Offset (s, step 0.0001)', 0.0, float,
+                  help='Adds 0–1 seconds to the measurement wait. The instrument wait can be covered by a longer Delay Time.'),
+        parameter('hold_time', 'Hold Time (s)', 0.0, float, help='Wait at the beginning of each sweep, before the first step delay.'),
+        parameter('delay_time', 'Delay Time (s)', 0.0, float, help='Wait after setting each step output and before measurement. Zero does not disable automatic settling.'),
+        parameter('second_delay', 'Second Delay (s)', 0.0, float, help='Step delay from measurement start to the next output step. The instrument also waits for measurement completion if that takes longer.'),
     )
 
     def smu_numbers(self, contact_sweep):
@@ -254,6 +312,15 @@ class VanDerPauwProcedure(MeasurementProcedure):
         try:
             b1500.reset()
             b1500.enable_error_detect(True)
+            b1500.configure_smu_acquisition(
+                [getattr(self, f'{contact}_channel') for contact in ('TL', 'TR', 'BL', 'BR')],
+                adc=self.adc_type, mode=self.adc_mode, coefficient=self.adc_coefficient,
+                parallel=self.parallel_measurement, autozero=self.adc_autozero,
+                auto_calibration=self.auto_calibration,
+                source_wait_factor=self.source_wait_factor, source_wait_offset=self.source_wait_offset,
+                measurement_wait_factor=self.measurement_wait_factor,
+                measurement_wait_offset=self.measurement_wait_offset,
+            )
             for contact_sweep in CONTACT_SWEEPS:
                 self.check_stop(b1500)
                 name = contact_sweep[0]
@@ -315,7 +382,8 @@ class VanDerPauwProcedure(MeasurementProcedure):
         )
         self.check_stop(b1500)
         b1500.start_measure(channels, modes,
-                            [B1500_AUTO_RANGE, self.measurement_range, B1500_AUTO_RANGE, self.measurement_range],
+                            [self.current_measurement_range, self.measurement_range,
+                             self.current_measurement_range, self.measurement_range],
                             source_output=1, timestamp=1)
         data = {ch: [] for ch in channels}
         expected = dict(zip(channels, modes))
@@ -369,7 +437,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
             rows = collect_readings()
             all_rows.extend(rows)
         b1500.finish_measure()
-        b1500.zero_output(B1500_CH_ALL)
+        # CL disables the channels and resets output settings; DZ before it is redundant.
         b1500.set_switch(B1500_CH_ALL, False)
         self.log(f'{label}: collected {len(rows)} points')
         return rows
