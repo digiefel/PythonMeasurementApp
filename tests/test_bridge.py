@@ -133,12 +133,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.history()[-1], "close")
         self.assertFalse(session.is_open)
 
-    def test_cancel_hung_driver_reports_unknown_outputs(self):
+    def test_cancel_hung_driver_reports_emergency_failure(self):
         session = self.connect()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             call = executor.submit(session.slow, 10)
             self.wait_for_call("slow_started")
-            with self.assertRaisesRegex(bridge.InstrumentError, "output state could not be confirmed"):
+            with self.assertRaisesRegex(bridge.InstrumentError, "Simulated emergency shutdown failure"):
                 session.cancel()
             with self.assertRaises(bridge.InstrumentError):
                 call.result(timeout=2)
@@ -173,6 +173,19 @@ class BridgeTests(unittest.TestCase):
         session = self.connect()
         session.cancel()
         self.emergency.assert_not_called()
+
+    def test_pending_io_returns_before_owner_cleanup_without_emergency_reset(self):
+        session = self.connect(interruptible=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(session.slow, 10, _timeout_s=None)
+            self.wait_for_call("slow_started")
+            session.cancel()
+            with self.assertRaises(bridge.InstrumentCancelled):
+                call.result(timeout=2)
+        self.emergency.assert_not_called()
+        history = self.history()
+        self.assertLess(history.index("io_returned_after_interrupt"), history.index("close"))
+        self.assertEqual(history.count("close"), 1)
 
     def test_failed_shutdown_cannot_turn_into_successful_cancellation(self):
         session = self.connect()
@@ -299,7 +312,7 @@ class BridgeTests(unittest.TestCase):
                 self.wait_for_call("slow_started")
                 process.stdin.close()
                 self.assertEqual(process.wait(timeout=2), 1)
-                self.assertIn("output state could not be confirmed", process.stderr.read())
+                self.assertIn("did not complete cancellation and device clear", process.stderr.read())
             finally:
                 if process.poll() is None:
                     process.kill()

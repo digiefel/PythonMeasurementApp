@@ -49,6 +49,7 @@ from .codes import (
 )
 from .descriptors import describe_data_type, describe_data_type_short, describe_status_bits
 from .parsers import parse_csv_floats, parse_fmt5_item, parse_scpi_status
+from .emergency import clear_and_confirm
 
 
 def _attempt_all(*operations):
@@ -123,6 +124,9 @@ class B1500Session:
         self.session = ViSession()
         self._wgfmu = None  # Lazy-loaded WGFMU session
         self._closed = False
+        self._error_detect_enabled = False  # Keysight driver initialization default.
+        self._stream_error_detect = None
+        self._stream_eod = False
         ret = dll_b1500.agb1500_init(gpib_addr.encode(), 1, 1, ct.byref(self.session))
         if ret != 0:
             raise RuntimeError(f"B1500 init failed: {ret}")
@@ -246,7 +250,10 @@ class B1500Session:
         self._check_ret(dll_b1500.agb1500_timeOut(self.session, ms), "Set timeout")
 
     def enable_error_detect(self, enable):
+        if enable and self._stream_error_detect is not None:
+            raise RuntimeError("Cannot enable automatic error queries while measurement data are pending.")
         self._check_ret(dll_b1500.agb1500_errorQueryDetect(self.session, 1 if enable else 0), "Set error detection")
+        self._error_detect_enabled = bool(enable)
 
     def set_switch(self, channel, state):
         """Control switch matrix channel on/off state."""
@@ -493,7 +500,6 @@ class B1500Session:
         self._check_ret(ret, "Spot measurement")
         return value.value, status.value, timestamp.value
 
-    @_measurement_io
     def start_measure(self, channels, modes, ranges, source_output=1, timestamp=1, monitor=0, meas_type=B1500_MEAS_TYPE_SWEEP):
         """
         Begin a measurement to enable streaming via read_data.
@@ -505,15 +511,37 @@ class B1500Session:
         ch_arr = (ViInt32 * len(ch_list))(*ch_list)
         mode_arr = (ViInt32 * len(mode_list))(*mode_list)
         range_arr = (ViReal64 * len(range_list))(*range_list)
+        if self._stream_error_detect is not None:
+            raise RuntimeError("Finish the previous measurement stream before starting another.")
+        previous = self._error_detect_enabled
+        self._stream_error_detect = previous
+        self._stream_eod = False
+        # startMeasure checks setup before XE and uses only a serial status poll
+        # after XE. Keep those checks, under the ordinary setup timeout.
         ret = dll_b1500.agb1500_startMeasure(self.session, meas_type, ch_arr, mode_arr, range_arr, source_output, timestamp, monitor)
+        # Disable before the first readData: its statusUpdate would otherwise
+        # send *OPC? after every record. Disabling is a local driver setting.
+        self.enable_error_detect(False)
         self._check_ret(ret, "Start measure")
+
+    def finish_measure(self):
+        """Restore error checking after the caller has consumed the EOD record.
+
+        This runs outside _measurement_io: the boundary completion query uses
+        the ordinary VISA timeout, not the unbounded measurement-read timeout.
+        """
+        if self._stream_error_detect is None or not self._stream_eod:
+            raise RuntimeError("Cannot finish measurement before reading through end of data.")
+        previous = self._stream_error_detect
+        self._stream_error_detect = None
+        self.enable_error_detect(previous)
 
     @_measurement_io
     def read_data(self):
         """Read one measurement record from the streaming buffer.
 
         Returns (ret, eod, data_type, value, status, channel)
-        - ret: driver return (can be -1 while data are valid; do not treat as fatal mid-measurement)
+        - ret: successful driver return; transport/parser failures raise
         - eod: End Of Data flag (1=data end, 0=data available)
         - data_type codes:
             1  Current measurement data
@@ -536,19 +564,19 @@ class B1500Session:
         - status: Measurement status bitstring (compliance/overflow/etc).
         - channel: Channel number that generated this data (-1 means no channel).
 
-        Notes on error handling (Keysight guidance):
-        * The driver issues *OPC? internally; when the instrument is still busy this can time out and return -1 even
-          though the data/status are valid. Do not abort on a lone -1.
-        * ret < 0 should be logged as a driver/GPIB issue, separate from measurement quality (status bits).
-        * Avoid calling error_query while streaming; it can hang the instrument.
+        Automatic completion/error queries stay disabled until finish_measure.
+        Instrument measurement flags are returned separately from I/O failures.
         """
+        if self._stream_error_detect is None or self._stream_eod:
+            raise RuntimeError("No measurement stream is awaiting data.")
         eod = ViInt32()
         data_type = ViInt32()
         value = ViReal64()
         status = ViInt32()
         channel = ViInt32()
         ret = dll_b1500.agb1500_readData(self.session, ct.byref(eod), ct.byref(data_type), ct.byref(value), ct.byref(status), ct.byref(channel))
-        # Do not call _check_ret here; caller decides how to handle transient negatives.
+        self._check_ret(ret, "Read measurement data")
+        self._stream_eod = bool(eod.value)
         return ret, eod.value, data_type.value, value.value, status.value, channel.value
 
     @_measurement_io
@@ -812,15 +840,25 @@ class B1500Session:
             "coefficients": coeffs,
         }
 
+    def interrupt_io(self):
+        """Request cancellation of host I/O; never send an instrument command.
+
+        Called by the worker's cancellation thread only while an operation is
+        active. The worker joins that handoff before clearing/closing this handle.
+        Keysight VISA viTerminate reference: degree=0, jobId=0 targets this session.
+        """
+        visa = require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL")
+        status = visa.viTerminate(self.session, 0, 0)
+        if status < 0:
+            raise RuntimeError(f"Could not interrupt pending VISA I/O: {status} (0x{status & 0xffffffff:08X})")
+
     def close(self):
         """Stop outputs and release both drivers, even when a cleanup step fails."""
         if self._closed:
             return
         self._closed = True
         _attempt_all(
-            self.abort_measure,
-            lambda: self.zero_output(B1500_CH_ALL),
-            lambda: self.set_switch(B1500_CH_ALL, False),
+            lambda: clear_and_confirm(require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL"), self.session),
             lambda: self._wgfmu.close() if self._wgfmu is not None else None,
             lambda: self._check_ret(dll_b1500.agb1500_close(self.session), "Close session"),
         )

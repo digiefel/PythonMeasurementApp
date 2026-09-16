@@ -342,12 +342,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         try:
             while True:
                 self.check_stop(b1500)
-                driver_status, eod, kind, value, status, channel = b1500.read_data()
-                # The native read API can return -1 with valid records. Preserve
-                # these records, but make the transport diagnostic visible.
-                if driver_status < 0 and ('driver', driver_status) not in seen:
-                    seen.add(('driver', driver_status))
-                    self.log(f'{label}: read_data returned {driver_status}; retaining returned readings')
+                _ret, eod, kind, value, status, channel = b1500.read_data()
                 if status and (channel, kind, status) not in seen:
                     seen.add((channel, kind, status))
                     self.runner.report_status(dict(channel=channel, data_type=kind, status=status,
@@ -373,6 +368,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         finally:
             rows = collect_readings()
             all_rows.extend(rows)
+        b1500.finish_measure()
         b1500.zero_output(B1500_CH_ALL)
         b1500.set_switch(B1500_CH_ALL, False)
         self.log(f'{label}: collected {len(rows)} points')

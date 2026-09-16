@@ -279,10 +279,9 @@ class RemoteB1500Session(_Proxy):
         self._outgoing.put(["cancel"])
         try:
             try:
-                # Let a returning call finish its cleanup, but do not wait five
-                # seconds before reaching hardware when acquisition is blocked.
-                grace = min(self.STOP_TIMEOUT_S, 1.0) if self._active else self.STOP_TIMEOUT_S
-                self._process.wait(timeout=grace)
+                # The worker interrupts pending VISA I/O and clears the device
+                # itself. Killing it after one second would cut off that cleanup.
+                self._process.wait(timeout=self.STOP_TIMEOUT_S)
             except subprocess.TimeoutExpired:
                 logger.error("Instrument executor unresponsive; terminating pid=%s", self._process.pid)
                 self._process.kill()
@@ -315,7 +314,6 @@ class RemoteB1500Session(_Proxy):
                 if isinstance(exc, subprocess.TimeoutExpired):
                     failure = InstrumentError(
                         f"The emergency reset helper did not finish within {PROCESS_TIMEOUT_S} seconds. "
-                        "Pausing that process in the debugger can cause this timeout. "
                         "Check whether the instrument's voltage/current outputs are off."
                     )
                 elif isinstance(exc, InstrumentError):

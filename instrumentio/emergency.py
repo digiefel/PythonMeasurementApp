@@ -1,13 +1,14 @@
 """Independent shutdown after the normal instrument process has been stopped.
 
 B1500 Programming Guide 4-33/34: use device clear when AB cannot enter the
-command buffer. *RST restores the initial settings (4-184; SMU switches open,
+command buffer. Device clear restores initial settings (SMU switches open,
 2-88). B1530A Guide 4-50: initialize resets WGFMU channels; abort alone retains
 their voltage (4-9). Exit success means these operations succeeded, not a
 measurement of the physical output voltage.
 """
 
 import ctypes as ct
+import logging
 import os
 import sys
 
@@ -16,6 +17,7 @@ IO_TIMEOUT_MS = 2000
 PROCESS_TIMEOUT_S = 15
 VI_ATTR_TMO_VALUE = 0x3FFF001A
 VI_ERROR_TMO = -1073807339
+logger = logging.getLogger(__name__)
 
 def _load_visa():
     visa = ct.WinDLL(os.environ.get("PYMEASUREMENT_VISA32_DLL", r"C:\Windows\SysWOW64\visa32.dll"))
@@ -52,6 +54,25 @@ def _write(visa, session, command):
         raise RuntimeError(f"Incomplete write of {command}: {count.value}/{len(data)} bytes")
 
 
+def clear_and_confirm(visa, session):
+    """Clear on the owning thread, after outstanding I/O has returned.
+
+    Device clear also discards VISA's formatted buffers, so the raw completion
+    read cannot consume leftover measurement data or a buffered driver reply.
+    It already initializes the B1500; an additional *RST is unnecessary.
+    """
+    _check(visa.viSetAttribute(session, VI_ATTR_TMO_VALUE, IO_TIMEOUT_MS), "Set shutdown I/O timeout")
+    logger.info("Shutdown: issuing B1500 device clear")
+    _check(visa.viClear(session), "Device clear")
+    logger.info("Shutdown: waiting for device-clear completion (*OPC?)")
+    _write(visa, session, "*OPC?")
+    response, count = ct.create_string_buffer(64), ct.c_uint32()
+    _check(visa.viRead(session, response, len(response), ct.byref(count)), "Wait for device-clear completion")
+    if response.raw[:count.value].strip() != b"1":
+        raise RuntimeError("Instrument did not acknowledge device-clear completion")
+    logger.info("Shutdown: B1500 device-clear completion acknowledged")
+
+
 def shutdown(address, *, wgfmu=False):
     errors = []
 
@@ -64,22 +85,13 @@ def shutdown(address, *, wgfmu=False):
     def reset_mainframe():
         visa = _load_visa()
         rm, session = ct.c_uint32(), ct.c_uint32()
+        logger.info("Emergency shutdown: opening VISA resource manager")
         _check(visa.viOpenDefaultRM(ct.byref(rm)), "Open VISA resource manager")
         try:
+            logger.info("Emergency shutdown: opening %s", address)
             _check(visa.viOpen(rm, address.encode(), 0, IO_TIMEOUT_MS, ct.byref(session)), "Open instrument")
             try:
-                _check(visa.viSetAttribute(session, VI_ATTR_TMO_VALUE, IO_TIMEOUT_MS), "Set abort I/O timeout")
-                attempt(lambda: _check(visa.viClear(session), "Device clear"))
-                attempt(lambda: _write(visa, session, "*RST"))
-
-                def wait_for_reset():
-                    _write(visa, session, "*OPC?")
-                    response, count = ct.create_string_buffer(64), ct.c_uint32()
-                    _check(visa.viRead(session, response, len(response), ct.byref(count)), "Wait for reset")
-                    if response.raw[:count.value].strip() != b"1":
-                        raise RuntimeError("Instrument did not acknowledge reset completion")
-
-                attempt(wait_for_reset)
+                clear_and_confirm(visa, session)
             finally:
                 attempt(lambda: _check(visa.viClose(session), "Close instrument"))
         finally:
@@ -103,6 +115,8 @@ def shutdown(address, *, wgfmu=False):
 
 
 def main():
+    from app_logging import configure_logging
+    configure_logging()
     try:
         shutdown(sys.argv[1], wgfmu="--wgfmu" in sys.argv[2:])
     except Exception as exc:

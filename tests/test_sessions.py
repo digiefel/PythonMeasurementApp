@@ -9,6 +9,8 @@ class SessionTests(unittest.TestCase):
     def test_measurement_native_timeout_is_unbounded_then_restored(self):
         session = sessions.B1500Session.__new__(sessions.B1500Session)
         session.session = 1
+        session._stream_error_detect = True
+        session._stream_eod = False
         def read_timeout(handle, attribute, value):
             ct.cast(value, ct.POINTER(ct.c_uint32))[0] = 10000
             return 0
@@ -21,12 +23,12 @@ class SessionTests(unittest.TestCase):
                     if failed:
                         raise RuntimeError("Measurement failed")
                     return 0
-                driver.agb1500_startMeasure.side_effect = measure
+                driver.agb1500_readData.side_effect = measure
                 if failed:
                     with self.assertRaisesRegex(RuntimeError, "Measurement failed"):
-                        session.start_measure([1], [1], [0])
+                        session.read_data()
                 else:
-                    session.start_measure([1], [1], [0])
+                    session.read_data()
                 self.assertEqual(visa.viSetAttribute.call_args.args[-1], 10000)
 
     def test_wgfmu_cleanup_resets_disconnects_and_closes_even_after_failure(self):
@@ -53,12 +55,16 @@ class SessionTests(unittest.TestCase):
         session.zero_output = Mock()
         session.set_switch = Mock()
         session._check_ret = Mock()
-        with patch.object(sessions, "dll_b1500") as driver:
+        with patch.object(sessions, "dll_b1500") as driver, \
+             patch.object(sessions, "dll_visa32"), \
+             patch.object(sessions, "clear_and_confirm", side_effect=RuntimeError("Clear failed")) as clear:
             with self.assertRaises(ExceptionGroup) as caught:
                 session.close()
             self.assertEqual(len(caught.exception.exceptions), 2)
-            session.zero_output.assert_called_once()
-            session.set_switch.assert_called_once()
+            clear.assert_called_once()
+            session.abort_measure.assert_not_called()
+            session.zero_output.assert_not_called()
+            session.set_switch.assert_not_called()
             driver.agb1500_close.assert_called_once_with(1)
             session.close()
             driver.agb1500_close.assert_called_once()

@@ -327,6 +327,8 @@ class IVSweepProcedure(MeasurementProcedure):
             if eod:
                 break
 
+        b1500.finish_measure()
+
         # Ensure any remaining points are pushed to the plot
         for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
             v_val = v_source_values[idx] if idx < len(v_source_values) else device_voltages[idx]

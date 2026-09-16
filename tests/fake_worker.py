@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import threading
 import time
 
 from instrumentio import bridge_worker
@@ -10,6 +11,7 @@ from instrumentio import bridge_worker
 class FakeSession:
     def __init__(self, address):
         self.options = json.loads(address)
+        self.interrupted = threading.Event()
         self.wgfmu = self
         self.record("connect")
         time.sleep(self.options.get("connect_delay", 0))
@@ -27,8 +29,17 @@ class FakeSession:
 
     def slow(self, seconds):
         self.record("slow_started")
-        time.sleep(seconds)
+        if self.options.get("interruptible"):
+            if self.interrupted.wait(seconds):
+                self.record("io_returned_after_interrupt")
+                raise RuntimeError("Simulated VISA I/O cancellation")
+        else:
+            time.sleep(seconds)
         self.record("slow_finished")
+
+    def interrupt_io(self):
+        if self.options.get("interruptible"):
+            self.interrupted.set()
 
     def fail(self):
         raise RuntimeError("Simulated instrument failure")

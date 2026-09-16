@@ -81,6 +81,14 @@ if dll_visa32:
     dll_visa32.viGetAttribute.restype = ct.c_int32
     dll_visa32.viSetAttribute.argtypes = [ViSession, ct.c_uint32, ct.c_size_t]
     dll_visa32.viSetAttribute.restype = ct.c_int32
+    dll_visa32.viTerminate.argtypes = [ViSession, ct.c_uint16, ct.c_uint32]
+    dll_visa32.viTerminate.restype = ct.c_int32
+    dll_visa32.viClear.argtypes = [ViSession]
+    dll_visa32.viClear.restype = ct.c_int32
+    dll_visa32.viWrite.argtypes = [ViSession, ct.c_char_p, ct.c_uint32, ct.POINTER(ct.c_uint32)]
+    dll_visa32.viWrite.restype = ct.c_int32
+    dll_visa32.viRead.argtypes = [ViSession, ct.c_void_p, ct.c_uint32, ct.POINTER(ct.c_uint32)]
+    dll_visa32.viRead.restype = ct.c_int32
 
 # B1500 Function declarations
 if dll_b1500:

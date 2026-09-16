@@ -25,17 +25,18 @@ class EmergencyTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_clear_reset_and_completion_are_checked(self):
+    def test_clear_and_completion_are_checked_without_redundant_reset(self):
         emergency.shutdown("fake")
         self.visa.viClear.assert_called_once()
-        self.assertEqual(self.commands, [b"*RST\n", b"*OPC?\n"])
+        self.assertEqual(self.commands, [b"*OPC?\n"])
         self.assertEqual(self.visa.viClose.call_count, 2)
 
-    def test_failed_clear_still_attempts_reset_and_reports_failure(self):
+    def test_failed_clear_reports_failure_and_closes_connections(self):
         self.visa.viClear.return_value = -1073807339
         with self.assertRaises(ExceptionGroup):
             emergency.shutdown("fake")
-        self.assertIn(b"*RST\n", self.commands)
+        self.assertEqual(self.commands, [])
+        self.assertEqual(self.visa.viClose.call_count, 2)
 
     def test_failed_or_partial_write_never_reports_success(self):
         for result in (-1073807339, 0):

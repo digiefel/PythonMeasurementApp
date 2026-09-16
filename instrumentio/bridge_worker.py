@@ -1,4 +1,4 @@
-"""Single-owner instrument executor. The input thread never calls a driver."""
+"""Single-owner executor; cancellation may only terminate pending host VISA I/O."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import queue
 import struct
 import sys
 import threading
+import time
 import traceback
 
 from app_logging import configure_logging
@@ -25,6 +26,8 @@ def main(session_factory=None):
     cancelled = threading.Event()
     finished = threading.Event()
     session = None
+    operation_active = False
+    io_handoff = threading.Lock()
     terminal = ["stopped"]
 
     def emit(message):
@@ -46,12 +49,28 @@ def main(session_factory=None):
             inbox.put(None)
 
     def watch_shutdown():
-        # Bound cleanup after either a command failure or a parent crash, even
-        # when the native driver will not return to the executor.
         cancelled.wait()
-        if not finished.wait(STOP_TIMEOUT_S):
-            logger.critical("Instrument stop timed out; output state could not be confirmed")
-            os._exit(1)
+        deadline = time.monotonic() + STOP_TIMEOUT_S
+        interrupt_failed = False
+        while not finished.is_set():
+            with io_handoff:
+                if operation_active and session is not None and not interrupt_failed:
+                    try:
+                        session.interrupt_io()
+                    except Exception:
+                        # Never clear or close here: the native call still owns
+                        # the session. The bounded process fallback handles it.
+                        logger.exception("Could not interrupt pending instrument I/O")
+                        interrupt_failed = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.critical("Instrument worker did not complete cancellation and device clear within %.1fs",
+                                STOP_TIMEOUT_S)
+                os._exit(1)
+            # Termination is a host-I/O request, not a retried instrument command.
+            # Repeat until the owner returns: cancellation can arrive immediately
+            # before native I/O starts or between calls inside a driver function.
+            finished.wait(min(0.05, remaining))
 
     def receive():
         message = inbox.get()
@@ -100,13 +119,23 @@ def main(session_factory=None):
             if len(message) != 5 or message[0] != "call":
                 raise ValueError("Expected instrument call")
             _, target, method, args, kwargs = message
-            if target not in ("", "wgfmu") or method.startswith("_") or method == "close":
+            if target not in ("", "wgfmu") or method.startswith("_") or method in ("close", "interrupt_io"):
                 raise ValueError("Invalid instrument method")
             receiver = session if not target else getattr(session, target)
-            result = getattr(receiver, method)(
-                *(unpack(value) for value in args),
-                **{key: unpack(value) for key, value in kwargs.items()},
-            )
+            with io_handoff:
+                if cancelled.is_set():
+                    raise InstrumentCancelled()
+                operation_active = target == ""  # WGFMU has its own opaque driver session.
+            try:
+                result = getattr(receiver, method)(
+                    *(unpack(value) for value in args),
+                    **{key: unpack(value) for key, value in kwargs.items()},
+                )
+            finally:
+                # Wait for any in-flight viTerminate to return before entering
+                # cleanup. No terminate can touch this session after this point.
+                with io_handoff:
+                    operation_active = False
             if cancelled.is_set():
                 raise InstrumentCancelled()
             emit(["result", result])
@@ -114,8 +143,11 @@ def main(session_factory=None):
         pass
     except Exception:
         details = traceback.format_exc()
-        logger.error("Instrument executor failed:\n%s", details)
-        terminal = ["error", "Instrument operation failed. See the application log for details.", details]
+        if cancelled.is_set():
+            logger.info("Instrument call ended during cancellation:\n%s", details)
+        else:
+            logger.error("Instrument executor failed:\n%s", details)
+            terminal = ["error", "Instrument operation failed. See the application log for details.", details]
     finally:
         cancelled.set()
         if session is not None:
@@ -124,7 +156,7 @@ def main(session_factory=None):
             except Exception:
                 details = traceback.format_exc()
                 logger.error("Instrument cleanup failed:\n%s", details)
-                terminal = ["error", "Instrument shutdown failed; output state could not be confirmed.", details]
+                terminal = ["error", "Instrument cleanup failed. See the application log for the failed operation.", details]
         try:
             emit(terminal)
         except (OSError, ValueError):

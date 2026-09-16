@@ -165,10 +165,9 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                     data_by_ch[channel].append(value)
                     status_by_ch[channel].append(status)
             elif data_type in (3, 4):  # source output data
-                if channel not in (source_channel, B1500_CH_NOCH, B1500_CH_ALL):
-                    continue
-                source_values.append(value)
-                source_status.append(status)
+                if channel in (source_channel, B1500_CH_NOCH, B1500_CH_ALL):
+                    source_values.append(value)
+                    source_status.append(status)
             elif data_type == 5:
                 timestamps.append(value)
 
@@ -181,12 +180,13 @@ class FourTerminalIVProcedure(MeasurementProcedure):
                 runner.plot.append_point("V_I", current_points[idx], v_diff)
                 plotted += 1
 
-            # Stop if we received all expected points or instrument signaled end
-            if eod or plotted >= max_points:
+            # Drain trailing timestamps/source records before any query or setup.
+            if eod:
                 break
 
         # Once we exit the loop, the sweep is done
         # We can shut down the source
+        b1500.finish_measure()
         b1500.zero_output(B1500_CH_ALL)
         b1500.set_switch(B1500_CH_ALL, False)
 
