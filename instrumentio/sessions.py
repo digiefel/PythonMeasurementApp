@@ -215,13 +215,27 @@ class B1500Session:
         return self._wgfmu
 
     def error_query(self):
-        """Return (error_number, error_message) from instrument."""
+        """Remove and return one queued error; zero means the queue is empty."""
         errnum = ViInt32()
         errmsg = ct.create_string_buffer(256)
         ret = dll_b1500.agb1500_error_query(self.session, ct.byref(errnum), errmsg)
         if ret != 0:
             raise RuntimeError(f"Error query failed: {ret}")
         return errnum.value, errmsg.value.decode(errors='ignore').strip()
+
+    def _check_instrument_errors(self, context):
+        # ERR? 1 removes only the oldest entry. Collect the complete queue before
+        # raising: B1500 Programming Guide, printed pp. 4-112–113 (four entries).
+        errors = []
+        for _ in range(5):
+            number, message = self.error_query()
+            if not number:
+                break
+            errors.append(f"instrument error {number}: {message}")
+        else:
+            errors.append("error queue did not empty")
+        if errors:
+            raise RuntimeError(f"{context}: " + "; ".join(errors))
 
     def _describe_status(self, ret):
         """Return human-readable description for a driver status code."""
@@ -235,8 +249,8 @@ class B1500Session:
 
     def _check_ret(self, ret, context):
         if ret == B1500_INSTR_ERROR_DETECTED:
-            errnum, errmsg = self.error_query()
-            raise RuntimeError(f"{context}: instrument error {errnum}: {errmsg} (ret={ret})")
+            self._check_instrument_errors(context)
+            raise RuntimeError(f"{context}: driver reported an instrument error, but the error queue is empty (ret={ret})")
         if ret < 0:
             msg = self._describe_status(ret)
             raise RuntimeError(f"{context} failed: {ret} {f'({msg})' if msg else ''}".strip())
@@ -279,13 +293,7 @@ class B1500Session:
             if abs(factor * 10 - round(factor * 10)) > 1e-7 or abs(offset * 10000 - round(offset * 10000)) > 1e-7:
                 raise ValueError("Wait factor resolution is 0.1; wait offset resolution is 0.0001 seconds.")
 
-        def check_setup(command):
-            # The vendor statusUpdate checks the command-error bit only. Drain
-            # execution errors here too, before another command obscures their origin.
-            number, message = self.error_query()
-            if number:
-                raise RuntimeError(f"{command}: instrument error {number}: {message}")
-
+        check_setup = self._check_instrument_errors
         check_setup("Before SMU acquisition setup")
         self._check_ret(dll_b1500.agb1500_setAdc(self.session, adc, mode, int(coefficient), int(autozero)),
                         "Set ADC integration")
