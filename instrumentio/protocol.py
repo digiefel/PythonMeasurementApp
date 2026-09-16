@@ -1,7 +1,7 @@
 """Shared execution limits and connection outcomes; no driver dependencies."""
 
-# The application permits native operations with a 120-second I/O timeout.
-OPERATION_TIMEOUT_S = 130.0
+# Connection establishment and shutdown are bounded; measurement duration is not.
+CONNECT_TIMEOUT_S = 10.0
 STOP_TIMEOUT_S = 5.0
 
 

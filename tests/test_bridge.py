@@ -207,6 +207,28 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn("invalid deadline", self.history())
         self.assertTrue(session.is_open)
 
+    def test_default_wait_has_no_measurement_deadline(self):
+        session = self.connect()
+        self.assertIsNone(bridge.RemoteB1500Session.DEFAULT_TIMEOUT_S)
+        session.timeout_s = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(session.slow, .15)
+            self.wait_for_call("slow_started")
+            now = time.monotonic
+            # Passing an hour must not change the outcome of a silent call.
+            with patch.object(bridge.time, "monotonic", side_effect=lambda: now() + 3600):
+                call.result(timeout=2)
+        self.assertEqual(session.echo("still connected"), "still connected")
+
+    def test_explicit_unbounded_wait_can_still_be_cancelled(self):
+        session = self.connect()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            call = executor.submit(session.slow, .15, _timeout_s=None)
+            self.wait_for_call("slow_started")
+            session.cancel()
+            with self.assertRaises(bridge.InstrumentCancelled):
+                call.result(timeout=2)
+
     def test_cancellation_interrupts_connection_startup(self):
         stop = threading.Event()
         address = json.dumps(dict(record=str(self.record), connect_delay=10))

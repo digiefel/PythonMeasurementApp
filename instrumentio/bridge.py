@@ -16,7 +16,7 @@ import subprocess
 import threading
 import time
 
-from .protocol import InstrumentCancelled, InstrumentError, OPERATION_TIMEOUT_S, STOP_TIMEOUT_S
+from .protocol import InstrumentCancelled, InstrumentError, CONNECT_TIMEOUT_S, STOP_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +60,11 @@ class _Proxy:
 
 
 class RemoteB1500Session(_Proxy):
-    # One inactivity deadline, covering the application's 120s driver timeout.
-    DEFAULT_TIMEOUT_S = OPERATION_TIMEOUT_S
+    # The operator decides when to stop a measurement, not the transport.
+    DEFAULT_TIMEOUT_S = None
     STOP_TIMEOUT_S = STOP_TIMEOUT_S
 
-    def __init__(self, address, *, timeout_s=DEFAULT_TIMEOUT_S, cancel_events=()):
+    def __init__(self, address, *, timeout_s=DEFAULT_TIMEOUT_S, connect_timeout_s=CONNECT_TIMEOUT_S, cancel_events=()):
         super().__init__(self)
         self.address = address
         self.timeout_s = timeout_s
@@ -94,7 +94,7 @@ class RemoteB1500Session(_Proxy):
                 thread = threading.Thread(target=target, daemon=True)
                 self._threads.append(thread)
                 thread.start()
-            self._info = self._request(["connect", address], [], timeout_s)
+            self._info = self._request(["connect", address], [], connect_timeout_s)
         except BaseException as exc:
             logger.exception("Instrument connection failed at %s", address)
             try:
@@ -118,7 +118,7 @@ class RemoteB1500Session(_Proxy):
         """Keep a sequence of calls together; cancellation remains independent."""
         return self._calls
 
-    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback, timeout_s=120.0):
+    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback, timeout_s=None):
         # Preserve the existing public timeout argument; execution is generic.
         return super().__getattr__("stream_cv_sweep")(
             cmu_channel, cmu_mode, meas_range, expected_points, callback, _timeout_s=timeout_s,
@@ -171,9 +171,10 @@ class RemoteB1500Session(_Proxy):
     def _request(self, message, callbacks, timeout):
         # Validate locally before any command can reach the instrument.
         json.dumps(message)
-        if not math.isfinite(timeout) or timeout <= 0:
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("Instrument timeout must be finite and positive")
-        deadline = time.monotonic() + timeout
+        interval = math.inf if timeout is None else timeout
+        deadline = time.monotonic() + interval
         while not self._calls.acquire(timeout=0.05):
             self._check_open()
             if time.monotonic() >= deadline:
@@ -185,7 +186,7 @@ class RemoteB1500Session(_Proxy):
             self._active = True
             try:
                 self._outgoing.put(message)
-                deadline = time.monotonic() + timeout
+                deadline = time.monotonic() + interval
                 while True:
                     self._check_open()
                     remaining = deadline - time.monotonic()
@@ -208,7 +209,7 @@ class RemoteB1500Session(_Proxy):
                         # Callback return values follow the same serialization rules.
                         json.dumps(result)
                         self._outgoing.put(["return", result])
-                        deadline = time.monotonic() + timeout
+                        deadline = time.monotonic() + interval
                     elif kind == "stopped":
                         raise InstrumentCancelled("Measurement stopped.")
                     else:

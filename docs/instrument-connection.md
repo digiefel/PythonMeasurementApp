@@ -19,10 +19,11 @@ protocol diagnostics belong in `log.txt`, not in operator error messages.
 - A cancelled or failed operation retires the connection. No calls are retried,
   and waiting calls cannot execute on the retired connection. A subsequent
   requested run may create a new connection. Background probes cannot reconnect.
-- The default inactivity deadline is 130 seconds, allowing the application's
-  120-second native I/O timeout. Any method accepts `_timeout_s` to override it.
-  The existing streaming `timeout_s` argument remains supported. There are no
-  procedure-specific timeout rules in the executor.
+- Calls have no default elapsed-time deadline. The operator decides when a
+  measurement needs to be stopped. Connection establishment has a separate
+  10-second deadline. A caller may explicitly bound an operation with `_timeout_s`;
+  `None` means no deadline. The streaming `timeout_s` argument follows the same
+  rule. There are no method-specific timeout tables in the executor.
 
 ## Failure and shutdown
 
