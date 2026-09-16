@@ -137,7 +137,7 @@ _TOOLBAR_ACTIONS: dict[str, Callable[[], None]] = {
 }
 
 _LINE_THEME_CACHE: dict[tuple[int, int, int, int], int | str] = {}
-_SCATTER_THEME_CACHE: dict[tuple[tuple[int, int, int, int] | None, str | None], int | str] = {}
+_SCATTER_THEME_CACHE: dict[tuple, int | str] = {}
 _BAR_THEME_CACHE: dict[tuple[int, int, int, int], int | str] = {}
 _INF_LINE_THEME_CACHE: dict[tuple[int, int, int, int], int | str] = {}
 
@@ -162,8 +162,8 @@ def _line_theme(color: tuple[int, int, int, int] | None):
     return theme
 
 
-def _scatter_theme(color: tuple[int, int, int, int] | None, marker: str | None):
-    key = (color, marker)
+def _scatter_theme(color: tuple[int, int, int, int] | None, marker: str | None, marker_size: float | None = None):
+    key = (color, marker, marker_size)
     theme = _SCATTER_THEME_CACHE.get(key)
     if theme is not None:
         return theme
@@ -176,6 +176,8 @@ def _scatter_theme(color: tuple[int, int, int, int] | None, marker: str | None):
             marker_value = IMPLOT_MARKER_MAP.get(marker or "")
             if marker_value is not None:
                 dpg.add_theme_style(dpg.mvPlotStyleVar_Marker, marker_value, category=dpg.mvThemeCat_Plots)
+            if marker_size is not None:
+                dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerSize, marker_size, category=dpg.mvThemeCat_Plots)
     _SCATTER_THEME_CACHE[key] = theme
     return theme
 
@@ -439,7 +441,7 @@ class PlotViewer:
         max_row: int,
         max_col: int,
     ) -> dict[str, object] | None:
-        if len(plots) != 3 or max_row != 2 or max_col != 2:
+        if max_row != 2 or max_col not in (2, 3):
             return None
 
         spanning = [
@@ -451,24 +453,28 @@ class PlotViewer:
             return None
 
         spanning_plot = spanning[0]
-        stack_col = 1 - spanning_plot.col
+        if spanning_plot.col not in (0, max_col - 1):
+            return None
+        stack_columns = [col for col in range(max_col) if col != spanning_plot.col]
         stack_plots = [plot_def for plot_def in plots if plot_def.id != spanning_plot.id]
-        if len(stack_plots) != 2:
+        if len(stack_plots) != 2 * len(stack_columns):
             return None
         if any(
-            plot_def.col != stack_col or plot_def.rowspan != 1 or plot_def.colspan != 1
+            plot_def.col not in stack_columns or plot_def.rowspan != 1 or plot_def.colspan != 1
             for plot_def in stack_plots
         ):
             return None
 
-        ordered_stack = sorted(stack_plots, key=lambda plot_def: plot_def.row)
-        if [plot_def.row for plot_def in ordered_stack] != [0, 1]:
+        ordered_stack = sorted(stack_plots, key=lambda plot_def: (plot_def.row, plot_def.col))
+        if [(p.row, p.col) for p in ordered_stack] != [(row, col) for row in (0, 1) for col in stack_columns]:
             return None
 
         return {
             "spanning_plot": spanning_plot,
             "stack_plots": ordered_stack,
             "spanning_col": spanning_plot.col,
+            "stack_columns": stack_columns,
+            "column_count": max_col,
         }
 
     def _top_span_layout_spec(
@@ -510,6 +516,8 @@ class PlotViewer:
         spanning_plot = layout_spec["spanning_plot"]
         stack_plots = layout_spec["stack_plots"]
         spanning_col = int(layout_spec["spanning_col"])
+        stack_columns = layout_spec["stack_columns"]
+        ratios = self._normalize_ratios(column_ratios, int(layout_spec["column_count"]))
         assert isinstance(spanning_plot, PlotDef)
         assert isinstance(stack_plots, list)
 
@@ -535,12 +543,12 @@ class PlotViewer:
         )
         stack_tag = dpg.add_subplots(
             2,
-            1,
+            len(stack_columns),
             parent=stack_container,
             width=-1,
             height=-1,
             row_ratios=self._normalize_ratios(row_ratios, 2),
-            column_ratios=[1.0],
+            column_ratios=[ratios[col] for col in stack_columns],
             no_title=True,
         )
         for plot_def in stack_plots:
@@ -552,7 +560,9 @@ class PlotViewer:
             "stack_container": stack_container,
             "stack_tag": stack_tag,
             "spanning_col": spanning_col,
-            "column_ratios": self._normalize_ratios(column_ratios, 2),
+            "column_ratios": ([ratios[spanning_col], sum(ratios[col] for col in stack_columns)]
+                              if spanning_col == 0 else
+                              [sum(ratios[col] for col in stack_columns), ratios[spanning_col]]),
         }
 
     def _build_top_span_layout(
@@ -711,7 +721,7 @@ class PlotViewer:
         if elem.mode in ("scatter", "line_scatter"):
             scatter_label = label if elem.mode == "scatter" else f"##{elem.source}_scatter"
             series_id = dpg.add_scatter_series([], [], label=scatter_label, parent=y_axis)
-            theme = _scatter_theme(color, elem.marker)
+            theme = _scatter_theme(color, elem.marker, elem.marker_size)
             if theme is not None:
                 dpg.bind_item_theme(series_id, theme)
             series_ids.append(series_id)
@@ -834,6 +844,8 @@ class PlotViewer:
         if value is None:
             return
         dpg.set_value(state.series_id, [[float(value)]])
+        if state.element.legend_label_template and state.element.show_in_legend:
+            dpg.set_item_label(state.series_id, state.element.legend_label_template.format(value=value))
 
     def _mark_plot_fit_dirty(self, plot_id: str) -> None:
         plot_state = self._plot_states.get(plot_id)
@@ -1012,9 +1024,9 @@ class PlotViewer:
                 stack_w = right_w
             else:
                 stack_x = body_x
-                main_x = body_x + right_w + gap_x
-                stack_w = right_w
-                main_w = left_w
+                main_x = body_x + left_w + gap_x
+                stack_w = left_w
+                main_w = right_w
 
             if dpg.does_item_exist(main_container):
                 dpg.configure_item(main_container, pos=[main_x, body_y], width=max(main_w, 1), height=max(body_h, 1))

@@ -1,27 +1,156 @@
+"""Bipolar four-SMU Van der Pauw sheet-resistance measurement."""
+import math
+from dataclasses import dataclass
+
 from procedures.base import Choice, MeasurementProcedure, SMU, parameter
 from instrumentio.constants import B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
-    B1500_AUTO_RANGE,
-    B1500_CH_ALL,
-    B1500_CH_NOCH,
-    B1500_IM_MODE,
-    B1500_VM_MODE,
-    B1500_SWP_IF_SGLLIN,
+    B1500_AUTO_RANGE, B1500_CH_ALL, B1500_CH_NOCH, B1500_IM_MODE,
+    B1500_VM_MODE, B1500_SWP_IF_SGLLIN,
 )
 from instrumentio.descriptors import describe_status_bits
-from plotting import PlotDef, Curve, LinearFit
-from plotting import linear_fit
+from plotting import PlotDef, Curve, HLine, linear_fit
+
+# Each row is: name, current source, current return, voltage +, voltage -.
+# TL/TR are the top-left/top-right contacts; BL/BR are bottom-left/bottom-right.
+# The second sweep exchanges both the current and voltage contacts.
+# Resistance keeps the same sign, but a different SMU now holds 0 V.
+CONTACT_SWEEPS = (
+    ("top", "TL", "TR", "BL", "BR"),
+    ("top_swapped", "TR", "TL", "BR", "BL"),
+    ("right", "TR", "BR", "TL", "BL"),
+    ("right_swapped", "BR", "TR", "BL", "TL"),
+    ("bottom", "BR", "BL", "TR", "TL"),
+    ("bottom_swapped", "BL", "BR", "TL", "TR"),
+    ("left", "BL", "TL", "BR", "TR"),
+    ("left_swapped", "TL", "BL", "TR", "BR"),
+)
+
+
+
+@dataclass(frozen=True)
+class Reading:
+    current_smus: str
+    voltage_smus: str
+    point: int
+    current_set: float
+    current: float
+    return_current: float
+    voltage_high: float
+    voltage_low: float
+    time: float
+    source_status: int
+    return_status: int
+    high_status: int
+    low_status: int
+    output_status: int
+
+    @property
+    def voltage(self):
+        return self.voltage_high - self.voltage_low
+
+    @property
+    def status(self):
+        return (self.source_status | self.return_status | self.high_status
+                | self.low_status | self.output_status)
+
+    @property
+    def finite(self):
+        return math.isfinite(self.current) and math.isfinite(self.voltage)
+
+    def csv_row(self):
+        return [*self.__dict__.values(), self.voltage, self.status]
+
+
+RAW_HEADERS = [
+    "CurrentSMUs", "VoltageSMUs", "Point", "CurrentSet_A", "Current_A", "ReturnCurrent_A",
+    "VoltageHigh_V", "VoltageLow_V", "SourceTime_s", "SourceStatus", "ReturnStatus",
+    "SenseHighStatus", "SenseLowStatus", "OutputStatus", "VoltageDiff_V", "Status",
+]
+
+
+def sheet_resistance(ra, rb):
+    """Solve exp(-pi RA/Rs) + exp(-pi RB/Rs) = 1 for sheet resistance."""
+    if not all(math.isfinite(r) and r > 0 for r in (ra, rb)):
+        return math.nan  # No positive sheet-resistance solution for these inputs.
+    scale = max(ra, rb)
+    a, b = ra / scale, rb / scale
+    low, high = 0.0, math.pi / math.log(2)
+    for _ in range(100):
+        middle = (low + high) / 2
+        if math.exp(-math.pi * a / middle) + math.exp(-math.pi * b / middle) > 1:
+            high = middle
+        else:
+            low = middle
+    return (low + high) / 2 * scale
+
+
+def fit_iv_curve(readings):
+    rows = [r for r in readings if r.finite]
+    if len({r.current for r in rows}) < 2:
+        return None  # A slope needs at least two different current values.
+    return linear_fit([r.current for r in rows], [r.voltage for r in rows])
+
+
+def direction_resistances(slopes, suffix=''):
+    return ((slopes['top' + suffix] + slopes['bottom' + suffix]) / 2,
+            (slopes['right' + suffix] + slopes['left' + suffix]) / 2)
+
+
+def difference_percent(first, second):
+    mean = (abs(first) + abs(second)) / 2
+    return 100 * (first - second) / mean if mean else math.nan
+
+
+def analyze_measurement(readings_by_contacts, points):
+    fits = {name: fit_iv_curve(rows) for name, rows in readings_by_contacts.items()}
+    slopes = {name: fit.slope if fit is not None else math.nan for name, fit in fits.items()}
+    ra_forward, rb_forward = direction_resistances(slopes)
+    ra_swapped, rb_swapped = direction_resistances(slopes, '_swapped')
+    ra, rb = (ra_forward + ra_swapped) / 2, (rb_forward + rb_swapped) / 2
+    differences = {name: difference_percent(slopes[name], slopes[name + '_swapped'])
+                   for name in ('top', 'right', 'bottom', 'left')}
+    # Compare opposite edges after averaging the source/return assignments.
+    averaged = {name: (slopes[name] + slopes[name + '_swapped']) / 2 for name in differences}
+    opposite_differences = (difference_percent(averaged['top'], averaged['bottom']),
+                            difference_percent(averaged['right'], averaged['left']))
+
+    # Subtract the voltages at +I and -I to remove any constant voltage contribution.
+    indexed = {name: {r.point: r for r in rows} for name, rows in readings_by_contacts.items()}
+    pairs = []
+    for i in range(points // 2):
+        resistances, currents = {}, []
+        for name, rows in indexed.items():
+            first, last = rows.get(i), rows.get(points - 1 - i)
+            if first is None or last is None or not first.finite or not last.finite:
+                break
+            delta_i = last.current - first.current
+            if delta_i == 0:
+                break
+            resistances[name] = (last.voltage - first.voltage) / delta_i
+            currents.append(abs(delta_i) / 2)
+        if len(resistances) != 8:
+            continue
+        forward_a, forward_b = direction_resistances(resistances)
+        swapped_a, swapped_b = direction_resistances(resistances, '_swapped')
+        pairs.append((sum(currents) / 8,
+                      sheet_resistance((forward_a + swapped_a) / 2, (forward_b + swapped_b) / 2),
+                      sheet_resistance(forward_a, forward_b), sheet_resistance(swapped_a, swapped_b)))
+    return dict(fits=fits, ra=ra, rb=rb, sheet=sheet_resistance(ra, rb), pairs=sorted(pairs),
+                forward_sheet=sheet_resistance(ra_forward, rb_forward),
+                swapped_sheet=sheet_resistance(ra_swapped, rb_swapped),
+                swap_differences=differences, opposite_differences=opposite_differences)
+
 
 class VanDerPauwProcedure(MeasurementProcedure):
     NAME = "VanDerPauw"
     PARAMETERS = (
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
-        parameter('A_channel', 'Terminal A SMU', 4, SMU),
-        parameter('B_channel', 'Terminal B SMU', 5, SMU),
-        parameter('C_channel', 'Terminal C SMU', 6, SMU),
-        parameter('D_channel', 'Terminal D SMU', 7, SMU),
-        parameter('start_current', 'Start Current (A)', 0.0, float),
-        parameter('stop_current', 'Stop Current (A)', 1e-6, float),
+        parameter('TL_channel', 'TL (Top Left)', 'SMU1', SMU),
+        parameter('TR_channel', 'TR (Top Right)', 'SMU2', SMU),
+        parameter('BL_channel', 'BL (Bottom Left)', 'SMU3', SMU),
+        parameter('BR_channel', 'BR (Bottom Right)', 'SMU4', SMU),
+        parameter('ibias', 'Ibias (A)', 1e-6, float),
         parameter('points', 'Points', 75, int),
         parameter('voltage_compliance', 'Voltage Compliance (V)', 10.0, float),
         parameter('power_compliance', 'Power Compliance (W)', 0.0, float),
@@ -32,188 +161,220 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('second_delay', 'Second Delay (s)', 0.0, float),
     )
 
+    def smu_numbers(self, contact_sweep):
+        # Use the same SMU names as the selectors, not the hardware slot numbers.
+        return tuple(SMU.display_value(getattr(self, f'{contact}_channel')).removeprefix('SMU')
+                     for contact in contact_sweep[1:])
+
+    def sweep_label(self, contact_sweep):
+        source, ret, high, low = self.smu_numbers(contact_sweep)
+        return f'I {source}->{ret} / V {high}-{low}'
+
+    def csv_metadata_lines(self, extra=None):
+        lines = super().csv_metadata_lines(extra) + [
+            '# Contact layout: TL (top left), TR (top right), BL (bottom left), BR (bottom right)',
+            '# Fit: V = R*I + b; b is the fitted voltage at zero current',
+            '# Instrument flags are saved and shown, but do not exclude points from the fit',
+        ]
+        for contact in ('TL', 'TR', 'BL', 'BR'):
+            lines.append(f"# {contact}: {SMU.display_value(getattr(self, f'{contact}_channel'))}")
+        for sweep in CONTACT_SWEEPS:
+            lines.append(f'# SMU sweep: {self.sweep_label(sweep)}')
+        result = getattr(self, '_result', None)
+        if result is not None:
+            lines.extend([
+                f"# RA_ohm: {result['ra']}",
+                f"# RB_ohm: {result['rb']}",
+                f"# SheetResistance_ohm_per_square: {result['sheet']}",
+            ])
+            lines.extend([
+                f"# Forward_SheetResistance_ohm_per_square: {result['forward_sheet']}",
+                f"# Swapped_SheetResistance_ohm_per_square: {result['swapped_sheet']}",
+                f"# TopBottom_Difference_pct: {result['opposite_differences'][0]}",
+                f"# RightLeft_Difference_pct: {result['opposite_differences'][1]}",
+            ])
+            for sweep in CONTACT_SWEEPS[::2]:
+                lines.append(f"# {self.sweep_label(sweep)}_SwapDifference_pct: {result['swap_differences'][sweep[0]]}")
+            for sweep in CONTACT_SWEEPS:
+                fit = result['fits'][sweep[0]]
+                name = self.sweep_label(sweep)
+                if fit is not None:
+                    lines.extend([
+                        f'# {name}_Resistance_ohm: {fit.slope}',
+                        f'# {name}_VoltageAtZeroCurrent_V: {fit.intercept}',
+                        f'# {name}_R_squared: {fit.r_squared}',
+                    ])
+        return lines
+
+    def plot_definitions(self, result=None):
+        plots = [PlotDef(
+            'sheet', row=0, col=0, rowspan=2, title='Sheet resistance',
+            xlabel='Current magnitude (uA)', ylabels=('Sheet resistance (Ohm/sq)',),
+            elements=[
+                Curve('sheet_forward', mode='scatter', marker='o', marker_size=4, color='C0',
+                      legend_label='Forward'),
+                Curve('sheet_swapped', mode='scatter', marker='x', marker_size=4, color='C1',
+                      legend_label='Swapped'),
+                HLine(source='sheet_fit', color='C7', legend_label='Average',
+                      legend_label_template='Average: {value:.5g} Ohm/sq'),
+            ],
+        )]
+        for index, forward in enumerate(CONTACT_SWEEPS[::2]):
+            name = forward[0]
+            elements = []
+            for sweep, color in ((forward, 'C0'), (CONTACT_SWEEPS[2 * index + 1], 'C1')):
+                key = sweep[0]
+                source, ret, _, _ = self.smu_numbers(sweep)
+                elements.extend([
+                    Curve(f'{key}_raw', mode='scatter', marker='o', marker_size=3, color=color,
+                          legend_label=f'{source}->{ret}'),
+                    Curve(f'{key}_flagged', mode='scatter', marker='x', marker_size=4, color='C3', show_in_legend=False),
+                    Curve(f'{key}_fit', color=color, show_in_legend=False),
+                ])
+            title = self.sweep_label(forward)
+            if result is not None:
+                title += f"  dR {result['swap_differences'][name]:+.2f}%"
+            plots.append(PlotDef(
+                name, row=index // 2, col=1 + index % 2, title=title,
+                xlabel='Current (uA)', ylabels=('Voltage (mV)',), xlink='top' if index else '',
+                elements=elements,
+            ))
+        return plots
+
     def measure(self, device):
         b1500 = self.b1500
         self.check_stop(b1500)
-
-        self.log(f'Starting 4-Terminal I-V Sweep on {device.name}')
-
+        self.log(f'Starting Van der Pauw measurement on {device.name}')
+        self.runner.configure_plot(f'Van der Pauw — {device.name}', self.plot_definitions(),
+                                   column_ratios=(1.6, 1.0, 1.0))
+        rows, readings_by_contacts = [], {}
+        self._result = None
+        base = self.format_filename('VanDerPauw', device.name)
         try:
-            # Initialize B1500 session
             b1500.reset()
             b1500.enable_error_detect(True)
-
-            # This procedure currently only reserves the Van der Pauw terminal definitions.
-            # The helper below should be called four times once the sweep configurations are wired in.
-            # Perform the I-V sweep
-            # For Van der Pauw, we will do sweeps in both configurations:
-            # 1) Force current A->B, sense voltage C-D
-            # 2) Force current B->C, sense voltage D-A
-            # 3) Force current C->D, sense voltage A-B
-            # 4) Force current D->A, sense voltage B-C
-
-            # Save results
-            base = self.format_filename("VanDerPauw", device.name)
-            self.save_plot_png(f'{base}_plot.png')
-            self.log(f'Van der Pauw measurement completed for {device.name}')
-
-        except Exception as e:
-            self.log(f'Error during 4-terminal I-V sweep: {str(e)}')
+            for contact_sweep in CONTACT_SWEEPS:
+                self.check_stop(b1500)
+                name = contact_sweep[0]
+                self.log(f'Measuring SMUs: {self.sweep_label(contact_sweep)}')
+                readings_by_contacts[name] = self.perform_iv_sweep(b1500, contact_sweep, rows)
+                self._plot_raw(name, readings_by_contacts[name])
+            result = analyze_measurement(readings_by_contacts, self.points)
+            self._result = result
+            self.save_data([r.csv_row() for r in rows], f'{base}.csv', RAW_HEADERS, add_timestamp=False)
+        except Exception:
+            # The runner owns abort/error instrument cleanup. Do not issue further
+            # instrument commands here, including after transport cancellation.
+            if rows:
+                try:
+                    self.save_data([r.csv_row() for r in rows], f'{base}_partial.csv',
+                                   RAW_HEADERS, add_timestamp=False)
+                except Exception as save_error:
+                    self.log(f'Could not save partial Van der Pauw data: {save_error}')
             raise
 
-    def perform_iv_sweep(self, b1500, device):
-        """
-        Perform the 4-terminal I-V sweep measurement.
-        Forces current through force terminals, holds a return SMU at 0 V, and measures voltage on two sense SMUs.
-        Returns list of [Current, VoltageDiff, Time, Status] tuples.
-        """
-        # This mirrors the four-terminal sweep and assumes a future setup step supplies force/sense channels.
-        runner = self.runner
-        source_channel = self.force_high_channel
-        return_channel = self.force_low_channel
-        sense_high = self.sense_high_channel
-        sense_low = self.sense_low_channel
-        
-        self.check_stop(b1500)
-        self.prepare_asu_channels(b1500, (source_channel, return_channel, sense_high, sense_low))
+        plot = self.runner.plot
+        if plot is not None:
+            self.runner.configure_plot(f'Van der Pauw — {device.name}', self.plot_definitions(result),
+                                       column_ratios=(1.6, 1.0, 1.0))
+            for name, readings in readings_by_contacts.items():
+                self._plot_raw(name, readings)
+            for source, column in (('sheet_forward', 2), ('sheet_swapped', 3)):
+                plot.replace_source(source, [p[0] * 1e6 for p in result['pairs']],
+                                    [p[column] for p in result['pairs']])
+            plot.replace_source('sheet_fit', [0.0, abs(self.ibias) * 1e6], [result['sheet']] * 2)
+        self.log(f"Van der Pauw: Rs = {result['sheet']:.6g} Ω/□")
+        for sweep in CONTACT_SWEEPS[::2]:
+            self.log(f"{self.sweep_label(sweep)}: swap difference {result['swap_differences'][sweep[0]]:+.2f}%")
+        self.log(f"Opposite-edge differences: top/bottom {result['opposite_differences'][0]:+.2f}%, "
+                 f"right/left {result['opposite_differences'][1]:+.2f}%")
+        self.save_plot_png(f'{base}_plot.png')
+        self.log(f'Van der Pauw measurement completed for {device.name}')
 
-        # Enable all four SMUs: two current-force terminals and two zero-current voltage probes.
-        b1500.set_switch(source_channel, True)
-        b1500.set_switch(return_channel, True)
-        b1500.set_switch(sense_high, True)
-        b1500.set_switch(sense_low, True)
-
-        self.check_stop(b1500)
-
-        # Reset timestamp
-        b1500.reset_timestamp()
-
-        # Hold the return SMU at 0 V with a safe current compliance
-        b1500.force_voltage(return_channel, 0.0, self.current_compliance)
-        # Sense channels force 0 A so their measured voltages do not intentionally load the sample.
-        b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
-        b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
-
-        # Generate current sweep vector (inclusive of stop)
-        if self.points < 2:
-            current_points = [self.start_current]
-        else:
-            step = (self.stop_current - self.start_current) / (self.points - 1)
-            current_points = [self.start_current + i * step for i in range(self.points)]
-
-        self.check_stop(b1500)
-
-        # Program the sweep on the source channel
-        b1500.set_iv_sweep(
-            source_channel,
-            B1500_SWP_IF_SGLLIN,
-            B1500_AUTO_RANGE,
-            self.start_current,
-            self.stop_current,
-            self.points,
-            hold=self.hold_time,
-            delay=self.delay_time,
-            second_delay=self.second_delay,
-            compliance=self.voltage_compliance,
-            power_compliance=self.power_compliance
-        )
-
-        # Configure the same interleaved stream shape as four_terminal_iv_sweep.py.
-        channels = [source_channel, sense_high, return_channel, sense_low]
+    def perform_iv_sweep(self, b1500, contact_sweep, all_rows):
+        name, *terminals = contact_sweep
+        source_smu, return_smu, high_smu, low_smu = self.smu_numbers(contact_sweep)
+        label = self.sweep_label(contact_sweep)
+        source, ret, high, low = [getattr(self, f'{t}_channel') for t in terminals]
+        channels = [source, high, ret, low]
         modes = [B1500_IM_MODE, B1500_VM_MODE, B1500_IM_MODE, B1500_VM_MODE]
-        ranges = [B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE]
-
+        self.prepare_asu_channels(b1500, channels)
+        b1500.set_switch(B1500_CH_ALL, False)
+        for channel in channels:
+            b1500.set_switch(channel, True)
+        b1500.force_voltage(ret, 0.0, compliance=self.current_compliance)
+        for channel in (high, low):
+            b1500.force_current(channel, 0.0, compliance=self.voltage_compliance, range_=B1500_AUTO_RANGE)
+        b1500.reset_timestamp()
+        b1500.set_iv_sweep(
+            source, B1500_SWP_IF_SGLLIN, B1500_AUTO_RANGE,
+            -abs(self.ibias), abs(self.ibias), self.points,
+            hold=self.hold_time, delay=self.delay_time, second_delay=self.second_delay,
+            compliance=self.voltage_compliance, power_compliance=self.power_compliance,
+        )
         self.check_stop(b1500)
-
-        runner.configure_plot(f'4-Terminal I-V - {device.name}', [
-            PlotDef("iv", xlabel="Current (A)", ylabels=("Voltage (V)",),
-                    elements=[
-                        Curve("V_I", mode="scatter", marker="x", color="C0", legend_label="V(I)"),
-                        LinearFit("V_I", color="C1",
-                                  legend_label_template="R = {slope:.4g} Ω  (R² = {r_squared:.4f})"),
-                    ]),
-        ])
-
-        # Start streaming for live plot updates and full capture
-        # it's called "start_measure", but it does not return until the sweep is complete
-        b1500.start_measure(channels, modes, ranges, source_output=1, timestamp=1)
-
-        # We can shut down the source since now the measurement is done
+        b1500.start_measure(channels, modes,
+                            [B1500_AUTO_RANGE, self.measurement_range, B1500_AUTO_RANGE, self.measurement_range],
+                            source_output=1, timestamp=1)
+        data = {ch: [] for ch in channels}
+        expected = dict(zip(channels, modes))
+        outputs, seen = [], set()
+        pending_time = math.nan
+        rows = []
+        try:
+            while True:
+                self.check_stop(b1500)
+                driver_status, eod, kind, value, status, channel = b1500.read_data()
+                # The native read API can return -1 with valid records. Preserve
+                # these records, but make the transport diagnostic visible.
+                if driver_status < 0 and ('driver', driver_status) not in seen:
+                    seen.add(('driver', driver_status))
+                    self.log(f'{label}: read_data returned {driver_status}; retaining returned readings')
+                if status and (channel, kind, status) not in seen:
+                    seen.add((channel, kind, status))
+                    self.runner.report_status(dict(channel=channel, data_type=kind, status=status,
+                                                   desc=describe_status_bits(status)))
+                if channel in data and kind == expected[channel]:
+                    data[channel].append((value, status, pending_time))
+                    pending_time = math.nan
+                elif kind == 3 and channel in (source, B1500_CH_NOCH, B1500_CH_ALL):
+                    outputs.append((value, status))
+                elif kind == 5:
+                    # B1500 Programming Guide, Data Output Format 1-26:
+                    # each TimeN precedes its DataN, including multi-SMU sweeps.
+                    pending_time = value
+                # Drain through EOD, including trailing source status/time records.
+                if eod:
+                    break
+        finally:
+            count = min((len(values) for values in data.values()), default=0)
+            for i in range(count):
+                current_set = outputs[i][0] if i < len(outputs) else math.nan
+                row = Reading(
+                    f'{source_smu}->{return_smu}', f'{high_smu}-{low_smu}', i, current_set, data[source][i][0], data[ret][i][0],
+                    data[high][i][0], data[low][i][0], data[source][i][2],
+                    data[source][i][1], data[ret][i][1], data[high][i][1], data[low][i][1],
+                    outputs[i][1] if i < len(outputs) else 0,
+                )
+                rows.append(row)
+            all_rows.extend(rows)
         b1500.zero_output(B1500_CH_ALL)
         b1500.set_switch(B1500_CH_ALL, False)
+        self.log(f'{label}: collected {len(rows)} points')
+        return rows
 
-        data_by_ch = {ch: [] for ch in channels}
-        status_by_ch = {ch: [] for ch in channels}
-        timestamps = []
-        source_values = []
-        source_status = []
-        plotted = 0
-        max_points = len(current_points)
-        nonzero_statuses = set()
-        while True:
-            self.check_stop(b1500)
-            _ret, eod, data_type, value, status, channel = b1500.read_data()
-            if status:
-                key = (channel, data_type, status)
-                if key not in nonzero_statuses:
-                    nonzero_statuses.add(key)
-                    desc = describe_status_bits(status)
-                    runner.report_status({
-                        "channel": channel,
-                        "data_type": data_type,
-                        "status": status,
-                        "desc": desc,
-                    })
-            if channel in data_by_ch and data_type in (1, 2): # I measure, V measure
-                if len(data_by_ch[channel]) < max_points:
-                    # Store records per channel; all downstream pairing is by sweep-point index.
-                    data_by_ch[channel].append(value)
-                    status_by_ch[channel].append(status)
-            elif data_type in (3, 4):  # source output data
-                if channel not in (source_channel, B1500_CH_NOCH, B1500_CH_ALL):
-                    continue
-                source_values.append(value)
-                source_status.append(status)
-            elif data_type == 5:
-                timestamps.append(value)
-
-            # Push live plot when we have paired sense readings and source current
-            # Van der Pauw resistance uses a differential voltage between the two sense terminals.
-            paired = min(len(data_by_ch[sense_high]), len(data_by_ch[sense_low]), len(data_by_ch[source_channel]), max_points)
-            while plotted < paired:
-                idx = plotted
-                v_diff = data_by_ch[sense_high][idx] - data_by_ch[sense_low][idx]
-                runner.plot.append_point("V_I", current_points[idx], v_diff)
-                plotted += 1
-
-            # Stop if we received all expected points or instrument signaled end
-            if eod or plotted >= max_points:
-                break
-
-        results = []
-        point_count = min(len(current_points), len(data_by_ch[source_channel]), len(data_by_ch[sense_high]), len(data_by_ch[sense_low]))
-        for i in range(point_count):
-            current_set = data_by_ch[source_channel][i]
-            v_high = data_by_ch[sense_high][i]
-            v_low = data_by_ch[sense_low][i]
-            t_val = timestamps[i] if i < len(timestamps) else 0.0
-            # Keep raw high/low voltages in the CSV; combine status bits for quick bad-point filtering.
-            status_combined = 0
-            if i < len(status_by_ch[sense_high]):
-                status_combined |= status_by_ch[sense_high][i]
-            if i < len(status_by_ch[sense_low]):
-                status_combined |= status_by_ch[sense_low][i]
-            if i < len(status_by_ch[source_channel]):
-                status_combined |= status_by_ch[source_channel][i]
-            if i < len(source_status):
-                status_combined |= source_status[i]
-            results.append([
-                current_set,
-                v_high,
-                v_low,
-                t_val,
-                status_combined
-            ])
-
-        self.log(f'Collected {len(results)} 4-terminal I-V sweep points')
-        return results
+    def _plot_raw(self, name, rows):
+        plot = self.runner.plot
+        if plot is None:
+            return
+        for suffix, flagged in (('raw', False), ('flagged', True)):
+            selected = [r for r in rows if bool(r.status) == flagged and r.finite]
+            plot.replace_source(f'{name}_{suffix}', [r.current * 1e6 for r in selected],
+                                [r.voltage * 1e3 for r in selected])
+        fit = fit_iv_curve(rows)
+        if fit is None:
+            return
+        currents = [r.current for r in rows if r.finite]
+        endpoints = [min(currents), max(currents)]
+        plot.replace_source(f'{name}_fit', [i * 1e6 for i in endpoints],
+                            [(fit.slope * i + fit.intercept) * 1e3 for i in endpoints])

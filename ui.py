@@ -34,6 +34,7 @@ from runner import MeasurementAbortRequested, MeasurementRunner
 from instrumentio.bridge import InstrumentCancelled
 from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
 from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
+from procedures.van_der_pauw import VanDerPauwProcedure
 from procedures.iv_sweep import IVSweepProcedure
 from procedures.cv_sweep import CVSweepProcedure
 from procedures.PUND import PUNDProcedure
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 PROCEDURE_CLASSES = {
     'FourTerminalIV': FourTerminalIVProcedure,
+    'VanDerPauw': VanDerPauwProcedure,
     'IVSweep': IVSweepProcedure,
     'CVSweep': CVSweepProcedure,
     'PUND': PUNDProcedure,

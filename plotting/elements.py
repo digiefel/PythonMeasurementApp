@@ -71,6 +71,7 @@ class Curve:
     yaxis: int = 0
     legend_label: str = ""
     show_in_legend: bool = True
+    marker_size: float | None = None
 
 
 @dataclass
@@ -105,6 +106,7 @@ class HLine:
     yaxis: int = 0
     legend_label: str = ""
     show_in_legend: bool = True
+    legend_label_template: str = ""    # optional live value, e.g. "Rs = {value:.5g}"
 
 
 @dataclass
