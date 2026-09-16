@@ -6,6 +6,43 @@ from instrumentio import sessions
 
 
 class SessionTests(unittest.TestCase):
+    def test_measurement_native_timeout_is_unbounded_then_restored(self):
+        session = sessions.B1500Session.__new__(sessions.B1500Session)
+        session.session = 1
+        def read_timeout(handle, attribute, value):
+            ct.cast(value, ct.POINTER(ct.c_uint32))[0] = 10000
+            return 0
+        for failed in (False, True):
+            with self.subTest(failed=failed), patch.object(sessions, "dll_visa32") as visa, patch.object(sessions, "dll_b1500") as driver:
+                visa.viGetAttribute.side_effect = read_timeout
+                visa.viSetAttribute.return_value = 0
+                def measure(*args):
+                    self.assertEqual(visa.viSetAttribute.call_args.args[-1], sessions.VI_TMO_INFINITE)
+                    if failed:
+                        raise RuntimeError("Measurement failed")
+                    return 0
+                driver.agb1500_startMeasure.side_effect = measure
+                if failed:
+                    with self.assertRaisesRegex(RuntimeError, "Measurement failed"):
+                        session.start_measure([1], [1], [0])
+                else:
+                    session.start_measure([1], [1], [0])
+                self.assertEqual(visa.viSetAttribute.call_args.args[-1], 10000)
+
+    def test_wgfmu_cleanup_resets_disconnects_and_closes_even_after_failure(self):
+        session = sessions.WGFMUSession.__new__(sessions.WGFMUSession)
+        session._connected_channels = {101, 102}
+        with patch.object(sessions, "dll_wgfmu") as driver:
+            driver.WGFMU_initialize.return_value = -1
+            driver.WGFMU_getErrorSummarySize.return_value = -1
+            driver.WGFMU_disconnect.return_value = 0
+            driver.WGFMU_closeSession.return_value = 0
+            with self.assertRaises(ExceptionGroup):
+                session.close()
+            self.assertEqual([c.args[0] for c in driver.WGFMU_disconnect.call_args_list], [101, 102])
+            driver.WGFMU_closeSession.assert_called_once()
+            self.assertEqual(session._connected_channels, set())
+
     def test_shutdown_attempts_every_step_and_reports_all_errors(self):
         session = sessions.B1500Session.__new__(sessions.B1500Session)
         session._closed = False

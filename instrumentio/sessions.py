@@ -1,6 +1,7 @@
 """High-level instrument sessions built on top of low-level ctypes bindings."""
 
 import ctypes as ct
+from functools import wraps
 import time
 import warnings
 
@@ -18,6 +19,8 @@ from .bindings import (
     ViString,
     VI_ATTR_TERMCHAR,
     VI_ATTR_TERMCHAR_EN,
+    VI_ATTR_TMO_VALUE,
+    VI_TMO_INFINITE,
     dll_b1500,
     dll_visa32,
     dll_wgfmu,
@@ -58,6 +61,28 @@ def _attempt_all(*operations):
             errors.append(exc)
     if errors:
         raise ExceptionGroup("Instrument cleanup failed", errors)
+
+
+def _measurement_io(method):
+    """Measurement reads may wait for the operator to abort; restore normal I/O
+    timeouts afterwards. This policy belongs to the adapter, not the worker.
+    """
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        require_dll(dll_visa32, "PYMEASUREMENT_VISA32_DLL")
+        previous = ct.c_uint32()
+
+        def check(status):
+            if status < 0:
+                raise RuntimeError(f"Setting measurement I/O timeout failed: {status}")
+
+        check(dll_visa32.viGetAttribute(self.session, VI_ATTR_TMO_VALUE, ct.byref(previous)))
+        check(dll_visa32.viSetAttribute(self.session, VI_ATTR_TMO_VALUE, VI_TMO_INFINITE))
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            check(dll_visa32.viSetAttribute(self.session, VI_ATTR_TMO_VALUE, previous.value))
+    return call
 
 
 def _module_has_asu(model: str) -> bool:
@@ -294,6 +319,7 @@ class B1500Session:
         )
         self._check_ret(ret, "Set synchronous sweep")
 
+    @_measurement_io
     def sweep_iv(self, channel, measurement_mode, measurement_range, expected_points):
         """Execute configured sweep on channel and return measurement data."""
         source = (ViReal64 * expected_points)()
@@ -305,6 +331,7 @@ class B1500Session:
         self._check_ret(ret, "Sweep IV")
         return list(source)[:point_count.value], list(value)[:point_count.value], list(status)[:point_count.value], list(time_)[:point_count.value], point_count.value
 
+    @_measurement_io
     def sweep_miv(self, channels, modes, ranges, expected_points):
         """Execute a sweep and measure multiple channels per point (agb1500_sweepMiv)."""
         n = len(channels)
@@ -366,6 +393,7 @@ class B1500Session:
         )
         self._check_ret(ret, "Set C-V sweep")
 
+    @_measurement_io
     def spot_cmu_meas(self, channel, mode, range_=B1500_AUTO_RANGE):
         """Single CMU measurement point.
 
@@ -390,6 +418,7 @@ class B1500Session:
         self._check_ret(ret, "Spot CMU measurement")
         return data.value, status.value, monitor.value, status_mon.value, time_.value
 
+    @_measurement_io
     def sweep_cv(self, channel, mode, measurement_range, expected_points):
         """Execute configured C-V sweep and return arrays with point_count.
 
@@ -454,6 +483,7 @@ class B1500Session:
             lambda: self._check_ret(dll_b1500.agb1500_abortMeasure(self.session), "Abort measurement"),
         )
 
+    @_measurement_io
     def spot_meas(self, channel, mode, range_=B1500_AUTO_RANGE):
         """Single spot measurement on a channel."""
         value = ViReal64()
@@ -463,6 +493,7 @@ class B1500Session:
         self._check_ret(ret, "Spot measurement")
         return value.value, status.value, timestamp.value
 
+    @_measurement_io
     def start_measure(self, channels, modes, ranges, source_output=1, timestamp=1, monitor=0, meas_type=B1500_MEAS_TYPE_SWEEP):
         """
         Begin a measurement to enable streaming via read_data.
@@ -477,6 +508,7 @@ class B1500Session:
         ret = dll_b1500.agb1500_startMeasure(self.session, meas_type, ch_arr, mode_arr, range_arr, source_output, timestamp, monitor)
         self._check_ret(ret, "Start measure")
 
+    @_measurement_io
     def read_data(self):
         """Read one measurement record from the streaming buffer.
 
@@ -519,6 +551,7 @@ class B1500Session:
         # Do not call _check_ret here; caller decides how to handle transient negatives.
         return ret, eod.value, data_type.value, value.value, status.value, channel.value
 
+    @_measurement_io
     def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback):
         """Execute a CV sweep via raw SCPI with per-point streaming.
 
@@ -799,6 +832,7 @@ class WGFMUSession:
     """
 
     def __init__(self, address: str | None = None):
+        self._connected_channels = set()
         require_dll(dll_wgfmu, "PYMEASUREMENT_WGFMU_DLL")
         if address is not None:
             ret = dll_wgfmu.WGFMU_openSession(address.encode())
@@ -854,8 +888,14 @@ class WGFMUSession:
                 warnings.warn(f"{context}: warning code {ret}", RuntimeWarning)
 
     def close(self):
-        ret = dll_wgfmu.WGFMU_closeSession()
-        self._check_ret(ret, "WGFMU close session")
+        # abort retains the instantaneous voltage; closing VISA alone does not
+        # disable channels. B1530A Guide 4-9, 4-21, 4-50; example 3-24.
+        _attempt_all(
+            self.initialize,
+            *(lambda channel=channel: self.disconnect(channel)
+              for channel in sorted(self._connected_channels)),
+            lambda: self._check_ret(dll_wgfmu.WGFMU_closeSession(), "WGFMU close session"),
+        )
 
     def clear(self):
         ret = dll_wgfmu.WGFMU_clear()
@@ -866,12 +906,16 @@ class WGFMUSession:
         self._check_ret(ret, "WGFMU initialize")
 
     def connect(self, channel_id: int):
+        # Retain attempted connections too: a failed reply need not mean that
+        # the instrument rejected the operation.
+        self._connected_channels.add(channel_id)
         ret = dll_wgfmu.WGFMU_connect(channel_id)
         self._check_ret(ret, "WGFMU connect")
 
     def disconnect(self, channel_id: int):
         ret = dll_wgfmu.WGFMU_disconnect(channel_id)
         self._check_ret(ret, "WGFMU disconnect")
+        self._connected_channels.discard(channel_id)
 
     def set_operation_mode(self, channel_id: int, mode: int):
         ret = dll_wgfmu.WGFMU_setOperationMode(channel_id, mode)

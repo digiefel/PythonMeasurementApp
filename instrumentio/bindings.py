@@ -73,6 +73,14 @@ dll_visa32 = _load_dll(
 # VISA attribute constants for SCPI streaming
 VI_ATTR_TERMCHAR = 0x3FFF0018
 VI_ATTR_TERMCHAR_EN = 0x3FFF0038
+VI_ATTR_TMO_VALUE = 0x3FFF001A
+VI_TMO_INFINITE = 0xFFFFFFFF
+
+if dll_visa32:
+    dll_visa32.viGetAttribute.argtypes = [ViSession, ct.c_uint32, ct.c_void_p]
+    dll_visa32.viGetAttribute.restype = ct.c_int32
+    dll_visa32.viSetAttribute.argtypes = [ViSession, ct.c_uint32, ct.c_size_t]
+    dll_visa32.viSetAttribute.restype = ct.c_int32
 
 # B1500 Function declarations
 if dll_b1500:
