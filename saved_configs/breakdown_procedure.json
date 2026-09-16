@@ -1,7 +1,7 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "output",
-    "fallback_output_dir": "output",
+    "output_dir": "Z:\\_Users\\Shared\\dgfl\\B1500",
+    "fallback_output_dir": "test_output",
     "asu_channels": [
         "SMU2"
     ],
@@ -29,11 +29,16 @@
         },
         "IVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
-            "high_channel": 3,
-            "low_channel": 4,
+            "high_channel": 4,
+            "low_channel": 3,
+            "sense_high": null,
+            "sense_low": null,
+            "start_voltage": 0.0,
             "v_max": 20.0,
             "points": 75,
             "double_sweep": true,
+            "butterfly_sweep": false,
+            "symmetric_terminals": false,
             "current_compliance": 0.1,
             "current_range": 1e-09,
             "hold_time": 0.0,

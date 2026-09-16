@@ -1,18 +1,16 @@
 {
     "gpib_address": "GPIB0::17::INSTR",
-    "output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Georg\\imec MoS2",
+    "output_dir": "Z:\\_Users\\Shared\\dgfl\\B1500",
     "fallback_output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\test_output",
     "b1500": {
         "auto_discover_channels": true,
         "smu_channel_map": {
-            "SMU1": 3,
-            "SMU2": 4,
-            "SMU3": 5,
-            "SMU4": 6
+            "SMU1": 2,
+            "SMU2": 3,
+            "SMU3": 4,
+            "SMU4": 5
         },
-        "asu_channel_map": {
-            "SMU2": 4
-        },
+        "asu_channel_map": {},
         "module_inventory": [
             {
                 "slot": 1,
@@ -25,9 +23,9 @@
             {
                 "slot": 2,
                 "channel": 2,
-                "model": "B1530A",
+                "model": "B1517A",
                 "revision": "0",
-                "kind": "WGFMU",
+                "kind": "SMU",
                 "has_asu": false
             },
             {
@@ -41,10 +39,10 @@
             {
                 "slot": 4,
                 "channel": 4,
-                "model": "B1517A/E5288A",
+                "model": "B1517A",
                 "revision": "0",
                 "kind": "SMU",
-                "has_asu": true
+                "has_asu": false
             },
             {
                 "slot": 5,
@@ -57,23 +55,15 @@
             {
                 "slot": 6,
                 "channel": 6,
-                "model": "B1517A",
-                "revision": "0",
-                "kind": "SMU",
-                "has_asu": false
-            },
-            {
-                "slot": 7,
-                "channel": 7,
-                "model": "B1520A/N1301A",
+                "model": "B1520A",
                 "revision": "0",
                 "kind": "CMU",
                 "has_asu": false
             }
         ],
-        "unt_response": "B1530A,0;B1530A,0;B1517A,0;B1517A/E5288A,0;B1517A,0;B1517A,0;B1520A/N1301A,0;0,0;0,0;0,0"
+        "unt_response": "B1530A,0;B1517A,0;B1517A,0;B1517A,0;B1517A,0;B1520A,0;0,0;0,0;0,0;0,0"
     },
-    "devices_csv_path": "C:\\Users\\EMN Lab\\Desktop\\PythonMeasurementApp\\GeorgvB\\saved_configs\\devices_MoS2_selected_hierarchy_A3_2_ref.csv",
+    "devices_csv_path": "devices.csv",
     "cmu_calibration": {
         "7": {
             "open": {
@@ -403,7 +393,7 @@
             "sweep_type": "double",
             "cmu_mode": 11,
             "start_bias": 2.0,
-            "stop_bias": 2.9,
+            "stop_bias": -2.9,
             "points": 50,
             "measurement_range": 0.0,
             "ac_level_mv": 30.0,
@@ -430,23 +420,21 @@
         }
     },
     "last_selection": {
-        "chip_id": "",
-        "site": "VII",
-        "subsite": "25um",
-        "device": "D1",
-        "procedure": "IVSweep",
-        "set_home_before_run": true,
+        "site": "XI",
+        "subsite": "FeCap",
+        "device": "E1",
+        "procedure": "CVSweep",
+        "set_home_before_run": false,
+        "auto_separation_after_measurement": true,
+        "chip": "RuO2test_A8",
+        "selected_devices": [],
+        "temp_comp_x_um_per_c": "-0.284",
+        "temp_comp_y_um_per_c": "1.435",
+        "temp_comp_z_um_per_c": "0.0",
         "temperature_enabled": false,
         "temperature_mode": "Sweep",
         "temperature_setpoint_c": "25",
         "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30",
-        "manual_temperature_k": "298",
-        "temp_comp_x_um_per_c": "-0.284",
-        "temp_comp_y_um_per_c": "1.435",
-        "temp_comp_z_um_per_c": "0.0",
-        "auto_separation_after_measurement": true,
-        "chip": "",
-        "selected_devices": []
+        "temperature_wait_after_s": "30"
     }
 }

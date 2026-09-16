@@ -1,6 +1,6 @@
 {
   "gpib_address": "GPIB0::17::INSTR",
-  "output_dir": "output",
+  "output_dir": "Z:/_Users/Shared/dgfl/B1500",
   "asu_channels": [
     "SMU2"
   ],
@@ -81,5 +81,5 @@
     "temperature_sweep_c": "25, 75",
     "temperature_wait_after_s": "30"
   },
-  "fallback_output_dir": "output"
+  "fallback_output_dir": "C:\\Users\\EMN Lab\\Documents\\Visual Studio 2022\\Davide\\PythonMeasurementApp\\test_output"
 }
