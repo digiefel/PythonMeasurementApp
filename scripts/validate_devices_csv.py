@@ -120,7 +120,7 @@ def _print_explain(compilation, path: str):
         if not site:
             print("  No loaded site matched this path.")
         else:
-            print(f"  Site {site.name}: local ({site.x:g}, {site.y:g}), rows {_rows(site.source_rows)}")
+            print(f"  Site {site.name}: local {_coords(site.x, site.y)}, rows {_rows(site.source_rows)}")
             _print_tags(site.tags)
     elif len(parts) == 2:
         site = _find_site(compilation, parts[0])
@@ -129,8 +129,8 @@ def _print_explain(compilation, path: str):
             print("  No loaded subsite matched this path.")
         else:
             print(
-                f"  Subsite {site.name}/{subsite.name}: local ({subsite.x:g}, {subsite.y:g}), "
-                f"absolute ({subsite.absolute_x:g}, {subsite.absolute_y:g}), rows {_rows(subsite.source_rows)}"
+                f"  Subsite {site.name}/{subsite.name}: local {_coords(subsite.x, subsite.y)}, "
+                f"absolute {_coords(subsite.absolute_x, subsite.absolute_y)}, rows {_rows(subsite.source_rows)}"
             )
             _print_tags(subsite.tags)
     elif len(parts) == 3:
@@ -141,8 +141,8 @@ def _print_explain(compilation, path: str):
             print("  No loaded device matched this path.")
         else:
             print(
-                f"  Device {site.name}/{subsite.name}/{device.name}: local ({device.x:g}, {device.y:g}), "
-                f"absolute ({device.absolute_x:g}, {device.absolute_y:g}), rows {_rows(device.source_rows)}"
+                f"  Device {site.name}/{subsite.name}/{device.name}: local {_coords(device.x, device.y)}, "
+                f"absolute {_coords(device.absolute_x, device.absolute_y)}, rows {_rows(device.source_rows)}"
             )
             _print_tags(device.tags)
     else:
@@ -157,17 +157,17 @@ def _print_tree(compilation):
         print()
         return
     for site in compilation.sites:
-        print(f"  {site.name} at ({site.x:g}, {site.y:g})")
+        print(f"  {site.name} at {_coords(site.x, site.y)}")
         for subsite in site.subsites:
             print(
-                f"    {subsite.name} at local ({subsite.x:g}, {subsite.y:g}), "
-                f"absolute ({subsite.absolute_x:g}, {subsite.absolute_y:g})"
+                f"    {subsite.name} at local {_coords(subsite.x, subsite.y)}, "
+                f"absolute {_coords(subsite.absolute_x, subsite.absolute_y)}"
             )
             for device in subsite.devices:
                 tag_text = f" tags={';'.join(sorted(device.tags))}" if device.tags else ""
                 print(
-                    f"      {device.name} at local ({device.x:g}, {device.y:g}), "
-                    f"absolute ({device.absolute_x:g}, {device.absolute_y:g}){tag_text}"
+                    f"      {device.name} at local {_coords(device.x, device.y)}, "
+                    f"absolute {_coords(device.absolute_x, device.absolute_y)}{tag_text}"
                 )
     print()
 
@@ -200,6 +200,10 @@ def _find_device(subsite, name):
     if not subsite:
         return None
     return next((device for device in subsite.devices if device.name == name), None)
+
+
+def _coords(x, y):
+    return "unknown" if x is None or y is None else f"({x:g}, {y:g})"
 
 
 def _rows(rows):

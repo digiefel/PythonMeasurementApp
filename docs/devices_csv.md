@@ -7,13 +7,13 @@ move. The GUI shows it as a tree:
 Site -> Subsite -> Device
 ```
 
-The most important columns are always:
+The required columns are:
 
 ```csv
-Site,Subsite,Device,X,Y
+Site,Subsite,Device
 ```
 
-`X` and `Y` are micrometer coordinates. `X` increases to the right, and `Y`
+Optional `X` and `Y` columns contain micrometer coordinates. `X` increases to the right, and `Y`
 increases up:
 
 ```text
@@ -50,6 +50,41 @@ S01
 
 The `Device` column names a measurement target. It does not have to be a single
 physical object on the chip. Multiple device rows may also use the same position. 
+
+## Omitting Coordinates
+
+You can omit both `X` and `Y` columns, or leave both cells blank on individual
+rows. Supplying just one coordinate is an error. For example:
+
+```csv
+Site,Subsite,Device,X,Y
+,FeCap,A1,100,200
+S01,FeCap,A1,,
+S01,FeCap,A2,,
+```
+
+`S01/FeCap/A1` inherits `(100, 200)` from the reusable device definition.
+`S01/FeCap/A2` has an unknown position. Missing coordinates never override known
+template coordinates; explicit coordinate pairs still take precedence. Duplicate
+rows may also supply coordinates for a path that otherwise has only blank cells.
+
+With a connected prober, a run pauses before each unknown-position device and asks
+you to position it and establish contact manually. Click **Continue** to measure,
+or **Abort Run** to stop. This also happens on each temperature step. The prober
+controls remain accessible during the pause. Automatic XY movement and temperature
+position compensation are skipped for that device; the existing light and
+post-measurement separation settings still apply. Without a connected prober,
+measurements retain their existing manual workflow.
+
+Devices without local coordinates appear in a separate selectable list in the
+device selection dialog. **Go To Device** and **Set Reference to Device** require
+a known full position. Setting the origin at run start is skipped if the reference
+device's position is unknown.
+
+An explicit site/subsite row with missing coordinates also inherits from a matching
+template, if available; otherwise its position is unknown, making its descendants'
+full positions unknown. Sites/subsites with no definition at all retain the existing
+behavior of adding no offset to their children's coordinates.
 
 ## Adding Site Coordinates
 
@@ -232,7 +267,7 @@ filter or run by tag yet.
 
 ## Rules To Remember
 
-- `X` and `Y` are required on every non-empty row.
+- `X` and `Y` may both be omitted; a supplied coordinate pair must be numeric.
 - A device must belong to a subsite.
 - A row with `Site,Subsite,Device` filled defines one exact measurement target.
 - A row with empty `Site` can define something reusable for every subsite with
@@ -314,3 +349,10 @@ python scripts/validate_devices_csv.py saved_configs/devices.csv --verbose
 
 The script reports errors, position changes from more specific rows, unused
 reusable rows, and shared probe positions.
+Reported row numbers count physical file lines, including the header and blank
+lines. For a quoted CSV record spanning multiple lines, the reported number is
+its final line. Unknown positions are shown as `unknown` and are not counted as
+shared probe positions.
+
+To reload an edited CSV in the app, select the same file again in the dropdown or
+through **Browse...**. A failed reload leaves the previously loaded device tree intact.

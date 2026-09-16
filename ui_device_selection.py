@@ -21,7 +21,9 @@ class DeviceSelectionDialog:
             initially_selected: Set of device names that should be pre-selected
         """
         self.parent = parent
-        self.devices = devices
+        self.devices = [device for device in devices if device.x is not None and device.y is not None]
+        self.unpositioned_devices = [device for device in devices if device.x is None or device.y is None]
+        self.manual_list = None
         self.prober_position = prober_position
         self.selected_devices = set(initially_selected) if initially_selected else set()
         self.result = None  # Will be set to the selected device names on OK
@@ -56,6 +58,23 @@ class DeviceSelectionDialog:
             justify="left"
         )
         instructions.pack(padx=10, pady=(10, 5))
+
+        if self.unpositioned_devices:
+            manual_frame = ttk.LabelFrame(self.dialog, text="Unknown coordinates (manual positioning)")
+            manual_frame.pack(padx=10, pady=5, fill="x")
+            self.manual_list = tk.Listbox(
+                manual_frame, selectmode=tk.MULTIPLE, exportselection=False,
+                height=min(6, len(self.unpositioned_devices)),
+            )
+            scrollbar = ttk.Scrollbar(manual_frame, command=self.manual_list.yview)
+            scrollbar.pack(side="right", fill="y")
+            self.manual_list.configure(yscrollcommand=scrollbar.set)
+            self.manual_list.pack(side="left", fill="x", expand=True)
+            for index, device in enumerate(self.unpositioned_devices):
+                self.manual_list.insert(tk.END, device.name)
+                if device.name in self.selected_devices:
+                    self.manual_list.selection_set(index)
+            self.manual_list.bind("<<ListboxSelect>>", self._update_manual_selection)
         
         # Canvas frame
         canvas_frame = ttk.Frame(self.dialog)
@@ -221,7 +240,21 @@ class DeviceSelectionDialog:
     
     def _update_selection_label(self):
         """Update the selection count label."""
+        if self.manual_list is not None:
+            self.manual_list.selection_clear(0, tk.END)
+            for index, device in enumerate(self.unpositioned_devices):
+                if device.name in self.selected_devices:
+                    self.manual_list.selection_set(index)
         self.selection_label.config(text=f"Selected: {len(self.selected_devices)}")
+
+    def _update_manual_selection(self, event=None):
+        selected_indices = set(self.manual_list.curselection())
+        for index, device in enumerate(self.unpositioned_devices):
+            if index in selected_indices:
+                self.selected_devices.add(device.name)
+            else:
+                self.selected_devices.discard(device.name)
+        self._update_selection_label()
     
     def _on_mouse_down(self, event):
         """Handle mouse button press."""
@@ -333,7 +366,7 @@ class DeviceSelectionDialog:
     
     def _select_all(self):
         """Select all devices."""
-        for device in self.devices:
+        for device in self.devices + self.unpositioned_devices:
             self.selected_devices.add(device.name)
             self._update_device_appearance(device.name, True)
         self._update_selection_label()

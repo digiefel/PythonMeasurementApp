@@ -4,6 +4,19 @@ from dataclasses import dataclass, field
 from typing import Iterable, List, Optional
 
 
+_UNSET = object()
+
+
+def add_coordinate(parent, offset):
+    return None if parent is None or offset is None else parent + offset
+
+
+def has_position(device):
+    """Whether the full position is known, including all parent offsets."""
+    return (getattr(device, "absolute_x", getattr(device, "x", None)) is not None
+            and getattr(device, "absolute_y", getattr(device, "y", None)) is not None)
+
+
 class DeviceCsvError(ValueError):
     """Raised when a devices CSV cannot be compiled into a device tree."""
 
@@ -16,19 +29,19 @@ class Device:
     def __init__(
         self,
         name: str,
-        x: float,
-        y: float,
+        x: Optional[float],
+        y: Optional[float],
         tags: Optional[Iterable[str]] = None,
-        absolute_x: Optional[float] = None,
-        absolute_y: Optional[float] = None,
+        absolute_x=_UNSET,
+        absolute_y=_UNSET,
         source_rows: Optional[Iterable[int]] = None,
     ):
         self.name = name
         self.x = x
         self.y = y
         self.tags = set(tags or [])
-        self.absolute_x = x if absolute_x is None else absolute_x
-        self.absolute_y = y if absolute_y is None else absolute_y
+        self.absolute_x = x if absolute_x is _UNSET else absolute_x
+        self.absolute_y = y if absolute_y is _UNSET else absolute_y
         self.source_rows = tuple(source_rows or ())
 
 
@@ -37,11 +50,11 @@ class Subsite:
         self,
         name: str,
         devices: Optional[List[Device]] = None,
-        x: float = 0.0,
-        y: float = 0.0,
+        x: Optional[float] = 0.0,
+        y: Optional[float] = 0.0,
         tags: Optional[Iterable[str]] = None,
-        absolute_x: Optional[float] = None,
-        absolute_y: Optional[float] = None,
+        absolute_x=_UNSET,
+        absolute_y=_UNSET,
         source_rows: Optional[Iterable[int]] = None,
     ):
         self.name = name
@@ -49,8 +62,8 @@ class Subsite:
         self.x = x
         self.y = y
         self.tags = set(tags or [])
-        self.absolute_x = x if absolute_x is None else absolute_x
-        self.absolute_y = y if absolute_y is None else absolute_y
+        self.absolute_x = x if absolute_x is _UNSET else absolute_x
+        self.absolute_y = y if absolute_y is _UNSET else absolute_y
         self.source_rows = tuple(source_rows or ())
 
 
@@ -59,8 +72,8 @@ class Site:
         self,
         name: str,
         subsites: Optional[List[Subsite]] = None,
-        x: float = 0.0,
-        y: float = 0.0,
+        x: Optional[float] = 0.0,
+        y: Optional[float] = 0.0,
         tags: Optional[Iterable[str]] = None,
         source_rows: Optional[Iterable[int]] = None,
     ):
@@ -79,12 +92,12 @@ class CsvDefinition:
     site: str
     subsite: str
     device: str
-    x: float
-    y: float
+    x: Optional[float]
+    y: Optional[float]
     tags: set[str] = field(default_factory=set)
 
     @property
-    def coords(self) -> tuple[float, float]:
+    def coords(self) -> tuple[Optional[float], Optional[float]]:
         return self.x, self.y
 
 
@@ -92,26 +105,27 @@ class CsvDefinition:
 class MergedDefinition:
     kind: str
     key: tuple[Optional[str], Optional[str], Optional[str]]
-    x: float
-    y: float
+    x: Optional[float]
+    y: Optional[float]
     tags: set[str]
     rows: list[int]
+    coordinate_row: Optional[int] = None
 
     @property
-    def coords(self) -> tuple[float, float]:
+    def coords(self) -> tuple[Optional[float], Optional[float]]:
         return self.x, self.y
 
 
 @dataclass
 class ResolvedDefinition:
-    x: float
-    y: float
+    x: Optional[float]
+    y: Optional[float]
     tags: set[str]
     rows: list[int]
     source: Optional[MergedDefinition]
 
     @property
-    def coords(self) -> tuple[float, float]:
+    def coords(self) -> tuple[Optional[float], Optional[float]]:
         return self.x, self.y
 
 
@@ -142,8 +156,8 @@ def compile_devices_csv(csv_path: str, raise_on_error: bool = False) -> DeviceCs
 
 
 class DeviceCsvCompiler:
-    REQUIRED_COLUMNS = ("Site", "Subsite", "Device", "X", "Y")
-    OPTIONAL_COLUMNS = ("Tags",)
+    REQUIRED_COLUMNS = ("Site", "Subsite", "Device")
+    OPTIONAL_COLUMNS = ("X", "Y", "Tags")
 
     def __init__(self, csv_path: str):
         self.csv_path = csv_path
@@ -180,8 +194,8 @@ class DeviceCsvCompiler:
                 columns = self._map_columns(reader.fieldnames or [])
                 if self.errors:
                     return
-                for row_num, row in enumerate(reader, start=2):
-                    self._read_row(row_num, row, columns)
+                for row in reader:
+                    self._read_row(reader.line_num, row, columns)
         except FileNotFoundError:
             self.errors.append(f"File not found: {self.csv_path}")
         except OSError as exc:
@@ -255,9 +269,11 @@ class DeviceCsvCompiler:
             return set()
         return {part.strip() for part in value.split(";") if part.strip()}
 
-    def _parse_coords(self, row_num: int, x_raw: str, y_raw: str) -> Optional[tuple[float, float]]:
+    def _parse_coords(self, row_num: int, x_raw: str, y_raw: str) -> Optional[tuple[Optional[float], Optional[float]]]:
+        if not x_raw and not y_raw:
+            return None, None
         if not x_raw or not y_raw:
-            self.errors.append(f"Row {row_num}: X and Y are required.")
+            self.errors.append(f"Row {row_num}: Provide both X and Y, or leave both blank.")
             return None
         try:
             return -float(x_raw), -float(y_raw)
@@ -279,20 +295,24 @@ class DeviceCsvCompiler:
                 y=definition.y,
                 tags=set(definition.tags),
                 rows=[definition.row],
+                coordinate_row=definition.row if definition.x is not None else None,
             )
             self.decisions.append(
                 f"Row {definition.row}: remembered {self._kind_label(definition.kind)} {self._key_label(definition.kind, path)} at {self._coords(definition.coords)}"
             )
             return
 
-        if current.coords != definition.coords:
+        if current.x is not None and definition.x is not None and current.coords != definition.coords:
             self.errors.append(
-                f"Rows {current.rows[0]} and {definition.row}: conflicting {self._kind_label(definition.kind)} "
+                f"Rows {current.coordinate_row} and {definition.row}: conflicting {self._kind_label(definition.kind)} "
                 f"{self._key_label(definition.kind, path)} coordinates "
                 f"{self._coords(current.coords)} vs {self._coords(definition.coords)}."
             )
             return
 
+        if current.x is None and definition.x is not None:
+            current.x, current.y = definition.coords
+            current.coordinate_row = definition.row
         current.tags.update(definition.tags)
         current.rows.append(definition.row)
         self.decisions.append(
@@ -365,8 +385,8 @@ class DeviceCsvCompiler:
             x=resolved.x,
             y=resolved.y,
             tags=resolved.tags,
-            absolute_x=site.x + resolved.x,
-            absolute_y=site.y + resolved.y,
+            absolute_x=add_coordinate(site.x, resolved.x),
+            absolute_y=add_coordinate(site.y, resolved.y),
             source_rows=resolved.rows,
         )
 
@@ -383,8 +403,8 @@ class DeviceCsvCompiler:
                 resolved.x,
                 resolved.y,
                 tags=resolved.tags,
-                absolute_x=subsite.absolute_x + resolved.x,
-                absolute_y=subsite.absolute_y + resolved.y,
+                absolute_x=add_coordinate(subsite.absolute_x, resolved.x),
+                absolute_y=add_coordinate(subsite.absolute_y, resolved.y),
                 source_rows=resolved.rows,
             )
             subsite.devices.append(device)
@@ -410,12 +430,13 @@ class DeviceCsvCompiler:
             tags.update(definition.tags)
             rows.extend(definition.rows)
 
-        chosen = candidates[-1]
-        if len(candidates) > 1 and candidates[0].coords != chosen.coords:
+        positioned = [candidate for candidate in candidates if candidate.x is not None]
+        chosen = positioned[-1] if positioned else candidates[-1]
+        if len(positioned) > 1 and positioned[0].coords != chosen.coords:
             self.overrides.append(
                 f"{label}: row(s) {self._rows(chosen.rows)} override "
-                f"row(s) {self._rows(candidates[0].rows)} "
-                f"from {self._coords(candidates[0].coords)} to {self._coords(chosen.coords)}"
+                f"row(s) {self._rows(positioned[0].rows)} "
+                f"from {self._coords(positioned[0].coords)} to {self._coords(chosen.coords)}"
             )
         return ResolvedDefinition(chosen.x, chosen.y, tags, rows, chosen)
 
@@ -454,6 +475,8 @@ class DeviceCsvCompiler:
         for site in sites:
             for subsite in site.subsites:
                 for device in subsite.devices:
+                    if not has_position(device):
+                        continue
                     positions[(device.absolute_x, device.absolute_y)].append(
                         f"{site.name}/{subsite.name}/{device.name}"
                     )
@@ -510,7 +533,9 @@ class DeviceCsvCompiler:
         return "/".join(part or "" for part in key)
 
     @staticmethod
-    def _coords(coords: tuple[float, float]) -> str:
+    def _coords(coords: tuple[Optional[float], Optional[float]]) -> str:
+        if None in coords:
+            return "unknown"
         return f"({coords[0]:g}, {coords[1]:g})"
 
     @staticmethod

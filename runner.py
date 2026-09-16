@@ -7,6 +7,7 @@ import atexit
 import logging
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 import threading
+from models import has_position
 from instrumentio.bridge import InstrumentCancelled, InstrumentError, RemoteB1500Session
 from prober import ProberController
 
@@ -34,6 +35,7 @@ class MeasurementRunner:
         self.log_callback: Optional[Callable[[str], None]] = None
         self.plot: PlotBridge | None = None
         self.status_callback: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None
+        self.manual_position_callback: Optional[Callable[[Any], bool]] = None
         self.contact_state_callback: Optional[Callable[[bool], None]] = None
         self.light_state_callback: Optional[Callable[[bool], None]] = None
         self._last_status_message = None
@@ -341,6 +343,8 @@ class MeasurementRunner:
 
     def _compute_target_xy(self, device) -> tuple[float, float]:
         """Compute temperature-compensated XY target for a device."""
+        if not has_position(device):
+            raise ValueError(f"Position unknown for '{device.name}'; position the device manually.")
         comp_x, comp_y, _ = self.temp_comp_coeffs_xyz
         comp_x = comp_x or 0.0
         comp_y = comp_y or 0.0
@@ -389,6 +393,15 @@ class MeasurementRunner:
     def _prepare_for_measurement(self, device):
         """Ensure chuck is at the device and in contact before measuring."""
         self.check_stop("Stop before device move")
+        if not has_position(device):
+            callback = self.manual_position_callback
+            if callback is None:
+                raise RuntimeError(f"Position unknown for '{device.name}'; manual positioning confirmation is required.")
+            self.prober_set_light(True)
+            if not callback(device):
+                raise MeasurementAbortRequested("Manual positioning cancelled")
+            self.check_stop("Stop during manual positioning")
+            return
         target_x, target_y = self._compute_target_xy(device)
         cur_x, cur_y = self.prober_ctrl.read_position()
         at_target = (

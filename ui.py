@@ -14,6 +14,7 @@ from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
 
 from config import Config
+from models import has_position
 from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH
 from instrumentio.constants import (
     SMU_CHANNEL_MAP,
@@ -104,6 +105,7 @@ class MainUI:
         self.runner = MeasurementRunner(self.config)
         self.runner.log_callback = self._post_log
         self.runner.status_callback = self._post_status
+        self.runner.manual_position_callback = self._confirm_manual_position
         self.plot_bridge = PlotBridge(viewer_geometry=viewer_geometry)
         self.runner.plot = self.plot_bridge
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
@@ -626,8 +628,6 @@ class MainUI:
         target = (csv_path or '').strip()
         if not target:
             return
-        if os.path.normcase(os.path.normpath(target)) == os.path.normcase(os.path.normpath(self.config.devices_csv_path)):
-            return
         try:
             self.config.reload_devices(target, persist=True)
         except Exception as e:
@@ -768,9 +768,9 @@ class MainUI:
                 if pos:
                     origin = self.runner.prober_ctrl.subsite_origin
                     
-                    if set_home_checked and device:
+                    if set_home_checked and device and has_position(device):
                         prober_pos = (device.x, device.y)
-                    elif origin:
+                    elif origin and subsite.absolute_x is not None and subsite.absolute_y is not None:
                         # Origin already set, compute local position inside the selected subsite.
                         chip_x, chip_y = pos[0] - origin[0], pos[1] - origin[1]
                         prober_pos = (chip_x - subsite.absolute_x, chip_y - subsite.absolute_y)
@@ -798,9 +798,9 @@ class MainUI:
                 if pos:
                     origin = self.runner.prober_ctrl.subsite_origin
                     
-                    if set_home_checked and device:
+                    if set_home_checked and device and has_position(device):
                         dialog.update_prober_position((device.x, device.y))
-                    elif origin:
+                    elif origin and subsite.absolute_x is not None and subsite.absolute_y is not None:
                         chip_x, chip_y = pos[0] - origin[0], pos[1] - origin[1]
                         dialog.update_prober_position((chip_x - subsite.absolute_x, chip_y - subsite.absolute_y))
                     else:
@@ -1579,7 +1579,9 @@ class MainUI:
         else:
             self.temp_ui.stop_run()
         def target():
-            if set_home:
+            if set_home and not has_position(device):
+                self._post_log("Position unknown: skipping coordinate origin setup.")
+            elif set_home:
                 if self.prober_available:
                     self._post_log(
                         f"Setting coordinate origin to device '{device.name}' at "
@@ -1680,6 +1682,9 @@ class MainUI:
         if not device:
             self.log("Select site, subsite, and device before setting reference.")
             return
+        if not has_position(device):
+            messagebox.showinfo("Unknown Position", "This device has no known position, so it cannot define the coordinate reference.")
+            return
         self.log(
             f"Setting prober reference to device '{device.name}' at "
             f"({device.absolute_x}um, {device.absolute_y}um)."
@@ -1758,6 +1763,52 @@ class MainUI:
         print(log_msg)
         self.log_text.insert(tk.END, log_msg + '\n')
         self.log_text.see(tk.END)
+
+    def _confirm_manual_position(self, device):
+        """Pause the worker while the user positions a device using the prober controls."""
+        done = threading.Event()
+        confirmed = False
+        site = self.runner.current_site.name
+        subsite = self.runner.current_subsite.name
+
+        def show_prompt():
+            if done.is_set():
+                return
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Manual Positioning")
+            dialog.transient(self.root)
+            ttk.Label(
+                dialog,
+                text=f"Position unknown for {site}/{subsite}/{device.name}.\n"
+                     "Position the probes and establish contact manually, then click Continue.",
+                padding=15,
+            ).pack()
+
+            def finish(accepted):
+                nonlocal confirmed
+                confirmed = accepted
+                done.set()
+
+            ttk.Button(dialog, text="Continue", command=lambda: finish(True)).pack(pady=5)
+            ttk.Button(dialog, text="Abort Run", command=lambda: finish(False)).pack(pady=5)
+            dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+
+            def close_when_done():
+                if done.is_set():
+                    dialog.destroy()
+                else:
+                    dialog.after(100, close_when_done)
+
+            close_when_done()
+
+        self._post(show_prompt)
+        try:
+            while not done.wait(0.1):
+                self.runner.check_stop("Stopped during manual positioning")
+            self.runner.check_stop("Stopped during manual positioning")
+            return confirmed
+        finally:
+            done.set()
 
     def _post(self, fn, *args):
         self.root.after(0, lambda: fn(*args))

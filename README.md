@@ -173,7 +173,7 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - Hacky solutions
 
 ## Config Files
-- **Device CSV files**: CSV catalogs for measurement targets. Required columns: `Site,Subsite,Device,X,Y`; optional column: `Tags`. See `docs/devices_csv.md`.
+- **Device CSV files**: CSV catalogs for measurement targets. Required columns: `Site,Subsite,Device`; optional columns: `X,Y,Tags`. Omit X/Y together to inherit template coordinates or use manual positioning. See `docs/devices_csv.md`.
 - **global_config.json**: Stores global app settings including the active `devices_csv_path`.
 
 ## Procedures
