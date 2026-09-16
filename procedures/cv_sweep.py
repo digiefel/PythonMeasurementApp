@@ -48,7 +48,11 @@ class CVSweepProcedure(MeasurementProcedure):
     The sweep is executed once per frequency; all traces are plotted together and the CSV
     always includes a Frequency_Hz column.
 
-    Data is streamed point-by-point via raw VISA SCPI (FMT 5,0 + XE) for live plotting.
+    Each point sets DC bias, waits for settling and measures impedance using the
+    selected AC frequency/level and CMU integration time. Results plot as acquired.
+    PLC integration rejects line-frequency noise: N cycles take N × 20 ms at 50 Hz.
+    Calibration controls apply open/short/load correction and phase compensation.
+    Hover over settings for their meanings.
 
     When cmu_mode is Z-Theta (mode 11 or 10), Rp and Cp are computed from Z and Theta
     per-point and plotted live in a 2×2 panel layout alongside Z and Theta.
@@ -59,15 +63,15 @@ class CVSweepProcedure(MeasurementProcedure):
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('cmu_channel', 'CMU Channel', -1, Choice(B1500_CMU_CHANNELS, int)),
         parameter('sweep_type', 'Sweep Type', 'single', Choice(CV_SWEEP_TYPES, str)),
-        parameter('cmu_mode', 'C-V Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int)),
+        parameter('cmu_mode', 'C-V Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int), help='Selects the impedance representation returned by the CMU. Z–Theta modes also produce derived parallel resistance and capacitance plots.'),
         parameter('start_bias', 'Start Bias (V)', -2.0, float),
         parameter('stop_bias', 'Stop Bias (V)', 2.0, float),
         parameter('points', 'Points', 101, int),
         parameter('measurement_range', 'MFCMU Meas Range', B1500_AUTO_RANGE, Choice(B1500_CMU_SWEEP_RANGES, float)),
-        parameter('ac_level_mv', 'AC Level (mV)', 30.0, float),
-        parameter('frequencies', 'Frequencies (e.g. 100k, 1M)', '100k', str),
+        parameter('ac_level_mv', 'AC Level (mV)', 30.0, float, help='AC excitation superimposed on the swept DC bias for impedance measurement.'),
+        parameter('frequencies', 'Frequencies (e.g. 100k, 1M)', '100k', str, help='Comma-separated frequencies in Hz; SI prefixes are accepted. One sweep per frequency, overlaid in the plot and identified by Frequency_Hz in the CSV.'),
         parameter('integration_mode', 'Integration Mode', 0, Choice(B1500_CMU_INTEGRATION_MODES, int)),
-        parameter('integration_value', 'Integration (manual/PLC)', 1, int),
+        parameter('integration_value', 'Integration (manual/PLC)', 1, int, help='In PLC mode, integration lasts this many power line cycles: 20 ms per cycle at 50 Hz. Longer integration improves noise rejection and increases point time.'),
         parameter('hold_time', 'Hold Time (s)', 0.0, float),
         parameter('delay_time', 'Delay Time (s)', 0.0, float),
         parameter('second_delay', 'Second Delay (s)', 0.0, float),

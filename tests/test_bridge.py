@@ -1,3 +1,11 @@
+"""Exercise the production executor with fake sessions in real subprocesses.
+
+These checks cover transport/ownership, not hardware output behavior. On the lab
+stack, verify reconnects, complete data counts, Abort for SMU and WGFMU, Skip before
+queue continuation, and closing idle/active sessions. Preserve log.txt on failure
+and check outputs on the instrument; the GUI becoming idle is not verification.
+"""
+
 import concurrent.futures
 import json
 import logging

@@ -2,6 +2,17 @@
 
 A failed or cancelled connection is never reused. Calls are not retried.
 Callbacks use acknowledgements, so no measurement events need to be dropped.
+
+The address lease lasts through worker exit and emergency cleanup. Calls serialize;
+exclusive() also serializes multi-call setup. Cancellation bypasses that lock,
+retires the connection and prevents queued calls from reaching the instrument.
+Callbacks must not issue nested instrument calls. Measurements have no default
+elapsed-time deadline; connection startup and shutdown have separate bounds in
+protocol.py. A new requested run can connect again; background probes cannot.
+
+The worker owns native calls and cleanup (bridge_worker.py). The emergency helper
+may open a fresh VISA session only after the old process exits. Successful cleanup
+acknowledges documented commands, not a physical measurement of output voltage.
 """
 
 from __future__ import annotations

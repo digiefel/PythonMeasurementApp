@@ -1,4 +1,12 @@
-"""Single-owner executor; cancellation may only terminate pending host VISA I/O."""
+"""Single-owner executor; cancellation may only terminate pending host VISA I/O.
+
+The input thread queues calls; the watchdog requests viTerminate while a mainframe
+call is active. io_handoff prevents termination from overlapping owner cleanup.
+Only after the call returns does the owner clear/confirm/close the instrument.
+The existing STOP_TIMEOUT_S bounds this handoff and cleanup; a stuck native call
+falls back to process termination. WGFMU has an opaque session, so its calls cannot
+be interrupted using the mainframe VISA handle. Parent EOF follows the same path.
+"""
 
 from __future__ import annotations
 

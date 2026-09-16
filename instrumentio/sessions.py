@@ -249,6 +249,49 @@ class B1500Session:
     def set_timeout(self, ms):
         self._check_ret(dll_b1500.agb1500_timeOut(self.session, ms), "Set timeout")
 
+    def configure_smu_acquisition(self, channels, *, adc, mode, coefficient,
+                                  parallel, autozero, auto_calibration,
+                                  source_wait_factor, source_wait_offset,
+                                  measurement_wait_factor, measurement_wait_offset):
+        """Configure AAD/AIT, PAD and WAT once, before starting a sweep.
+
+        coefficient=0 requests the selected ADC/mode's documented default.
+        WAT wait = factor * automatic wait + offset; WT hold/step delays are
+        separate. PAD applies to high-speed ADC channels in MM2. Use vendor
+        wrappers for ADC setup and raw commands for settings without wrappers.
+        See docs/B1500 Programmers Guide 9018-01851.pdf, printed pp. 4-33,
+        4-38–41 (AAD/AIT), 4-61 (CM), 4-164 (PAD), 4-229–230 (WAT).
+        """
+        if self._stream_error_detect is not None:
+            raise RuntimeError("Cannot change acquisition settings while measurement data are pending.")
+        if adc not in (0, 1) or mode not in (0, 1, 2):
+            raise ValueError("Select a supported ADC and integration mode.")
+        maximum = 100 if mode == 2 else (1023 if adc == 0 else 127)
+        if not 0 <= coefficient <= maximum or coefficient != int(coefficient):
+            raise ValueError(f"ADC coefficient must be an integer from 1 to {maximum}, or 0 for the mode default.")
+        if parallel and adc != 0:
+            raise ValueError("Parallel measurement requires the high-speed ADC.")
+        waits = ((1, source_wait_factor, source_wait_offset),
+                 (2, measurement_wait_factor, measurement_wait_offset))
+        for _, factor, offset in waits:
+            if not 0 <= factor <= 10 or not 0 <= offset <= 1:
+                raise ValueError("Wait factors must be 0–10 and wait offsets 0–1 seconds.")
+            if abs(factor * 10 - round(factor * 10)) > 1e-7 or abs(offset * 10000 - round(offset * 10000)) > 1e-7:
+                raise ValueError("Wait factor resolution is 0.1; wait offset resolution is 0.0001 seconds.")
+        self._check_ret(dll_b1500.agb1500_setAdc(self.session, adc, mode, int(coefficient), int(autozero)),
+                        "Set ADC integration")
+        for channel in channels:
+            self._check_ret(dll_b1500.agb1500_setAdcType(self.session, channel, adc), "Select ADC")
+        self._visa_write(f"PAD {int(parallel)}\n")
+        if adc == 0:  # setAdc already sends AZ for the high-resolution ADC.
+            self._visa_write(f"AZ {int(autozero)}\n")
+        self._visa_write(f"CM {int(auto_calibration)}\n")
+        for kind, factor, offset in waits:
+            self._visa_write(f"WAT {kind},{factor:g},{offset:g}\n")
+        number, message = self.error_query()
+        if number:
+            raise RuntimeError(f"Configure SMU acquisition: instrument error {number}: {message}")
+
     def enable_error_detect(self, enable):
         if enable and self._stream_error_detect is not None:
             raise RuntimeError("Cannot enable automatic error queries while measurement data are pending.")
@@ -503,6 +546,13 @@ class B1500Session:
     def start_measure(self, channels, modes, ranges, source_output=1, timestamp=1, monitor=0, meas_type=B1500_MEAS_TYPE_SWEEP):
         """
         Begin a measurement to enable streaming via read_data.
+        Drain through EOD, then call finish_measure before configuring anything
+        else. On failure/cancellation, leave unread data to worker cleanup.
+        The installed Keysight agb1500.c statusUpdate sends *OPC? after each
+        readData when error detection is enabled; disable it over this boundary
+        to avoid mixing completion replies with measurement records. startMeasure
+        itself only polls status after XE. Source: installed VISA/WinNT/AGB1500/
+        agb1500.c; local Programming Guide p. 1-19 describes per-step reads.
         startMeasure expects channel array terminated by 0. The source_output flag controls whether source data is reported.
         """
         ch_list = list(channels) + [0]
@@ -585,6 +635,14 @@ class B1500Session:
 
         Uses FMT 5,0 (comma terminator) + XE and reads five FMT5 tokens per point:
         Time, Para1, Para2, OscLevel, DCBias.
+
+        Setup still uses the CMU driver wrappers. The bulk sweepCv wrapper waits
+        for *OPC? before returning data; this path reads after XE as each step
+        arrives. FMT 5,0 omits source data, so there are five tokens, not the six
+        produced by FMT 5,1. IMP determines Para1/Para2 (see descriptors.py).
+        Query errors only outside acquisition; always restore newline termination.
+        Reference: docs/B1500 Programmers Guide 9018-01851.pdf, printed p. 1-19,
+        FMT pp. 4-118 onward and CV sweep example Table 3-21.
 
         Args:
             cmu_channel: CMU channel number.
