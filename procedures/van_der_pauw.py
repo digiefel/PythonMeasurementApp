@@ -268,7 +268,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
             # instrument commands here, including after transport cancellation.
             if rows:
                 try:
-                    self.save_data([r.csv_row() for r in rows], f'{base}_partial.csv',
+                    self.save_data([r.csv_row() for r in rows], f'{base}.csv',
                                    RAW_HEADERS, add_timestamp=False)
                 except Exception as save_error:
                     self.log(f'Could not save partial Van der Pauw data: {save_error}')

@@ -11,7 +11,7 @@
     "cmu_calibration": {
         "7": {
             "open": {
-                "timestamp": "2026-05-10T17:08:58",
+                "timestamp": "2026-03-19T23:46:16",
                 "frequencies_hz": [
                     1000.0,
                     10000.0,
@@ -34,13 +34,13 @@
                         "coefficients": {
                             "index": 1,
                             "frequency_hz": 1000.0,
-                            "open_r": -2.641126e-12,
-                            "open_i": 9.84099e-10,
-                            "short_r": 6.614138,
-                            "short_i": 0.2166812,
+                            "open_r": 1.304378e-10,
+                            "open_i": 9.665857e-11,
+                            "short_r": 1283.06,
+                            "short_i": 0.1296222,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "1000.000,-2.641126E-12,+9.840990E-10,+6.614138E+00,+2.166812E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "1000.000,+1.304378E-10,+9.665857E-11,+1.283060E+03,+1.296222E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "10000": {
@@ -59,13 +59,13 @@
                         "coefficients": {
                             "index": 4,
                             "frequency_hz": 10000.0,
-                            "open_r": -2.649855e-10,
-                            "open_i": 2.443391e-09,
-                            "short_r": 6.74403,
-                            "short_i": 0.1157738,
+                            "open_r": 1.257268e-10,
+                            "open_i": 1.341141e-09,
+                            "short_r": 1354.507,
+                            "short_i": 0.156248,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "10000.000,-2.649855E-10,+2.443391E-09,+6.744030E+00,+1.157738E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "10000.000,+1.257268E-10,+1.341141E-09,+1.354507E+03,+1.562480E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "100000": {
@@ -84,19 +84,19 @@
                         "coefficients": {
                             "index": 7,
                             "frequency_hz": 100000.0,
-                            "open_r": -5.670343e-10,
-                            "open_i": 2.354006e-08,
-                            "short_r": 6.805626,
-                            "short_i": 0.636474,
+                            "open_r": -3.233607e-09,
+                            "open_i": 7.318187e-09,
+                            "short_r": 1374.241,
+                            "short_i": 0.6192813,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "100000.000,-5.670343E-10,+2.354006E-08,+6.805626E+00,+6.364740E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "100000.000,-3.233607E-09,+7.318187E-09,+1.374241E+03,+6.192813E-01,+5.000000E+01,+0.000000E+00"
                         }
                     }
                 }
             },
             "phase": {
-                "timestamp": "2026-05-10T17:06:37",
+                "timestamp": "2026-03-19T23:47:37",
                 "result": {
                     "channel": 7,
                     "mode": 1,
@@ -105,7 +105,7 @@
                 }
             },
             "short": {
-                "timestamp": "2026-05-10T17:09:19",
+                "timestamp": "2026-05-10T21:10:22",
                 "frequencies_hz": [
                     1000.0,
                     10000.0,
@@ -121,7 +121,7 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
@@ -130,11 +130,11 @@
                             "frequency_hz": 1000.0,
                             "open_r": 7.10952e-10,
                             "open_i": 1.58171e-10,
-                            "short_r": 8.436839,
-                            "short_i": 0.2048027,
+                            "short_r": 3.08554,
+                            "short_i": 0.1735042,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "1000.000,+7.109520E-10,+1.581710E-10,+8.436839E+00,+2.048027E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "1000.000,+7.109520E-10,+1.581710E-10,+3.085540E+00,+1.735042E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "10000": {
@@ -146,7 +146,7 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
@@ -155,11 +155,11 @@
                             "frequency_hz": 10000.0,
                             "open_r": 2.143896e-11,
                             "open_i": 4.266053e-09,
-                            "short_r": 8.602076,
-                            "short_i": 0.1203847,
+                            "short_r": 3.153012,
+                            "short_i": 0.1107756,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "10000.000,+2.143896E-11,+4.266053E-09,+8.602076E+00,+1.203847E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "10000.000,+2.143896E-11,+4.266053E-09,+3.153012E+00,+1.107756E-01,+5.000000E+01,+0.000000E+00"
                         }
                     },
                     "100000": {
@@ -171,7 +171,7 @@
                         "secondary_reference": 50.0,
                         "result": 0,
                         "corr_state": {
-                            "open": 1,
+                            "open": 0,
                             "short": 1,
                             "load": 0
                         },
@@ -180,11 +180,11 @@
                             "frequency_hz": 100000.0,
                             "open_r": -5.670343e-10,
                             "open_i": 2.354006e-08,
-                            "short_r": 8.653551,
-                            "short_i": 0.6250128,
+                            "short_r": 3.117479,
+                            "short_i": 0.6217408,
                             "load_r": 50.0,
                             "load_i": 0.0,
-                            "raw": "100000.000,-5.670343E-10,+2.354006E-08,+8.653551E+00,+6.250128E-01,+5.000000E+01,+0.000000E+00"
+                            "raw": "100000.000,-5.670343E-10,+2.354006E-08,+3.117479E+00,+6.217408E-01,+5.000000E+01,+0.000000E+00"
                         }
                     }
                 }
@@ -195,8 +195,8 @@
         "FourTerminalIV": {
             "gpib_address": "GPIB0::17::INSTR",
             "force_high_channel": 4,
-            "force_low_channel": 3,
             "sense_high_channel": 5,
+            "force_low_channel": 3,
             "sense_low_channel": 6,
             "start_current": 0.0,
             "stop_current": 1e-06,
@@ -211,9 +211,9 @@
         },
         "IVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
-            "high_channel": 4,
-            "low_channel": 3,
-            "v_max": 0.2,
+            "high_channel": 6,
+            "low_channel": 5,
+            "v_max": 0.01,
             "points": 20,
             "double_sweep": false,
             "current_compliance": 0.001,
@@ -224,42 +224,55 @@
         },
         "PUND": {
             "gpib_address": "GPIB0::17::INSTR",
-            "channel_1": 102,
-            "channel_2": 101,
+            "channel_1": 101,
+            "channel_2": 102,
             "vmax": 3.0,
-            "base_voltage": 0.5,
-            "frequency": 100000.0,
+            "frequency": 10000.0,
             "pulse_delay": 0.0,
             "repetition_count": 5,
             "repetition_delay": 0.0,
             "invert_polarity": false,
             "meas_range_1": 5001,
-            "meas_range_2": 6005
+            "meas_range_2": 6003
         },
         "CVSweep": {
             "gpib_address": "GPIB0::17::INSTR",
             "cmu_channel": 7,
             "sweep_type": "double",
             "cmu_mode": 11,
-            "start_bias": 3.2,
-            "stop_bias": -2.3,
+            "start_bias": 2.3,
+            "stop_bias": -3.0,
             "points": 50,
             "measurement_range": 0.0,
             "ac_level_mv": 30.0,
             "frequencies": "1k, 10k, 100k",
-            "integration_mode": 2,
+            "integration_mode": 0,
             "integration_value": 2,
             "hold_time": 1.0,
             "delay_time": 0.1,
             "second_delay": 0.0,
             "require_cmu_calibration": false
         },
+        "PUNDFatigue": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "channel_1": 101,
+            "channel_2": 102,
+            "vmax": 3.5,
+            "base_voltage": 0.5,
+            "frequency": 100000.0,
+            "pulse_delay": 0.0,
+            "cycle_count": 1000000.0,
+            "invert_polarity": false,
+            "points_per_decade": 10,
+            "meas_range_1": 5001,
+            "meas_range_2": 6005
+        },
         "PUNDWakeUp": {
             "gpib_address": "GPIB0::17::INSTR",
-            "channel_1": 102,
-            "channel_2": 101,
-            "vmax": "1.5, 2.5, 3.5",
-            "base_voltage": 0.0,
+            "channel_1": 101,
+            "channel_2": 102,
+            "vmax": "0.9, 1.9, 2.9",
+            "base_voltage": 0.6,
             "hold_base": true,
             "fatigue_freq": 1000.0,
             "fatigue_delay": 0.0,
@@ -267,35 +280,42 @@
             "read_pulse_freq": 10000.0,
             "read_pulse_type": "both",
             "meas_range_1": 5001,
+            "meas_range_2": 6003
+        },
+        "PUNDFatigueV2": {
+            "gpib_address": "GPIB0::17::INSTR",
+            "channel_1": 101,
+            "channel_2": 102,
+            "vmax": 3.0,
+            "base_voltage": 0.5,
+            "hold_base": true,
+            "fatigue_freq": 100000.0,
+            "fatigue_delay": 0.0,
+            "fatigue_count": 1000000.0,
+            "fatigue_pulse_type": "square",
+            "read_pulse_freq": 100000.0,
+            "read_pulse_type": "pund",
+            "reads_per_decade": 10,
+            "meas_range_1": 5001,
             "meas_range_2": 6005
         }
     },
     "last_selection": {
-        "chip_id": "",
         "site": "XI",
         "subsite": "FeCap",
-        "device": "A11",
+        "device": "B13",
         "procedure": "CVSweep",
         "set_home_before_run": false,
-        "temperature_enabled": false,
-        "temperature_mode": "Sweep",
-        "temperature_setpoint_c": "",
-        "temperature_sweep_c": "25, 75",
-        "temperature_wait_after_s": "30",
+        "auto_separation_after_measurement": true,
+        "chip": "RuO2test_A15",
+        "selected_devices": [],
         "temp_comp_x_um_per_c": "-0.284",
         "temp_comp_y_um_per_c": "1.435",
         "temp_comp_z_um_per_c": "0.0",
-        "auto_separation_after_measurement": false,
-        "chip": "",
-        "selected_devices": [
-            "C2",
-            "D1",
-            "B1",
-            "B2",
-            "D2",
-            "E2",
-            "E1",
-            "C1"
-        ]
+        "temperature_enabled": false,
+        "temperature_mode": "Sweep",
+        "temperature_setpoint_c": "25",
+        "temperature_sweep_c": "25, 75",
+        "temperature_wait_after_s": "30"
     }
 }
