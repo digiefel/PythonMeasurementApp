@@ -149,22 +149,25 @@ def main(session_factory=None):
             emit(["result", result])
     except InstrumentCancelled:
         pass
-    except Exception:
+    except Exception as exc:
         details = traceback.format_exc()
         if cancelled.is_set():
-            logger.info("Instrument call ended during cancellation:\n%s", details)
+            logger.debug("Instrument call ended during cancellation:\n%s", details)
         else:
-            logger.error("Instrument executor failed:\n%s", details)
-            terminal = ["error", "Instrument operation failed. See the application log for details.", details]
+            logger.debug("Instrument operation failed:\n%s", details)
+            terminal = ["error", str(exc) or type(exc).__name__, details, False]
     finally:
         cancelled.set()
         if session is not None:
             try:
                 session.close()
-            except Exception:
+                if terminal[0] == "error":
+                    terminal[3] = True  # Operation failed, but shutdown completed.
+            except Exception as exc:
                 details = traceback.format_exc()
-                logger.error("Instrument cleanup failed:\n%s", details)
-                terminal = ["error", "Instrument cleanup failed. See the application log for the failed operation.", details]
+                logger.debug("Instrument cleanup failed:\n%s", details)
+                original = f"{terminal[1]} " if terminal[0] == "error" else ""
+                terminal = ["error", f"{original}Instrument cleanup failed: {exc}", details, False]
         try:
             emit(terminal)
         except (OSError, ValueError):

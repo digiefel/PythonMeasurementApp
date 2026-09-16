@@ -145,7 +145,7 @@ class RemoteB1500Session(_Proxy):
 
     def _check_open(self):
         if self._failure is not None:
-            raise self._failure
+            raise InstrumentError(str(self._failure))
         if self._stopping.is_set():
             raise InstrumentCancelled("Measurement stopped.")
         if any(event.is_set() for event in self._cancel_events):
@@ -157,21 +157,24 @@ class RemoteB1500Session(_Proxy):
         try:
             for line in self._process.stdout:
                 message = json.loads(line)
-                sizes = {"result": 2, "callback": 4, "error": 3, "stopped": 1}
+                sizes = {"result": 2, "callback": 4, "error": 4, "stopped": 1}
                 if not isinstance(message, list) or not message or not isinstance(message[0], str) or len(message) != sizes.get(message[0]):
                     raise ValueError(f"Invalid instrument response: {message!r}")
+                if message[0] == "error" and type(message[3]) is not bool:
+                    raise ValueError("Invalid instrument cleanup acknowledgement")
                 if message[0] in ("error", "stopped"):
                     self._terminal = message
                     if message[0] == "error":
                         self._failure = InstrumentError(message[1])
-                        logger.error("Instrument failure: %s", message[2])
+                        logger.error("Instrument operation failed: %s", message[1])
+                        logger.debug("Instrument operation traceback:\n%s", message[2])
                     self._stopping.set()
                 self._incoming.put(message)
         except Exception:
             logger.exception("Instrument transport failed")
         finally:
             if self._terminal is None:
-                self._failure = InstrumentError("Instrument connection was lost; output state could not be confirmed.")
+                self._failure = InstrumentError("Instrument connection ended without acknowledging shutdown.")
                 self._incoming.put(["error", str(self._failure), "Unexpected EOF or invalid protocol"])
 
     def _read_stderr(self):
@@ -184,6 +187,10 @@ class RemoteB1500Session(_Proxy):
                 self._process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
                 self._process.stdin.flush()
         except Exception:
+            if self._stopping.is_set():
+                # A terminal reply may arrive before the queued cancel is written.
+                # The owner is already exiting; its cleanup acknowledgement wins.
+                return
             logger.exception("Instrument transport write failed")
             self._incoming.put(["error", "Instrument connection was lost.", "Command write failed"])
 
@@ -236,11 +243,11 @@ class RemoteB1500Session(_Proxy):
                     else:
                         raise InstrumentError(reply[1])
             except BaseException as exc:
-                if not isinstance(exc, InstrumentCancelled):
+                if not isinstance(exc, InstrumentError):
                     logger.exception("Instrument request ended: %s", message[:3])
                 self.close()
                 if self._shutdown_error is not None:
-                    raise self._shutdown_error
+                    raise InstrumentError(str(self._shutdown_error))
                 if self._cancel_requested or any(event.is_set() for event in self._cancel_events):
                     raise InstrumentCancelled("Measurement stopped.") from exc
                 raise
@@ -254,7 +261,7 @@ class RemoteB1500Session(_Proxy):
         self._cancel_requested = True
         self.close()
         if self._shutdown_error is not None:
-            raise self._shutdown_error
+            raise InstrumentError(str(self._shutdown_error))
 
     def _emergency_shutdown(self):
         """The old process must be dead before resetting through a new session."""
@@ -317,7 +324,9 @@ class RemoteB1500Session(_Proxy):
             else:
                 logger.error("Instrument I/O threads did not exit; leaving their streams to their owners")
             self._closed = self._process.poll() is not None
-        if self._terminal is None or self._terminal[0] == "error":
+        # A rejected command does not imply failed shutdown. Only use a fresh
+        # emergency session when owner cleanup was absent or explicitly failed.
+        if self._terminal is None or (self._terminal[0] == "error" and not self._terminal[3]):
             try:
                 self._emergency_shutdown()
             except Exception as exc:

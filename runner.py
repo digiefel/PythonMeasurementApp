@@ -557,6 +557,9 @@ class MeasurementRunner:
             self._stop_instrument()
             self.check_stop()
             raise
+        except InstrumentError:
+            self._stop_instrument()
+            raise
         except Exception as e:
             self._stop_instrument()
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error

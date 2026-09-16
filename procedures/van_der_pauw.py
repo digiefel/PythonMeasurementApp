@@ -310,14 +310,6 @@ class VanDerPauwProcedure(MeasurementProcedure):
         try:
             b1500.reset()
             b1500.enable_error_detect(True)
-            b1500.configure_smu_acquisition(
-                [getattr(self, f'{contact}_channel') for contact in ('TL', 'TR', 'BL', 'BR')],
-                adc=self.adc_type, mode=self.adc_mode, coefficient=self.adc_coefficient,
-                parallel=self.parallel_measurement, autozero=self.adc_autozero,
-                source_wait_factor=self.source_wait_factor, source_wait_offset=self.source_wait_offset,
-                measurement_wait_factor=self.measurement_wait_factor,
-                measurement_wait_offset=self.measurement_wait_offset,
-            )
             for contact_sweep in CONTACT_SWEEPS:
                 self.check_stop(b1500)
                 name = contact_sweep[0]
@@ -367,6 +359,16 @@ class VanDerPauwProcedure(MeasurementProcedure):
         b1500.set_switch(B1500_CH_ALL, False)
         for channel in channels:
             b1500.set_switch(channel, True)
+        # Configure once after CN, before any bias; reset leaves all switches off.
+        if contact_sweep == CONTACT_SWEEPS[0]:
+            b1500.configure_smu_acquisition(
+                channels,
+                adc=self.adc_type, mode=self.adc_mode, coefficient=self.adc_coefficient,
+                parallel=self.parallel_measurement, autozero=self.adc_autozero,
+                source_wait_factor=self.source_wait_factor, source_wait_offset=self.source_wait_offset,
+                measurement_wait_factor=self.measurement_wait_factor,
+                measurement_wait_offset=self.measurement_wait_offset,
+            )
         b1500.force_voltage(ret, 0.0, compliance=self.current_compliance)
         for channel in (high, low):
             b1500.force_current(channel, 0.0, compliance=self.voltage_compliance, range_=B1500_AUTO_RANGE)

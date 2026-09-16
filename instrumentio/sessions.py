@@ -278,18 +278,29 @@ class B1500Session:
                 raise ValueError("Wait factors must be 0–10 and wait offsets 0–1 seconds.")
             if abs(factor * 10 - round(factor * 10)) > 1e-7 or abs(offset * 10000 - round(offset * 10000)) > 1e-7:
                 raise ValueError("Wait factor resolution is 0.1; wait offset resolution is 0.0001 seconds.")
+
+        def check_setup(command):
+            # The vendor statusUpdate checks the command-error bit only. Drain
+            # execution errors here too, before another command obscures their origin.
+            number, message = self.error_query()
+            if number:
+                raise RuntimeError(f"{command}: instrument error {number}: {message}")
+
+        check_setup("Before SMU acquisition setup")
         self._check_ret(dll_b1500.agb1500_setAdc(self.session, adc, mode, int(coefficient), int(autozero)),
                         "Set ADC integration")
+        check_setup("ADC integration (AIT/AZ)")
         for channel in channels:
-            self._check_ret(dll_b1500.agb1500_setAdcType(self.session, channel, adc), "Select ADC")
-        self._visa_write(f"PAD {int(parallel)}\n")
+            command = f"AAD {channel},{adc}"
+            self._check_ret(dll_b1500.agb1500_setAdcType(self.session, channel, adc), command)
+            check_setup(command)
+        commands = [f"PAD {int(parallel)}"]
         if adc == 0:  # setAdc already sends AZ for the high-resolution ADC.
-            self._visa_write(f"AZ {int(autozero)}\n")
-        for kind, factor, offset in waits:
-            self._visa_write(f"WAT {kind},{factor:g},{offset:g}\n")
-        number, message = self.error_query()
-        if number:
-            raise RuntimeError(f"Configure SMU acquisition: instrument error {number}: {message}")
+            commands.append(f"AZ {int(autozero)}")
+        commands.extend(f"WAT {kind},{factor:g},{offset:g}" for kind, factor, offset in waits)
+        for command in commands:
+            self._visa_write(command + "\n")
+            check_setup(command)
 
     @_measurement_io
     def calibrate_smus(self):

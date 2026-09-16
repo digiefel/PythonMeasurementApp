@@ -1613,10 +1613,7 @@ class MainUI:
             except MeasurementAbortRequested:
                 self._post_log('Run aborted by user.')
             except InstrumentError as e:
-                # The run is already stopped. Preserve the diagnostic without
-                # turning a handled instrument failure into an unhandled thread
-                # exception (and another debugger stop).
-                logger.error("Run stopped by an instrument error: %s", e, exc_info=True)
+                # The bridge records diagnostics; display the original reason once.
                 self._post_log(f'Run stopped: {e}')
             except Exception as e:
                 self._post_log(f'Run error: {e}')

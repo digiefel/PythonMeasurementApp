@@ -109,13 +109,15 @@ class BridgeTests(unittest.TestCase):
     def test_errors_retire_connection_and_preserve_diagnostics(self):
         session = self.connect()
         with self.assertLogs("instrumentio.bridge", level="ERROR") as logs:
-            with self.assertRaises(bridge.InstrumentError):
+            with self.assertRaisesRegex(bridge.InstrumentError, "Simulated instrument failure"):
                 session.fail()
         self.assertIn("Simulated instrument failure", "\n".join(logs.output))
+        self.emergency.assert_not_called()
         with self.assertRaises(bridge.InstrumentError):
             session.echo("must not execute")
         self.assertNotIn("must not execute", self.history())
         self.assertEqual(self.history()[-1], "close")
+        self.assertEqual(self.history().count("close"), 1)
 
     def test_timeout_prevents_late_and_queued_execution(self):
         session = self.connect()
@@ -227,8 +229,9 @@ class BridgeTests(unittest.TestCase):
 
     def test_close_failure_is_not_reported_as_success(self):
         session = self.connect(close_error=True)
-        with self.assertRaisesRegex(bridge.InstrumentError, "shutdown failed"):
+        with self.assertRaisesRegex(bridge.InstrumentError, "Simulated emergency shutdown failure"):
             session.close()
+        self.emergency.assert_called_once()
 
     def test_cleanup_hang_is_bounded_after_a_command_failure(self):
         with patch.object(bridge, "_worker_command", return_value=[sys.executable, "-u", "-c",
