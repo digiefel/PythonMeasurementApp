@@ -250,7 +250,7 @@ class B1500Session:
         self._check_ret(dll_b1500.agb1500_timeOut(self.session, ms), "Set timeout")
 
     def configure_smu_acquisition(self, channels, *, adc, mode, coefficient,
-                                  parallel, autozero, auto_calibration,
+                                  parallel, autozero,
                                   source_wait_factor, source_wait_offset,
                                   measurement_wait_factor, measurement_wait_offset):
         """Configure AAD/AIT, PAD and WAT once, before starting a sweep.
@@ -260,7 +260,7 @@ class B1500Session:
         separate. PAD applies to high-speed ADC channels in MM2. Use vendor
         wrappers for ADC setup and raw commands for settings without wrappers.
         See docs/B1500 Programmers Guide 9018-01851.pdf, printed pp. 4-33,
-        4-38–41 (AAD/AIT), 4-61 (CM), 4-164 (PAD), 4-229–230 (WAT).
+        4-38–41 (AAD/AIT), 4-164 (PAD), 4-229–230 (WAT).
         """
         if self._stream_error_detect is not None:
             raise RuntimeError("Cannot change acquisition settings while measurement data are pending.")
@@ -285,12 +285,34 @@ class B1500Session:
         self._visa_write(f"PAD {int(parallel)}\n")
         if adc == 0:  # setAdc already sends AZ for the high-resolution ADC.
             self._visa_write(f"AZ {int(autozero)}\n")
-        self._visa_write(f"CM {int(auto_calibration)}\n")
         for kind, factor, offset in waits:
             self._visa_write(f"WAT {kind},{factor:g},{offset:g}\n")
         number, message = self.error_query()
         if number:
             raise RuntimeError(f"Configure SMU acquisition: instrument error {number}: {message}")
+
+    @_measurement_io
+    def calibrate_smus(self):
+        """Self-calibrate installed SMUs after the operator opens their terminals.
+
+        This is instrument maintenance, not CM scheduled calibration or CMU
+        fixture compensation. CL removes any high-voltage state before *CAL?.
+        Each query returns a failure bitmask and leaves that module disabled.
+        Never send RCV to re-enable a failed module automatically.
+        Reference: docs/B1500 Programmers Guide 9018-01851.pdf, pp. 4-58–59.
+        """
+        if self._stream_error_detect is not None:
+            raise RuntimeError("Cannot calibrate while measurement data are pending.")
+        slots = [module['slot'] for module in self.discover_modules()['modules']
+                 if module['kind'] == 'SMU']
+        if not slots:
+            raise RuntimeError("No installed SMUs were found for calibration.")
+        self.set_switch(B1500_CH_ALL, False)
+        for slot in slots:
+            result = int(self._visa_query(f"*CAL? {slot}").strip())
+            if result:
+                raise RuntimeError(f"SMU calibration failed at slot {slot} (failure mask {result}).")
+        return slots
 
     def enable_error_detect(self, enable):
         if enable and self._stream_error_detect is not None:
