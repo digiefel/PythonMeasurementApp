@@ -1,5 +1,6 @@
 """Bipolar four-SMU Van der Pauw sheet-resistance measurement."""
 import math
+import time
 from dataclasses import dataclass
 
 from procedures.base import Choice, MeasurementProcedure, SMU, parameter
@@ -321,6 +322,23 @@ class VanDerPauwProcedure(MeasurementProcedure):
         outputs, seen = [], set()
         pending_time = math.nan
         rows = []
+        last_plot_time = 0.0
+        plotted_count = 0
+
+        def collect_readings():
+            # Pair records by point only once all four SMUs have reported.
+            # Rebuild from the buffers so trailing output/status records are
+            # included in the final saved data even if a point was plotted earlier.
+            count = min((len(values) for values in data.values()), default=0)
+            return [Reading(
+                f'{source_smu}->{return_smu}', f'{high_smu}-{low_smu}', i,
+                outputs[i][0] if i < len(outputs) else math.nan,
+                data[source][i][0], data[ret][i][0],
+                data[high][i][0], data[low][i][0], data[source][i][2],
+                data[source][i][1], data[ret][i][1], data[high][i][1], data[low][i][1],
+                outputs[i][1] if i < len(outputs) else 0,
+            ) for i in range(count)]
+
         try:
             while True:
                 self.check_stop(b1500)
@@ -343,20 +361,17 @@ class VanDerPauwProcedure(MeasurementProcedure):
                     # B1500 Programming Guide, Data Output Format 1-26:
                     # each TimeN precedes its DataN, including multi-SMU sweeps.
                     pending_time = value
+                count = min(len(values) for values in data.values())
+                now = time.monotonic()
+                if count > plotted_count and (plotted_count == 0 or now - last_plot_time >= 0.1):
+                    self._plot_raw(name, collect_readings())
+                    plotted_count = count
+                    last_plot_time = now
                 # Drain through EOD, including trailing source status/time records.
                 if eod:
                     break
         finally:
-            count = min((len(values) for values in data.values()), default=0)
-            for i in range(count):
-                current_set = outputs[i][0] if i < len(outputs) else math.nan
-                row = Reading(
-                    f'{source_smu}->{return_smu}', f'{high_smu}-{low_smu}', i, current_set, data[source][i][0], data[ret][i][0],
-                    data[high][i][0], data[low][i][0], data[source][i][2],
-                    data[source][i][1], data[ret][i][1], data[high][i][1], data[low][i][1],
-                    outputs[i][1] if i < len(outputs) else 0,
-                )
-                rows.append(row)
+            rows = collect_readings()
             all_rows.extend(rows)
         b1500.zero_output(B1500_CH_ALL)
         b1500.set_switch(B1500_CH_ALL, False)
