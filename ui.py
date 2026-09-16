@@ -15,6 +15,7 @@ from ui_device_selection import DeviceSelectionDialog
 
 from config import Config
 from models import has_position
+from window_layout import center_popup, tile_main_window
 from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH
 from instrumentio.constants import (
     SMU_CHANNEL_MAP,
@@ -82,24 +83,8 @@ class MainUI:
     def __init__(self, root):
         self.root = root
         
-        # Geometry setup: left half for main UI, right half for Viewer
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        half_width = screen_width // 2
-        self.root.geometry(f"{half_width}x{screen_height}+0+0")
-        self.root.update()  # Realize the window so winfo coords are accurate
-
-        # Read the actual client-area position after placement so the viewer
-        # can sit flush against this window (accounts for DWM shadow borders).
-        tk_right = self.root.winfo_rootx() + self.root.winfo_width()
-        tk_top = self.root.winfo_rooty()
-
-        viewer_geometry = {
-            "width": screen_width - tk_right,
-            "height": screen_height - tk_top,
-            "x_pos": tk_right,
-            "y_pos": tk_top,
-        }
+        # Place the outer frames in equal halves of the monitor's usable area.
+        viewer_geometry = tile_main_window(self.root)
         
         self.config = Config('global_config.json', 'devices.csv')
         self.runner = MeasurementRunner(self.config)
@@ -169,6 +154,8 @@ class MainUI:
         }
 
         self.build_layout()
+        # Apply after Tk has calculated widget requests so they cannot resize it.
+        tile_main_window(self.root)
         self._refresh_devices_csv_options()
         self.load_output_dir()
         self._init_b1500_channel_maps()
@@ -1792,6 +1779,7 @@ class MainUI:
             ttk.Button(dialog, text="Continue", command=lambda: finish(True)).pack(pady=5)
             ttk.Button(dialog, text="Abort Run", command=lambda: finish(False)).pack(pady=5)
             dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+            center_popup(dialog, self.root)
 
             def close_when_done():
                 if done.is_set():

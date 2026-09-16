@@ -1119,6 +1119,8 @@ class PlotViewer:
 def viewer_main(cmd_queue: Queue, rsp_queue: Queue, geometry: dict | None = None) -> None:
     """Entry point for the viewer process."""
     configure_logging()
+    from window_layout import enable_dpi_awareness, tile_plot_window
+    enable_dpi_awareness()
     logger.info("Plot viewer process started.")
     dpg.create_context()
     dpg.configure_app(
@@ -1149,6 +1151,7 @@ def viewer_main(cmd_queue: Queue, rsp_queue: Queue, geometry: dict | None = None
 
     dpg.setup_dearpygui()
     dpg.show_viewport()
+    tile_plot_window(geometry)
 
     while dpg.is_dearpygui_running():
         viewer.poll_queue()

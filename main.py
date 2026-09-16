@@ -5,6 +5,8 @@ from app_logging import configure_logging
 def main():
     multiprocessing.freeze_support()
     configure_logging()
+    from window_layout import enable_dpi_awareness
+    enable_dpi_awareness()
     import tkinter as tk
     from ui import MainUI
     root = tk.Tk()
