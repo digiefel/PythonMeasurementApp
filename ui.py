@@ -438,7 +438,9 @@ class MainUI:
             self.selection_frame.grid_columnconfigure(col, weight=1)
 
         ttk.Label(self.selection_frame, text="Chip ID", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Entry(self.selection_frame, textvariable=self.chip_var).grid(row=0, column=1, sticky="ew", pady=2)
+        chip_entry = ttk.Entry(self.selection_frame, textvariable=self.chip_var)
+        chip_entry.grid(row=0, column=1, sticky="ew", pady=2)
+        attach_tooltip(chip_entry, "Identifies the chip being measured. Used in output folder and file names; required before starting a run.")
 
         ttk.Label(self.selection_frame, text="Devices CSV").grid(row=1, column=0, sticky="w")
         csv_frame = ttk.Frame(self.selection_frame)
@@ -447,28 +449,38 @@ class MainUI:
         self.devices_csv_cb = ttk.Combobox(csv_frame, textvariable=self.devices_csv_var)
         self.devices_csv_cb.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.devices_csv_cb.bind('<<ComboboxSelected>>', self.on_devices_csv_selected)
-        ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv).grid(row=0, column=1, sticky="ew")
+        attach_tooltip(self.devices_csv_cb, "Choose a devices CSV to load its sites, subsites, device names and coordinates. Changing the CSV clears the multi-device selection.")
+        csv_browse_button = ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv)
+        csv_browse_button.grid(row=0, column=1, sticky="ew")
+        attach_tooltip(csv_browse_button, "Load a different devices CSV. This changes the available devices and their coordinates, not the procedure settings.")
 
         ttk.Label(self.selection_frame, text="Output Directory").grid(row=2, column=0, sticky="w")
         output_frame = ttk.Frame(self.selection_frame)
         output_frame.grid(row=2, column=1, sticky="ew", pady=2)
         output_frame.grid_columnconfigure(0, weight=1)
-        ttk.Entry(output_frame, textvariable=self.output_dir_var).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir).grid(row=0, column=1, sticky="ew")
+        output_entry = ttk.Entry(output_frame, textvariable=self.output_dir_var)
+        output_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(output_entry, "Root folder for measurement results. Files are organized below it by Chip ID / Site / Subsite / Device.")
+        output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
+        output_browse_button.grid(row=0, column=1, sticky="ew")
+        attach_tooltip(output_browse_button, "Choose and save the root folder for measurement results.")
 
         ttk.Label(self.selection_frame, text="Site").grid(row=3, column=0, sticky="w")
         self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
         self.site_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
+        attach_tooltip(self.site_cb, "Select a site from the devices CSV. Changing the site updates its subsites and devices and clears the multi-device selection.")
 
         ttk.Label(self.selection_frame, text="Subsite").grid(row=4, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
         self.subsite_cb.grid(row=4, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
+        attach_tooltip(self.subsite_cb, "Select a subsite within the current site. Changing it updates the available devices and clears the multi-device selection.")
 
         ttk.Label(self.selection_frame, text="Device").grid(row=5, column=0, sticky="w")
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
         self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
+        attach_tooltip(self.device_cb, "Device used by Go To Device and coordinate alignment. RUN measures this device unless a multi-device selection is active.")
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
@@ -478,19 +490,26 @@ class MainUI:
         
         self.device_selection_button = ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection)
         self.device_selection_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(self.device_selection_button, "Choose multiple devices in the current subsite to measure in one run. Devices without coordinates require manual positioning.")
         self.selected_devices_label = ttk.Label(device_sel_frame, text="")
         self.selected_devices_label.grid(row=0, column=1, sticky="w", padx=(4, 0))
+        attach_tooltip(self.selected_devices_label, "Multi-device selection for RUN. If none are selected, RUN uses the Device selector above.")
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
         action_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
-        ttk.Button(action_frame, text="Load Settings", command=self.load_settings).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(action_frame, text="Save Settings", command=self.save_settings).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        load_button = ttk.Button(action_frame, text="Load Settings", command=self.load_settings)
+        load_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(load_button, "Load a JSON settings file, including saved procedure settings and app selections. Keeps the currently loaded devices CSV.")
+        save_button = ttk.Button(action_frame, text="Save Settings", command=self.save_settings)
+        save_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        attach_tooltip(save_button, "Save the current procedure settings and app selections to a JSON file. Does not start a measurement or save measurement data.")
 
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
         self.run_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        attach_tooltip(self.run_button, "Start the selected procedure on the selected devices, or the single Device if no multi-device selection is active. With Temperature enabled, repeat at each configured temperature.")
 
         # Stop controls (shown when running, hidden otherwise)
         self.stop_frame = tk.Frame(self.selection_frame)
@@ -509,7 +528,11 @@ class MainUI:
         skip_btn.grid(row=0, column=2, sticky="ew", padx=(2, 0))
 
         attach_tooltip(abort_btn, "Immediately abort all measurements and cancel the remaining queue.")
-        attach_tooltip(self._finish_btn, "Let the current measurement finish and save, then stop the queue.")
+        attach_tooltip(self._finish_btn, lambda: (
+            "Cancel the pending stop and continue measuring the remaining devices."
+            if self.runner.cancel_queue_event.is_set()
+            else "Let the current device finish and save, then stop the queue. Click again before it finishes to resume the queue."
+        ))
         attach_tooltip(skip_btn, "Abort the current measurement, and continue with the next device.")
 
         # Progress bar (shown when running, hidden otherwise)
@@ -519,6 +542,8 @@ class MainUI:
         self._progress_bar.grid(row=0, column=0, sticky="ew", pady=(4, 1))
         self._progress_label = ttk.Label(self.progress_frame, text="", anchor="center")
         self._progress_label.grid(row=1, column=0, sticky="ew")
+        attach_tooltip(self._progress_bar, "Progress through finished or skipped devices, not through individual measurement points.")
+        attach_tooltip(self._progress_label, "Remaining time and ETA are estimates based on recent device measurement times.")
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -561,20 +586,31 @@ class MainUI:
 
         self.contact_button = tk.Button(contact_row_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
         self.contact_button.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=0)
+        attach_tooltip(self.contact_button, lambda: (
+            "The chuck is in contact. Click to move it to separation."
+            if self.prober_contact_state.get()
+            else "The chuck is separated. Click to move it to the configured contact height."
+        ))
         self.auto_separation_check = ttk.Checkbutton(contact_row_frame, text="", variable=self.auto_separation_var)
         self.auto_separation_check.grid(row=0, column=1, sticky="w", pady=0)
-        attach_tooltip(self.auto_separation_check, "Auto Separation after measurement")
+        attach_tooltip(self.auto_separation_check, "Move the chuck to separation after each device measurement. Uncheck to leave it in contact after normal measurement completion.")
 
         light_row_frame = ttk.Frame(self.prober_frame)
         light_row_frame.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         light_row_frame.grid_columnconfigure(0, weight=1)
         self.light_button = tk.Button(light_row_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
         self.light_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(self.light_button, lambda: (
+            "The scope light is on. Click to turn it off."
+            if self.prober_light_state.get()
+            else "The scope light is off. Click to turn it on at the brightness configured in Light settings."
+        ))
         self.light_settings_button = ttk.Button(light_row_frame, text="Light settings", command=self.open_light_settings)
         self.light_settings_button.grid(row=0, column=1)
         attach_tooltip(self.light_settings_button, "Set normal and measurement brightness, and enable or disable automatic light adjustment.")
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
         self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
+        attach_tooltip(self.go_to_device_button, "Move the chuck in X/Y to the selected Device using the current coordinate alignment and temperature compensation. Align coordinates first; devices without coordinates cannot be moved to automatically.")
         reference_row_frame = ttk.Frame(self.prober_frame)
         reference_row_frame.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         reference_row_frame.grid_columnconfigure(0, weight=1)
@@ -586,17 +622,28 @@ class MainUI:
         attach_tooltip(self.set_home_check, "Perform coordinate alignment every time a run is started, using the currently selected device.")
         self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
         self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
+        attach_tooltip(self.read_position_button, "Read the current chuck X/Y position in micrometres. Does not move the chuck or change coordinate alignment.")
         ttk.Label(self.prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
         comp_frame = ttk.Frame(self.temp_ui.temp_frame)
         comp_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
         for c in range(3):
             comp_frame.grid_columnconfigure(c, weight=1)
-        ttk.Label(comp_frame, text="CompX (um / C)").grid(row=0, column=0, sticky="w", padx=2, pady=(0, 2))
-        ttk.Label(comp_frame, text="CompY (um / C)").grid(row=0, column=1, sticky="w", padx=2, pady=(0, 2))
-        ttk.Label(comp_frame, text="CompZ (um / C)").grid(row=0, column=2, sticky="w", padx=2, pady=(0, 2))
-        ttk.Entry(comp_frame, textvariable=self.temp_comp_x_var, width=10).grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 2))
-        ttk.Entry(comp_frame, textvariable=self.temp_comp_y_var, width=10).grid(row=1, column=1, sticky="ew", padx=2, pady=(0, 2))
-        ttk.Entry(comp_frame, textvariable=self.temp_comp_z_var, width=10).grid(row=1, column=2, sticky="ew", padx=2, pady=(0, 2))
+        for column, axis, variable in (
+            (0, "X", self.temp_comp_x_var),
+            (1, "Y", self.temp_comp_y_var),
+            (2, "Z", self.temp_comp_z_var),
+        ):
+            label = ttk.Label(comp_frame, text=f"Comp{axis} (um / C)")
+            label.grid(row=0, column=column, sticky="w", padx=2, pady=(0, 2))
+            entry = ttk.Entry(comp_frame, textvariable=variable, width=10)
+            entry.grid(row=1, column=column, sticky="ew", padx=2, pady=(0, 2))
+            tip = (
+                "Z temperature compensation coefficient in micrometres per degree Celsius. Currently calculates and logs a height offset only; it does not change the chuck height."
+                if axis == "Z" else
+                f"{axis} position correction in micrometres per degree Celsius. Adds coefficient × (current temperature − reference temperature) to device moves. The reference is the first temperature read; 0 disables this axis correction."
+            )
+            attach_tooltip(label, tip)
+            attach_tooltip(entry, tip)
 
         # Log section (bottom right)
         log_frame = ttk.LabelFrame(self.root, text="Log")

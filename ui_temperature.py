@@ -7,6 +7,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.ticker import FuncFormatter
 
 from temp_tracker import TempTracker
+from tooltip_helper import attach_tooltip
 
 
 class TemperatureUI:
@@ -55,28 +56,44 @@ class TemperatureUI:
     # --- UI construction ---
     def build_panel(self, parent_frame: ttk.Frame):
         self.temp_enable_cb = ttk.Checkbutton(parent_frame, text="Temperature", variable=self.enabled_var, command=self._toggle_controls)
+        attach_tooltip(self.temp_enable_cb, "Include temperature setting and stabilization in the run, and display live chuck temperature. Unchecking skips temperature steps; it does not turn off the chuck heater or cooler.")
         self.temp_frame = ttk.LabelFrame(parent_frame, labelwidget=self.temp_enable_cb)
         self.temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
         self.temp_frame.grid_columnconfigure(0, weight=1)
         self.temp_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(self.temp_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=2, pady=2)
+        mode_label = ttk.Label(self.temp_frame, text="Mode")
+        mode_label.grid(row=0, column=0, sticky="w", padx=2, pady=2)
         self.mode_cb = ttk.Combobox(self.temp_frame, textvariable=self.mode_var, values=["Setpoint", "Sweep"], state="readonly")
         self.mode_cb.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.mode_cb.bind('<<ComboboxSelected>>', lambda e=None: self._toggle_controls())
+        mode_tip = "Setpoint runs the selected devices at one temperature. Sweep repeats them at each temperature in the comma-separated list, in the entered order."
+        attach_tooltip(mode_label, mode_tip)
+        attach_tooltip(self.mode_cb, mode_tip)
         self.setpoint_entry_label = ttk.Label(self.temp_frame, text="Setpoint (C)")
         self.setpoint_entry_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
         self.setpoint_entry = ttk.Entry(self.temp_frame, textvariable=self.setpoint_var)
         self.setpoint_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        setpoint_tip = "Target chuck temperature in degrees Celsius. RUN sets this target and waits for stabilization before measuring. Set Temperature applies it immediately without starting a run."
+        attach_tooltip(self.setpoint_entry_label, setpoint_tip)
+        attach_tooltip(self.setpoint_entry, setpoint_tip)
         self.sweep_entry_label = ttk.Label(self.temp_frame, text="Sweep list (C)")
         self.sweep_entry_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
         self.sweep_entry = ttk.Entry(self.temp_frame, textvariable=self.sweep_var)
         self.sweep_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        ttk.Label(self.temp_frame, text="Wait after stable (s)").grid(row=3, column=0, sticky="w", padx=2, pady=2)
+        sweep_tip = "Comma-separated chuck temperatures in degrees Celsius, for example 25, 50, 75. RUN measures the selected devices at each target in this order, waiting for stabilization at each step."
+        attach_tooltip(self.sweep_entry_label, sweep_tip)
+        attach_tooltip(self.sweep_entry, sweep_tip)
+        wait_label = ttk.Label(self.temp_frame, text="Wait after stable (s)")
+        wait_label.grid(row=3, column=0, sticky="w", padx=2, pady=2)
         self.wait_entry = ttk.Entry(self.temp_frame, textvariable=self.wait_var)
         self.wait_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
+        wait_tip = "Additional time in seconds that the temperature must remain within the stabilization tolerance before measurement. The timer restarts if it leaves that tolerance; 0 adds no extra wait."
+        attach_tooltip(wait_label, wait_tip)
+        attach_tooltip(self.wait_entry, wait_tip)
         self.set_button = ttk.Button(self.temp_frame, text="Set Temperature", command=self._set_temperature_now)
         self.set_button.grid(row=5, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
+        attach_tooltip(self.set_button, "Apply the setpoint now, or the first temperature in the sweep list. Does not wait for stabilization, start measurements, or execute the rest of the sweep.")
         temp_row = ttk.Frame(self.temp_frame)
         temp_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 0))
         for c in range(4):
@@ -84,8 +101,11 @@ class TemperatureUI:
         ttk.Label(temp_row, text="Temp:").grid(row=0, column=0, sticky="w", padx=2)
         self.temp_value_label = ttk.Label(temp_row, textvariable=self.value_var)
         self.temp_value_label.grid(row=0, column=1, sticky="w", padx=2)
+        attach_tooltip(self.temp_value_label, "Current chuck temperature reported by the prober, not a direct measurement of device temperature. Orange: heating; blue: cooling; green: controlling; red: error, uncontrolled, or unavailable.")
         ttk.Label(temp_row, text="Setpoint:").grid(row=0, column=2, sticky="e", padx=2)
-        ttk.Label(temp_row, textvariable=self.setpoint_display_var).grid(row=0, column=3, sticky="e", padx=2)
+        setpoint_display = ttk.Label(temp_row, textvariable=self.setpoint_display_var)
+        setpoint_display.grid(row=0, column=3, sticky="e", padx=2)
+        attach_tooltip(setpoint_display, "Temperature target currently reported by the prober. Editing a target above does not apply it until Set Temperature or RUN is pressed.")
 
         # Mini profile plot
         self.profile_fig = Figure(figsize=(2.0, 0.8), dpi=100, layout='compressed')
@@ -99,6 +119,7 @@ class TemperatureUI:
         self.profile_fig.patch.set_alpha(0)
         self.profile_ax.set_facecolor("none")
         self.profile_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
+        attach_tooltip(self.profile_widget, "Before a sweep, previews the temperature steps. During a run, shows the recorded chuck temperature, setpoints and estimated schedule; timing estimates are not guaranteed.")
 
         # trace sweep field for live preview
         self.sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())
