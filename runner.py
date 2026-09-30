@@ -156,9 +156,10 @@ class MeasurementRunner:
         return getattr(self.prober_ctrl, "prober", None) is not None
 
     # --- Prober wrappers ---
-    def set_subsite_origin(self, x_offset: float, y_offset: float):
-        self.prober_ctrl.set_subsite_origin(x_offset, y_offset)
+    def set_subsite_origin(self, x_offset: float, y_offset: float) -> bool:
+        aligned = self.prober_ctrl.set_subsite_origin(x_offset, y_offset)
         self.subsite_origin = self.prober_ctrl.subsite_origin
+        return aligned
 
     def prober_contact(self) -> bool:
         self.check_stop("Stop requested before prober contact")

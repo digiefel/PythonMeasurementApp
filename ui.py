@@ -496,9 +496,6 @@ class MainUI:
         self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
 
-        self.set_home_check = ttk.Checkbutton(self.selection_frame, text="Set subsite origin at start", variable=self.set_home_var)
-        self.set_home_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
         device_sel_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
@@ -584,8 +581,15 @@ class MainUI:
         attach_tooltip(self.light_settings_button, "Set normal and measurement brightness, and enable or disable automatic light adjustment.")
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
         self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
-        self.set_reference_button = ttk.Button(self.prober_frame, text="Set Reference to Device", command=self.prober_set_reference)
-        self.set_reference_button.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        reference_row_frame = ttk.Frame(self.prober_frame)
+        reference_row_frame.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
+        reference_row_frame.grid_columnconfigure(0, weight=1)
+        self.set_reference_button = ttk.Button(reference_row_frame, text="Align coordinates to device", command=self.prober_set_reference)
+        self.set_reference_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(self.set_reference_button, "First position the probes on the selected device. Click to align the app’s device coordinates with the current chuck position and enable automatic probing")
+        self.set_home_check = ttk.Checkbutton(reference_row_frame, text="", variable=self.set_home_var)
+        self.set_home_check.grid(row=0, column=1, sticky="w")
+        attach_tooltip(self.set_home_check, "Perform coordinate alignment every time a run is started, using the currently selected device.")
         self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
         self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
         ttk.Label(self.prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
@@ -1583,6 +1587,8 @@ class MainUI:
         if self._run_thread and self._run_thread.is_alive():
             self.log("A run is already in progress.")
             return
+        if not self._confirm_run_alignment(site, subsite, device, set_home):
+            return
         # Start live temperature polling if applicable
         poll_interval = 1.0
         if temp_enabled:
@@ -1590,18 +1596,17 @@ class MainUI:
         else:
             self.temp_ui.stop_run()
         def target():
-            if set_home and not has_position(device):
-                self._post_log("Position unknown: skipping coordinate origin setup.")
-            elif set_home:
-                if self.prober_available:
+            try:
+                if set_home and self.prober_available:
                     self._post_log(
-                        f"Setting coordinate origin to device '{device.name}' at "
+                        f"Aligning coordinates to '{site.name}/{subsite.name}/{device.name}' at "
                         f"({device.absolute_x}um, {device.absolute_y}um)."
                     )
-                    self.runner.set_subsite_origin(device.absolute_x, device.absolute_y)
-                else:
-                    self._post_log("No prober connected: skipping subsite origin setup.")
-            try:
+                    self.runner.check_stop("Stopped before coordinate alignment")
+                    if not self.runner.set_subsite_origin(device.absolute_x, device.absolute_y):
+                        self._post_log("Coordinate alignment failed; run not started.")
+                        self._post(messagebox.showerror, "Coordinate alignment", "Could not read the reference position. The run was not started.")
+                        return
                 if temp_enabled:
                     self.runner.run_temperature_sweep(
                         temp_list,
@@ -1685,11 +1690,66 @@ class MainUI:
         self._progress_label.config(text=info)
 
     # --- Prober control handlers ---
+    def _confirm_run_alignment(self, site, subsite, device, auto_align):
+        """Confirm automatic alignment or an explicit override of a missing reference."""
+        if not self.prober_available:
+            return True
+        if not auto_align and self.runner.prober_ctrl.subsite_origin is not None:
+            return True
+        device_path = f"{site.name}/{subsite.name}/{device.name}"
+        if auto_align:
+            if not has_position(device):
+                messagebox.showerror(
+                    "Coordinate alignment",
+                    f"Cannot align coordinates to '{device_path}' because its coordinates are unknown.\n\n"
+                    "Select a device with known coordinates, or uncheck automatic alignment.",
+                    parent=self.root,
+                )
+                return False
+            prompt = (
+                f"Use the current probe position as the reference for\n{device_path}\n"
+                "and start the run?\n\nPosition the probes on this device before choosing Yes."
+            )
+            accept_label = "Yes"
+        else:
+            prompt = (
+                "Coordinates have not been aligned for this prober session.\n"
+                "Automatic probing may move to incorrect positions.\n\n"
+                "Cancel to align coordinates, or choose Start anyway to run with unaligned coordinates."
+            )
+            accept_label = "Start anyway"
+            self.log("Run requires coordinate alignment or an explicit override.")
+
+        confirmed = False
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Coordinate alignment")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text=prompt, wraplength=440, justify=tk.LEFT, padding=15).pack()
+
+        def finish(accepted):
+            nonlocal confirmed
+            confirmed = accepted
+            dialog.destroy()
+
+        buttons = ttk.Frame(dialog, padding=(15, 0, 15, 15))
+        buttons.pack(anchor="e")
+        cancel_button = ttk.Button(buttons, text="Cancel", command=lambda: finish(False))
+        cancel_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text=accept_label, command=lambda: finish(True)).grid(row=0, column=1)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda event: finish(False))
+        center_popup(dialog, self.root)
+        dialog.grab_set()
+        cancel_button.focus_set()
+        self.root.wait_window(dialog)
+        if confirmed and not auto_align:
+            self.log("Starting without coordinate alignment by user override.")
+        return confirmed
+
     def prober_set_reference(self):
         if not self.prober_available:
             return
-        # get current device position as dx, dy
-        # set home position to -dx, -dy
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
@@ -1703,7 +1763,8 @@ class MainUI:
             f"Setting prober reference to device '{device.name}' at "
             f"({device.absolute_x}um, {device.absolute_y}um)."
         )
-        self.runner.set_subsite_origin(device.absolute_x, device.absolute_y)
+        if not self.runner.set_subsite_origin(device.absolute_x, device.absolute_y):
+            messagebox.showerror("Coordinate alignment", "Could not read the reference position. Coordinates were not aligned.", parent=self.root)
 
     def prober_go_to_device(self):
         if not self.prober_available:

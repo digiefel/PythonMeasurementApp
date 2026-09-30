@@ -42,6 +42,7 @@ class ProberController:
 
     def _initialize_session(self) -> bool:
         """Open VISA, create SENTIO prober, and apply startup defaults."""
+        self.subsite_origin = None
         comm = CommunicatorVisa()
         try:
             self.log(f"Opening SENTIO prober session at {self.DEFAULT_ADDRESS}")
@@ -99,15 +100,17 @@ class ProberController:
         return self.prober
 
     # --- Positioning helpers ---
-    def set_subsite_origin(self, x_offset: float, y_offset: float):
+    def set_subsite_origin(self, x_offset: float, y_offset: float) -> bool:
         try:
             prober = self._get()
             x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
             x, y = (x - x_offset, y - y_offset)
             self.subsite_origin = (x, y)
             self.log(f'Subsite origin recorded at X={x:.1f}um, Y={y:.1f}um')
+            return True
         except Exception as e:
             self.log(f'Warning: Failed to set subsite origin: {e}')
+            return False
 
     def go_home(self):
         try:
@@ -276,6 +279,7 @@ class ProberController:
 
     def close(self):
         """Return control to local and tear down VISA session cleanly."""
+        self.subsite_origin = None
         if not self.prober:
             return
         try:

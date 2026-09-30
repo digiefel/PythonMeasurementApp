@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
         'subsite': '',
         'device': '',
         'procedure': '',
-        'set_home_before_run': True,
+        'set_home_before_run': False,
         'temperature_enabled': False,
         'temperature_mode': 'Setpoint',
         'temperature_setpoint_c': '',
