@@ -491,11 +491,6 @@ class MainUI:
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
         self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
 
-        ttk.Label(self.selection_frame, text="Procedure").grid(row=6, column=0, sticky="w")
-        self.proc_cb = ttk.Combobox(self.selection_frame, textvariable=self.proc_var, values=list(self.procedure_fields.keys()))
-        self.proc_cb.grid(row=6, column=1, sticky="ew", pady=2)
-        self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
-
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
         device_sel_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(4, 0))
@@ -550,8 +545,28 @@ class MainUI:
         self.temp_ui.build_panel(self.selection_temp_frame)
 
         # Procedure settings section
-        self.params_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
-        self.params_frame.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
+        self.procedure_settings_frame = ttk.LabelFrame(self.root, text="Procedure Settings")
+        self.procedure_settings_frame.grid(row=0, column=1, sticky="nsew", padx=8, pady=8)
+        self.procedure_settings_frame.grid_columnconfigure(0, weight=1)
+        self.procedure_settings_frame.grid_rowconfigure(2, weight=1)
+
+        procedure_header = ttk.Frame(self.procedure_settings_frame, padding=(8, 6))
+        procedure_header.grid(row=0, column=0, sticky="ew")
+        procedure_header.grid_columnconfigure(1, weight=1)
+        ttk.Label(procedure_header, text="Procedure", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.proc_cb = ttk.Combobox(
+            procedure_header, textvariable=self.proc_var,
+            values=list(self.procedure_fields.keys()), state="readonly",
+            font=("TkDefaultFont", 11, "bold"),
+        )
+        self.proc_cb.grid(row=0, column=1, sticky="ew")
+        self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
+        attach_tooltip(self.proc_cb, "Choose the measurement procedure. Its settings appear below.")
+        tk.Frame(self.procedure_settings_frame, background="#3b82f6", height=2).grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+
+        # Only this body is rebuilt when the selected procedure changes.
+        self.params_frame = ttk.Frame(self.procedure_settings_frame)
+        self.params_frame.grid(row=2, column=0, sticky="nsew")
         self.params_frame.grid_columnconfigure(0, weight=1)
         self.params_frame.grid_columnconfigure(1, weight=1)
 
