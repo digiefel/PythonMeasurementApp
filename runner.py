@@ -124,7 +124,7 @@ class MeasurementRunner:
                     except Exception as e:
                         self.log(f"Contact state cb error: {e}")
                 if separated:
-                    self.prober_set_light(True)
+                    self.prober_restore_light()
             except Exception:
                 pass
 
@@ -142,7 +142,7 @@ class MeasurementRunner:
                     except Exception:
                         pass
                 if separated:
-                    self.prober_set_light(True)
+                    self.prober_restore_light()
             except Exception:
                 pass
 
@@ -183,7 +183,8 @@ class MeasurementRunner:
         return self.prober_ctrl.read_position()
 
     def prober_toggle_light(self) -> bool | None:
-        state = self.prober_ctrl.toggle_scope_light()
+        level = self.config.data.get('scope_light', {}).get('level', 80)
+        state = self.prober_ctrl.toggle_scope_light(on_level=level)
         if state is not None and self.light_state_callback:
             try:
                 self.light_state_callback(state)
@@ -191,14 +192,22 @@ class MeasurementRunner:
                 self.log(f"Light state cb error: {e}")
         return state
 
-    def prober_set_light(self, light_on: bool) -> bool | None:
-        state = self.prober_ctrl.set_scope_light(light_on)
+    def prober_set_light(self, light_on: bool, on_level: int | None = None) -> bool | None:
+        if on_level is None:
+            on_level = self.config.data.get('scope_light', {}).get('level', 80)
+        state = self.prober_ctrl.set_scope_light(light_on, on_level=on_level)
         if state is not None and self.light_state_callback:
             try:
                 self.light_state_callback(state)
             except Exception as e:
                 self.log(f"Light state cb error: {e}")
         return state
+
+    def prober_restore_light(self) -> bool | None:
+        """Restore the normal light level only when automatic adjustment is enabled."""
+        if self.config.data.get('scope_light', {}).get('auto_adjust', True):
+            return self.prober_set_light(True)
+        return None
 
     def get_chuck_height(self) -> float:
         return self.prober_ctrl.get_chuck_height()
@@ -397,7 +406,7 @@ class MeasurementRunner:
             callback = self.manual_position_callback
             if callback is None:
                 raise RuntimeError(f"Position unknown for '{device.name}'; manual positioning confirmation is required.")
-            self.prober_set_light(True)
+            self.prober_restore_light()
             if not callback(device):
                 raise MeasurementAbortRequested("Manual positioning cancelled")
             self.check_stop("Stop during manual positioning")
@@ -419,8 +428,8 @@ class MeasurementRunner:
         if not self.prober_contact():
             raise RuntimeError("Failed to establish contact before measurement.")
         delay_s = self.CONTACT_LIGHTS_OFF_DELAY_S
-        if delay_s > 0:
-            self.log(f"Contact established. Waiting {delay_s:.1f}s before scope light off.")
+        if delay_s > 0 and self.config.data.get('scope_light', {}).get('auto_adjust', True):
+            self.log(f"Contact established. Waiting {delay_s:.1f}s before measurement light adjustment.")
             if self.stop_event.wait(delay_s):
                 self.check_stop("Stop during post-contact delay")
     
@@ -530,8 +539,11 @@ class MeasurementRunner:
         has_prober = self.is_prober_available()
         if has_prober:
             self._prepare_for_measurement(device)
-            self.prober_set_light(False)
-            self.log("Scope light off. Starting measurement.")
+            light_settings = self.config.data.get('scope_light', {})
+            if light_settings.get('auto_adjust', True):
+                level = light_settings.get('measurement_level', 0)
+                self.prober_set_light(True, on_level=level)
+                self.log(f"Scope light set to measurement level {level}. Starting measurement.")
         # Run measurement procedure
         try:
             self.check_stop("Stop requested just before procedure run")
@@ -566,7 +578,7 @@ class MeasurementRunner:
             raise
         finally:
             if has_prober:
-                self.prober_set_light(True)
+                self.prober_restore_light()
         # Move out of contact after completion
         if has_prober and self.auto_separation_after_measurement:
             self.prober_separation()

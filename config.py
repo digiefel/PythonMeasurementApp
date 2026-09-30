@@ -18,6 +18,11 @@ DEFAULT_CONFIG = {
     },
     'devices_csv_path': 'devices.csv',
     'cmu_calibration': {},
+    'scope_light': {
+        'level': 80,
+        'measurement_level': 0,
+        'auto_adjust': True,
+    },
     'procedures': {},
     'last_selection': {
         'chip_id': '',
@@ -121,6 +126,17 @@ class Config:
         if not isinstance(b1500_defaults.get('asu_channel_map'), dict):
             b1500_defaults['asu_channel_map'] = {}
         merged['b1500'] = b1500_defaults
+        light_defaults = deepcopy(DEFAULT_CONFIG['scope_light'])
+        light_data = merged.get('scope_light') or {}
+        if isinstance(light_data, dict):
+            light_defaults.update(light_data)
+        for key in ('level', 'measurement_level'):
+            try:
+                light_defaults[key] = max(0, min(100, int(light_defaults[key])))
+            except (TypeError, ValueError, OverflowError):
+                light_defaults[key] = DEFAULT_CONFIG['scope_light'][key]
+        light_defaults['auto_adjust'] = bool(light_defaults['auto_adjust'])
+        merged['scope_light'] = light_defaults
         merged['output_dir'] = self._resolve_output_dir(merged.get('output_dir'))
         merged['fallback_output_dir'] = self._resolve_output_dir(merged.get('fallback_output_dir'))
         return merged

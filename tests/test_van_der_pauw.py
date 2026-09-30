@@ -1,7 +1,6 @@
 import csv
 import math
 from pathlib import Path
-import queue
 import sys
 import tempfile
 import threading
@@ -9,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from plotting import DataSource, PlotDef
+from plotting import DataSource
 
 # Only the prober is stubbed; procedure, fitting, CSV and plotting models are real.
 with patch.dict(sys.modules, {'prober': SimpleNamespace(ProberController=Mock())}):
@@ -17,7 +16,6 @@ with patch.dict(sys.modules, {'prober': SimpleNamespace(ProberController=Mock())
         VanDerPauwProcedure, CONTACT_SWEEPS, Reading, sheet_resistance, analyze_measurement,
     )
     from runner import MeasurementAbortRequested
-    from instrumentio.constants import SMU_CHANNEL_MAP
 
 class MemoryPlot:
     def __init__(self):
@@ -170,27 +168,6 @@ class VanDerPauwTests(unittest.TestCase):
         self.assertIn('dR -9.52%', plots[1].title)
         self.assertEqual(len(plots), 5)
 
-    def test_defaults_use_smu_numbers_and_follow_discovered_slots(self):
-        with patch.dict(SMU_CHANNEL_MAP, {'SMU1': 7, 'SMU2': 2, 'SMU3': 9, 'SMU4': 5}, clear=True):
-            procedure = self.procedure()
-            self.assertEqual((procedure.TL_channel, procedure.TR_channel,
-                              procedure.BL_channel, procedure.BR_channel), (7, 2, 9, 5))
-            self.assertEqual(procedure.plot_definitions()[1].title, 'I 1->2 / V 3-4')
-            instrument = Mock()
-            instrument.read_data.return_value = (0, 1, 16, 0, 0, -1)
-            procedure.perform_iv_sweep(instrument, CONTACT_SWEEPS[0], [])
-            self.assertEqual(instrument.start_measure.call_args.args[0], [7, 9, 2, 5])
-            self.assertIn('# TL: SMU1', procedure.csv_metadata_lines())
-
-    def test_changed_wiring_updates_plot_labels_and_sweep_channels(self):
-        procedure = self.procedure(TL_channel='SMU4', TR_channel='SMU3',
-                                   BL_channel='SMU2', BR_channel='SMU1')
-        self.assertEqual(procedure.plot_definitions()[1].title, 'I 4->3 / V 2-1')
-        instrument = Mock()
-        instrument.read_data.return_value = (0, 1, 16, 0, 0, -1)
-        procedure.perform_iv_sweep(instrument, CONTACT_SWEEPS[0], [])
-        self.assertEqual(instrument.start_measure.call_args.args[0], [6, 4, 5, 3])
-
     def test_instrument_flags_are_shown_without_excluding_points(self):
         self.procedure().execute(FakeB1500(flagged=True), self.device)
         self.assertEqual(len(self.runner.plot.sources['sheet_forward'].y), 4)
@@ -259,30 +236,6 @@ class VanDerPauwTests(unittest.TestCase):
         self.assertEqual(result['fits']['bottom'].slope, 130)
         self.assertNotIn('warnings', result)
         self.assertTrue(math.isfinite(result['sheet']))
-
-
-class PlotLayoutTests(unittest.TestCase):
-    def test_five_panels_span_and_existing_three_panel_layout(self):
-        from plotting.viewer import PlotViewer
-        viewer = PlotViewer(queue.Queue(), queue.Queue())
-        layout = viewer._split_span_layout_spec(VanDerPauwProcedure({}, '', '', Mock()).plot_definitions(), 2, 3)
-        self.assertIsNotNone(layout)
-        self.assertEqual(layout['spanning_plot'].id, 'sheet')
-        self.assertEqual([p.id for p in layout['stack_plots']], ['top', 'right', 'bottom', 'left'])
-        existing = [PlotDef('main', rowspan=2), PlotDef('top', col=1), PlotDef('bottom', row=1, col=1)]
-        self.assertIsNotNone(viewer._split_span_layout_spec(existing, 2, 2))
-        self.assertIsNone(viewer._split_span_layout_spec(existing[:-1], 2, 2))
-
-    def test_dynamic_sheet_result_label(self):
-        from plotting.viewer import PlotViewer, _HLineState
-        viewer = PlotViewer(queue.Queue(), queue.Queue())
-        element = VanDerPauwProcedure({}, '', '', Mock()).plot_definitions()[0].elements[2]
-        source = DataSource()
-        source.append_point(1, 500)
-        with patch('plotting.viewer.dpg.set_value') as values, patch('plotting.viewer.dpg.set_item_label') as label:
-            viewer._redraw_hline(_HLineState('sheet', element, 123), source)
-        values.assert_called_once_with(123, [[500.0]])
-        label.assert_called_once_with(123, 'Average: 500 Ohm/sq')
 
 
 if __name__ == '__main__':

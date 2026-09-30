@@ -170,9 +170,9 @@ class ProberController:
             return None
         target = on_level if light_on else 0
         prober.vision.camera.set_light(camera, target)
-        self._scope_light_on = light_on
-        self.log(f"Scope light {'ON' if light_on else 'OFF'} (level={target}).")
-        return light_on
+        self._scope_light_on = target > 0
+        self.log(f"Scope light {'ON' if self._scope_light_on else 'OFF'} (level={target}).")
+        return self._scope_light_on
 
     def toggle_scope_light(self, on_level: int = 80) -> bool | None:
         prober = self._get()

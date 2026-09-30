@@ -12,6 +12,7 @@ from typing import Optional
 from si_utils import parse_si_value, parse_si_list, format_si_value, format_si_compact_0
 from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
+from ui_light_settings import show_light_settings
 
 from config import Config
 from models import has_position
@@ -573,8 +574,14 @@ class MainUI:
         self.auto_separation_check.grid(row=0, column=1, sticky="w", pady=0)
         attach_tooltip(self.auto_separation_check, "Auto Separation after measurement")
 
-        self.light_button = tk.Button(self.prober_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
-        self.light_button.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        light_row_frame = ttk.Frame(self.prober_frame)
+        light_row_frame.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        light_row_frame.grid_columnconfigure(0, weight=1)
+        self.light_button = tk.Button(light_row_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
+        self.light_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.light_settings_button = ttk.Button(light_row_frame, text="Light settings", command=self.open_light_settings)
+        self.light_settings_button.grid(row=0, column=1)
+        attach_tooltip(self.light_settings_button, "Set normal and measurement brightness, and enable or disable automatic light adjustment.")
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
         self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
         self.set_reference_button = ttk.Button(self.prober_frame, text="Set Reference to Device", command=self.prober_set_reference)
@@ -1620,7 +1627,7 @@ class MainUI:
                 raise
             finally:
                 if self.prober_available:
-                    self.runner.prober_set_light(True)
+                    self.runner.prober_restore_light()
                 self.runner.stop_event.clear()
                 self.runner.cancel_queue_event.clear()
                 self.runner.skip_device_event.clear()
@@ -1746,6 +1753,26 @@ class MainUI:
         except Exception:
             self.position_var.set("X=-- , Y=--")
 
+    def open_light_settings(self):
+        if not self.prober_available or (self._run_thread and self._run_thread.is_alive()):
+            return
+        show_light_settings(self.root, self.config.data['scope_light'], self._apply_light_settings)
+
+    def _apply_light_settings(self, settings):
+        previous = self.config.data['scope_light']
+        self.config.data['scope_light'] = settings
+        try:
+            self.config.save()
+        except Exception as exc:
+            self.config.data['scope_light'] = previous
+            messagebox.showerror("Light settings", f"Could not save light settings:\n{exc}")
+            return
+        if self.prober_light_state.get():
+            try:
+                self.runner.prober_set_light(True)
+            except Exception as exc:
+                self.log(f"Light settings saved, but could not update scope light: {exc}")
+
     def toggle_prober_light(self):
         if not self.prober_available:
             return
@@ -1828,6 +1855,7 @@ class MainUI:
         self._post(self.show_status, info)
 
     def _set_running_state(self, running: bool):
+        self.light_settings_button.configure(state=tk.NORMAL if self.prober_available and not running else tk.DISABLED)
         if running:
             self._finish_btn.config(text="Finish & Stop", bg="#d4830a")
             self.run_button.grid_remove()
