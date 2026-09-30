@@ -608,8 +608,8 @@ class MainUI:
         self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
         self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
         ttk.Label(self.prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
-        comp_frame = ttk.Frame(self.prober_frame)
-        comp_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=4, pady=(8, 2))
+        comp_frame = ttk.Frame(self.temp_ui.temp_frame)
+        comp_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
         for c in range(3):
             comp_frame.grid_columnconfigure(c, weight=1)
         ttk.Label(comp_frame, text="CompX (um / C)").grid(row=0, column=0, sticky="w", padx=2, pady=(0, 2))
