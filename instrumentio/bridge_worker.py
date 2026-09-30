@@ -152,9 +152,9 @@ def main(session_factory=None):
     except Exception as exc:
         details = traceback.format_exc()
         if cancelled.is_set():
-            logger.debug("Instrument call ended during cancellation:\n%s", details)
+            logger.warning("Instrument call ended during cancellation:\n%s", details)
         else:
-            logger.debug("Instrument operation failed:\n%s", details)
+            logger.error("Instrument operation failed:\n%s", details)
             terminal = ["error", str(exc) or type(exc).__name__, details, False]
     finally:
         cancelled.set()
@@ -165,7 +165,7 @@ def main(session_factory=None):
                     terminal[3] = True  # Operation failed, but shutdown completed.
             except Exception as exc:
                 details = traceback.format_exc()
-                logger.debug("Instrument cleanup failed:\n%s", details)
+                logger.error("Instrument cleanup failed:\n%s", details)
                 original = f"{terminal[1]} " if terminal[0] == "error" else ""
                 terminal = ["error", f"{original}Instrument cleanup failed: {exc}", details, False]
         try:

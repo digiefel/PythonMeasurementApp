@@ -85,6 +85,7 @@ def shutdown(address, *, wgfmu=False):
         try:
             operation()
         except Exception as exc:
+            logger.exception("Emergency shutdown operation failed")
             errors.append(exc)
 
     def reset_mainframe():
@@ -106,14 +107,24 @@ def shutdown(address, *, wgfmu=False):
     if wgfmu:
         def reset_wgfmu():
             # Import the native library only in this 32-bit helper, when used.
+            logger.info("Emergency shutdown: loading WGFMU library")
             from .bindings import dll_wgfmu, require_dll
             driver = require_dll(dll_wgfmu, "PYMEASUREMENT_WGFMU_DLL")
-            _check(driver.WGFMU_openSession(address.encode()), "Open WGFMU")
+            logger.info("Emergency shutdown: WGFMU library loaded")
+
+            def checked_call(name, operation, *args):
+                logger.info("Emergency shutdown: starting %s", name)
+                status = getattr(driver, name)(*args)
+                logger.info("Emergency shutdown: %s returned %d (0x%08X)",
+                            name, status, status & 0xffffffff)
+                _check(status, operation)
+
+            checked_call("WGFMU_openSession", "Open WGFMU", address.encode())
             try:
-                attempt(lambda: _check(driver.WGFMU_setTimeout(IO_TIMEOUT_MS / 1000), "Set WGFMU abort timeout"))
-                attempt(lambda: _check(driver.WGFMU_initialize(), "Reset WGFMU channels"))
+                attempt(lambda: checked_call("WGFMU_setTimeout", "Set WGFMU abort timeout", IO_TIMEOUT_MS / 1000))
+                attempt(lambda: checked_call("WGFMU_initialize", "Reset WGFMU channels"))
             finally:
-                attempt(lambda: _check(driver.WGFMU_closeSession(), "Close WGFMU"))
+                attempt(lambda: checked_call("WGFMU_closeSession", "Close WGFMU"))
         attempt(reset_wgfmu)
     if errors:
         raise ExceptionGroup("Instrument emergency shutdown failed", errors)
