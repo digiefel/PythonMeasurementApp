@@ -24,6 +24,43 @@ from instrumentio.constants import (
 )
 
 
+def _preview_sequence(ui):
+	"""Preview this procedure's schedule using the current form settings."""
+	from tkinter import messagebox
+	try:
+		settings = ui.collect_settings()
+		cycle_count = float(settings['fatigue_count'])
+		frequency = float(settings['fatigue_freq'])
+		ppd = int(float(settings['reads_per_decade']))
+		preview = PUNDFatigueV2Procedure.get_preview_info(cycle_count, frequency, ppd)
+	except (TypeError, ValueError) as exc:
+		messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {exc}", parent=ui.root)
+		return
+	total_sec = preview['total_duration']
+	if total_sec < 60:
+		duration = f"{total_sec:.1f} s"
+	elif total_sec < 3600:
+		duration = f"{total_sec / 60:.1f} min"
+	else:
+		duration = f"{total_sec / 3600:.2f} h"
+	lines = [
+		f"Cycle Count: {cycle_count:.2e}", f"Frequency: {frequency:.0f} Hz",
+		f"Reads per Decade: {ppd}", f"Decades: {preview['decades']:.1f}", "",
+		f"Total Measurements: {preview['total_measurements']}",
+		f"Estimated Duration: {duration}", "", "Measurement at cycles:",
+	]
+	cycles = preview['measure_cycles']
+	if len(cycles) <= 20:
+		lines.append("  " + ", ".join(str(c) for c in cycles))
+	else:
+		lines.extend([
+			"  " + ", ".join(str(c) for c in cycles[:10]),
+			f"  ... ({len(cycles) - 20} more)",
+			"  " + ", ".join(str(c) for c in cycles[-10:]),
+		])
+	messagebox.showinfo("PUND Fatigue Preview", "\n".join(lines), parent=ui.root)
+
+
 class PUNDFatigueV2Procedure(MeasurementProcedure):
 	NAME = "PUNDFatigueV2"
 	PARAMETERS = (
@@ -48,7 +85,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
                   Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
 	)
 	UI_ACTIONS = (
-		action("Preview Sequence", "_show_pund_fatigue_preview"),
+		action("Preview Sequence", _preview_sequence),
 	)
 
 

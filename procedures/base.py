@@ -4,7 +4,7 @@ import json
 import os
 import threading
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from instrumentio.constants import SMU_CHANNEL_MAP, WGFMU_CHANNEL_MAP
 from instrumentio.codes import B1500_ASU_DC
@@ -110,13 +110,13 @@ class ProcedureParameter:
 @dataclass(frozen=True)
 class ProcedureAction:
     label: str
-    callback: str
+    callback: str | Callable
     args: tuple = ()
     section: str | None = None
     tooltip: str | None = None
 
 
-def action(label: str, callback: str, *args, section: str | None = None, tooltip: str | None = None) -> ProcedureAction:
+def action(label: str, callback: str | Callable, *args, section: str | None = None, tooltip: str | None = None) -> ProcedureAction:
     return ProcedureAction(label=label, callback=callback, args=tuple(args), section=section, tooltip=tooltip)
 
 

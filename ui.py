@@ -35,33 +35,13 @@ from instrumentio.constants import (
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
 from runner import MeasurementAbortRequested, MeasurementRunner
 from instrumentio.bridge import InstrumentCancelled, InstrumentError
+from procedures import load_procedures
 from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
-from procedures.four_terminal_iv_sweep import FourTerminalIVProcedure
-from procedures.van_der_pauw import VanDerPauwProcedure
-from procedures.iv_sweep import IVSweepProcedure
-from procedures.cv_sweep import CVSweepProcedure
-from procedures.PUND import PUNDProcedure
-from procedures.pund_fatigue import PUNDFatigueProcedure
-from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
-from procedures.pund_wakeup import PUNDWakeUpProcedure
-from procedures.wgfmu_sampling import WGFMUSamplingProcedure
 from tooltip_helper import attach_tooltip
 from ui_smu_calibration import calibrate_smus
 from plotting import PlotBridge
 
 logger = logging.getLogger(__name__)
-
-PROCEDURE_CLASSES = {
-    'FourTerminalIV': FourTerminalIVProcedure,
-    'VanDerPauw': VanDerPauwProcedure,
-    'IVSweep': IVSweepProcedure,
-    'CVSweep': CVSweepProcedure,
-    'PUND': PUNDProcedure,
-    'PUNDFatigue': PUNDFatigueProcedure,
-    'PUNDFatigueV2': PUNDFatigueV2Procedure,
-    'PUNDWakeUp': PUNDWakeUpProcedure,
-    'WGFMU Sampling': WGFMUSamplingProcedure,
-}
 
 def _format_duration(seconds: float) -> str:
     s = max(0, int(seconds))
@@ -73,13 +53,6 @@ def _format_duration(seconds: float) -> str:
     h, r = divmod(s, 3600)
     return f"{h}h {r // 60:02d}m"
 
-
-# --- CV Sweep type options ---
-CV_SWEEP_TYPES = [
-    ('single',    'Single (Start → Stop)'),
-    ('double',    'Double (Start → Stop → Start)'),
-    ('butterfly', 'Butterfly (0 → Vmax → Vmin → 0)'),
-]
 
 class MainUI:
     def __init__(self, root):
@@ -145,7 +118,8 @@ class MainUI:
         self.temp_ui = TemperatureUI(self.root, self.runner, self.log)
 
         # Procedure forms are declared on the procedure classes themselves.
-        self.procedure_classes = PROCEDURE_CLASSES
+        procedure_errors = []
+        self.procedure_classes = load_procedures(procedure_errors.append)
         self.procedure_fields = {
             name: proc_class.ui_fields()
             for name, proc_class in self.procedure_classes.items()
@@ -156,6 +130,8 @@ class MainUI:
         }
 
         self.build_layout()
+        for error in procedure_errors:
+            self.log(error)
         # Apply after Tk has calculated widget requests so they cannot resize it.
         tile_main_window(self.root)
         self._refresh_devices_csv_options()
@@ -164,13 +140,18 @@ class MainUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
-        default_proc = next(iter(self.procedure_fields.keys()))
+        default_proc = next(iter(self.procedure_classes), '')
         last_sel = self.config.get_last_selection()
-        proc_to_use = last_sel.get('procedure') or default_proc
+        saved_proc = last_sel.get('procedure')
+        proc_to_use = saved_proc if saved_proc in self.procedure_classes else default_proc
         self.proc_var.set(proc_to_use)
         self.proc_cb.set(proc_to_use)
         self.render_param_form(proc_to_use)
         self.apply_last_selection(last_sel)
+        if not self.procedure_classes:
+            self.proc_cb.configure(state='disabled')
+            self.run_button.configure(state='disabled')
+            self.log("No procedures available. Add a procedure file to procedures/ and restart the app.")
         self._init_prober_state()
         self.log("================ APPLICATION INITIALIZED ================")
 
@@ -254,8 +235,6 @@ class MainUI:
         return [(value, label) for value, label in options if not MainUI._is_1pa_current_range(value)]
 
     def _selected_current_range_channels(self, proc_name: str) -> list[int]:
-        if proc_name != 'IVSweep':
-            return []
         channels = []
         for key in ('high_channel', 'low_channel'):
             item = self.param_vars.get(key)
@@ -304,7 +283,7 @@ class MainUI:
                     f"{param.label}: slot {channel} is {module.get('model')} ({module.get('kind')})"
                 )
 
-        if proc_name == 'IVSweep' and self._is_1pa_current_range(settings.get('current_range')):
+        if self._is_1pa_current_range(settings.get('current_range')):
             channels = []
             for key in ('high_channel', 'low_channel'):
                 try:
@@ -850,7 +829,9 @@ class MainUI:
 
         fields = self.procedure_fields.get(proc_name, [])
         if not fields:
-            ttk.Label(self.params_frame, text="Select a procedure to edit settings.").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+            message = "This procedure has no settings." if proc_name in self.procedure_classes else "Select a procedure to edit settings."
+            ttk.Label(self.params_frame, text=message).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+            self._render_procedure_actions(proc_name, start_row=1)
             return
 
         settings = self.config.get_procedure_settings(proc_name)
@@ -906,8 +887,9 @@ class MainUI:
 
         self._bind_current_range_filter(proc_name)
 
-        # CV-specific: keep MFCMU range options consistent with entered frequency.
-        if proc_name == 'CVSweep':
+        # Procedures opt into shared CMU calibration through their section actions.
+        calibration_actions = self._procedure_actions(proc_name, section="CMU Calibration")
+        if calibration_actions:
             self._cv_calibration_store = self.config.get_cmu_calibration()
             self._bind_cv_range_filter()
             # Bottom-anchor the calibration box: expandable spacer consumes extra height.
@@ -916,7 +898,7 @@ class MainUI:
             self.params_frame.grid_rowconfigure(spacer_row, weight=1)
             spacer = ttk.Frame(self.params_frame)
             spacer.grid(row=spacer_row, column=0, columnspan=2, sticky="nsew")
-            self._render_cv_calibration_section(calib_row, self._procedure_actions(proc_name, section="CMU Calibration"))
+            self._render_cv_calibration_section(calib_row, calibration_actions)
             self._refresh_cv_calibration_readout()
 
         self._render_procedure_actions(proc_name, start_row=len(fields))
@@ -932,8 +914,11 @@ class MainUI:
 
     def _make_action_command(self, action_def):
         def command():
-            callback = getattr(self, action_def.callback)
-            callback(*action_def.args)
+            if callable(action_def.callback):
+                action_def.callback(self, *action_def.args)
+            else:
+                callback = getattr(self, action_def.callback)
+                callback(*action_def.args)
         return command
 
     def _render_procedure_actions(self, proc_name: str, start_row: int):
@@ -947,62 +932,6 @@ class MainUI:
             btn.grid(row=start_row + offset, column=0, columnspan=2, pady=10)
             if action_def.tooltip:
                 attach_tooltip(btn, action_def.tooltip)
-
-    def _show_pund_fatigue_preview(self):
-        """Show preview dialog for PUNDFatigue measurement schedule."""
-        try:
-            if self.proc_var.get() == 'PUNDFatigueV2':
-                cycle_count = float(self.param_vars.get('fatigue_count', (tk.StringVar(value='1e6'), float))[0].get())
-                frequency = float(self.param_vars.get('fatigue_freq', (tk.StringVar(value='1e4'), float))[0].get())
-                ppd = int(float(self.param_vars.get('reads_per_decade', (tk.StringVar(value='10'), int))[0].get()))
-                preview = PUNDFatigueV2Procedure.get_preview_info(cycle_count, frequency, ppd)
-                ppd_label = "Reads per Decade"
-            else:
-                cycle_count = float(self.param_vars.get('cycle_count', (tk.StringVar(value='1e6'), float))[0].get())
-                frequency = float(self.param_vars.get('frequency', (tk.StringVar(value='1e3'), float))[0].get())
-                ppd = int(float(self.param_vars.get('points_per_decade', (tk.StringVar(value='10'), int))[0].get()))
-                preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
-                ppd_label = "Points per Decade"
-        except ValueError as e:
-            messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {e}")
-            return
-
-        measure_cycles = preview['measure_cycles']
-
-        # Format duration
-        total_sec = preview['total_duration']
-        if total_sec < 60:
-            duration_str = f"{total_sec:.1f} s"
-        elif total_sec < 3600:
-            duration_str = f"{total_sec/60:.1f} min"
-        else:
-            duration_str = f"{total_sec/3600:.2f} h"
-
-        # Build message
-        lines = [
-            f"Cycle Count: {cycle_count:.2e}",
-            f"Frequency: {frequency:.0f} Hz",
-            f"{ppd_label}: {ppd}",
-            f"Decades: {preview['decades']:.1f}",
-            f"",
-            f"Total Measurements: {preview['total_measurements']}",
-            f"Estimated Duration: {duration_str}",
-            f"",
-            f"Measurement at cycles:",
-        ]
-
-        # Show cycles in compact form
-        if len(measure_cycles) <= 20:
-            lines.append("  " + ", ".join(str(c) for c in measure_cycles))
-        else:
-            # Show first 10 and last 10
-            first = ", ".join(str(c) for c in measure_cycles[:10])
-            last = ", ".join(str(c) for c in measure_cycles[-10:])
-            lines.append(f"  {first}")
-            lines.append(f"  ... ({len(measure_cycles) - 20} more)")
-            lines.append(f"  {last}")
-
-        messagebox.showinfo("PUND Fatigue Preview", "\n".join(lines))
 
     def collect_settings(self):
         proc_name = self.proc_var.get()
@@ -1285,7 +1214,7 @@ class MainUI:
         except Exception:
             return str(channel)
 
-    def _commit_cv_calibration_result(self, channel: int, cal_type: str, result, frequencies_hz=None):
+    def _commit_cv_calibration_result(self, channel: int, cal_type: str, result, frequencies_hz, proc_name, settings):
         channel_key = str(channel)
         channel_store = self._cv_calibration_store.setdefault(channel_key, {})
         if cal_type == 'phase':
@@ -1310,7 +1239,7 @@ class MainUI:
             session_state[cal_type] = done_set
 
         self.config.set_cmu_calibration(self._cv_calibration_store)
-        self.config.set_procedure_settings('CVSweep', self.collect_settings())
+        self.config.set_procedure_settings(proc_name, settings)
         self._refresh_cv_calibration_readout()
 
     def _finish_cv_calibration_thread(self):
@@ -1327,6 +1256,7 @@ class MainUI:
         try:
             channel, frequencies_hz = self._get_cv_channel_and_frequencies()
             settings_now = self.collect_settings()
+            proc_name = self.proc_var.get()
             gpib_address = settings_now.get('gpib_address', 'GPIB0::17::INSTR')
             ac_level_v = float(settings_now.get('ac_level_mv', 30.0)) / 1000.0
         except Exception as e:
@@ -1365,7 +1295,7 @@ class MainUI:
                     if cal_type == 'phase':
                         self.runner.check_stop("Stop requested before phase compensation")
                         result = b1500.run_cmu_phase_compensation(channel)
-                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, None)
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, None, proc_name, settings_now)
                         self._post_log(f"CMU {cal_type} calibration completed on {channel_name}")
                     else:
                         result = {}
@@ -1373,7 +1303,7 @@ class MainUI:
                             self.runner.check_stop("Stop requested during CMU calibration")
                             freq_key = self._freq_key(freq)
                             result[freq_key] = b1500.run_cmu_correction(channel, cal_type, freq)
-                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz))
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz), proc_name, settings_now)
                         freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
                         self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
             except (MeasurementAbortRequested, InstrumentCancelled):
@@ -2166,10 +2096,13 @@ class MainUI:
         self.root.destroy()
 
     def apply_last_selection(self, last_sel):
-        if last_sel.get('procedure'):
-            self.proc_var.set(last_sel['procedure'])
-            self.proc_cb.set(last_sel['procedure'])
-            self.render_param_form(last_sel['procedure'])
+        saved_proc = last_sel.get('procedure')
+        if saved_proc in self.procedure_classes:
+            self.proc_var.set(saved_proc)
+            self.proc_cb.set(saved_proc)
+            self.render_param_form(saved_proc)
+        elif saved_proc:
+            self.log(f"Saved procedure '{saved_proc}' is unavailable; using '{self.proc_var.get() or 'none'}'.")
         site_names = [s.name for s in self.config.sites]
         if site_names:
             preferred_site = last_sel.get('site')

@@ -79,11 +79,20 @@ features, not procedure copies or implementation plans.
 
 ## Adding a procedure
 
-Subclass `MeasurementProcedure`, declare `PARAMETERS`, implement `measure(device)`,
-and register the class in `ui.PROCEDURE_CLASSES`. Document the procedure in its
-class docstring and implementation details beside the relevant methods. Parameter declarations
-provide form fields, defaults, runtime attributes, hover help and CSV metadata.
-Optional `UI_ACTIONS` declare procedure-specific buttons.
+Add a single `.py` file to `procedures/` and restart the app. In that file, define
+one `MeasurementProcedure` subclass with a unique `NAME`, declare `PARAMETERS`,
+and implement `measure(device)`. The app discovers it automatically; removing
+that file removes the procedure after restarting. `base.py` and files beginning
+with `_` are shared support, not selectable procedures. A broken procedure file
+is logged and skipped, and saved selections fall back if a procedure was removed.
+
+Keep procedure-specific helpers and documentation in the same file. Parameter
+declarations provide form fields, defaults, runtime attributes, wrapped hover help
+and CSV metadata. Optional `UI_ACTIONS` declare buttons with
+`action("Label", callback)`: a callable defined in the procedure file receives
+the app UI, providing `ui.collect_settings()` and `ui.root`. String callbacks
+refer to shared app services, such as CMU calibration. Procedures can depend on
+the shared app APIs and installed libraries; do not import another procedure file.
 
 Use `self.b1500` and the runner's plot interface. Instrument connection ownership
 and abort cleanup belong to the runner/bridge, not individual procedures.
