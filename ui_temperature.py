@@ -56,7 +56,7 @@ class TemperatureUI:
     # --- UI construction ---
     def build_panel(self, parent_frame: ttk.Frame):
         self.temp_enable_cb = ttk.Checkbutton(parent_frame, text="Temperature", variable=self.enabled_var, command=self._toggle_controls)
-        attach_tooltip(self.temp_enable_cb, "Include temperature setting and stabilization in the run, and display live chuck temperature. Unchecking skips temperature steps; it does not turn off the chuck heater or cooler.")
+        attach_tooltip(self.temp_enable_cb, "Set the chuck temperature and wait for it to stabilize before measuring. The chuck keeps its temperature setting when this is unchecked.")
         self.temp_frame = ttk.LabelFrame(parent_frame, labelwidget=self.temp_enable_cb)
         self.temp_frame.grid(row=1, column=0, sticky="nsew", padx=0, pady=6)
         self.temp_frame.grid_columnconfigure(0, weight=1)
@@ -67,45 +67,43 @@ class TemperatureUI:
         self.mode_cb = ttk.Combobox(self.temp_frame, textvariable=self.mode_var, values=["Setpoint", "Sweep"], state="readonly")
         self.mode_cb.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
         self.mode_cb.bind('<<ComboboxSelected>>', lambda e=None: self._toggle_controls())
-        mode_tip = "Setpoint runs the selected devices at one temperature. Sweep repeats them at each temperature in the comma-separated list, in the entered order."
+        mode_tip = "Choose Setpoint to measure at one temperature, or Sweep to repeat the measurements at each temperature in the list."
         attach_tooltip(mode_label, mode_tip)
-        attach_tooltip(self.mode_cb, mode_tip)
         self.setpoint_entry_label = ttk.Label(self.temp_frame, text="Setpoint (C)")
         self.setpoint_entry_label.grid(row=1, column=0, sticky="w", padx=2, pady=2)
         self.setpoint_entry = ttk.Entry(self.temp_frame, textvariable=self.setpoint_var)
         self.setpoint_entry.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
-        setpoint_tip = "Target chuck temperature in degrees Celsius. RUN sets this target and waits for stabilization before measuring. Set Temperature applies it immediately without starting a run."
+        setpoint_tip = "Set the target chuck temperature in degrees Celsius. The app waits for this temperature to stabilize before measuring."
         attach_tooltip(self.setpoint_entry_label, setpoint_tip)
-        attach_tooltip(self.setpoint_entry, setpoint_tip)
         self.sweep_entry_label = ttk.Label(self.temp_frame, text="Sweep list (C)")
         self.sweep_entry_label.grid(row=2, column=0, sticky="w", padx=2, pady=2)
         self.sweep_entry = ttk.Entry(self.temp_frame, textvariable=self.sweep_var)
         self.sweep_entry.grid(row=2, column=1, sticky="ew", padx=2, pady=2)
-        sweep_tip = "Comma-separated chuck temperatures in degrees Celsius, for example 25, 50, 75. RUN measures the selected devices at each target in this order, waiting for stabilization at each step."
+        sweep_tip = "Enter chuck temperatures in degrees Celsius, separated by commas, for example 25, 50, 75. Measurements are repeated at each temperature in this order."
         attach_tooltip(self.sweep_entry_label, sweep_tip)
-        attach_tooltip(self.sweep_entry, sweep_tip)
         wait_label = ttk.Label(self.temp_frame, text="Wait after stable (s)")
         wait_label.grid(row=3, column=0, sticky="w", padx=2, pady=2)
         self.wait_entry = ttk.Entry(self.temp_frame, textvariable=self.wait_var)
         self.wait_entry.grid(row=3, column=1, sticky="ew", padx=2, pady=2)
-        wait_tip = "Additional time in seconds that the temperature must remain within the stabilization tolerance before measurement. The timer restarts if it leaves that tolerance; 0 adds no extra wait."
+        wait_tip = "Set how many seconds the chuck temperature must stay within the stabilization tolerance before measuring."
         attach_tooltip(wait_label, wait_tip)
-        attach_tooltip(self.wait_entry, wait_tip)
         self.set_button = ttk.Button(self.temp_frame, text="Set Temperature", command=self._set_temperature_now)
         self.set_button.grid(row=5, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
-        attach_tooltip(self.set_button, "Apply the setpoint now, or the first temperature in the sweep list. Does not wait for stabilization, start measurements, or execute the rest of the sweep.")
+        attach_tooltip(self.set_button, "Set the chuck temperature now, using the setpoint or the first temperature in the sweep list.")
         temp_row = ttk.Frame(self.temp_frame)
         temp_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=2, pady=(2, 0))
         for c in range(4):
             temp_row.grid_columnconfigure(c, weight=1)
-        ttk.Label(temp_row, text="Temp:").grid(row=0, column=0, sticky="w", padx=2)
+        temp_label = ttk.Label(temp_row, text="Temp:")
+        temp_label.grid(row=0, column=0, sticky="w", padx=2)
         self.temp_value_label = ttk.Label(temp_row, textvariable=self.value_var)
         self.temp_value_label.grid(row=0, column=1, sticky="w", padx=2)
-        attach_tooltip(self.temp_value_label, "Current chuck temperature reported by the prober, not a direct measurement of device temperature. Orange: heating; blue: cooling; green: controlling; red: error, uncontrolled, or unavailable.")
-        ttk.Label(temp_row, text="Setpoint:").grid(row=0, column=2, sticky="e", padx=2)
+        attach_tooltip(temp_label, "Shows the current chuck temperature. Orange means heating, blue means cooling, green means temperature control is active, and red indicates a problem.")
+        setpoint_label = ttk.Label(temp_row, text="Setpoint:")
+        setpoint_label.grid(row=0, column=2, sticky="e", padx=2)
         setpoint_display = ttk.Label(temp_row, textvariable=self.setpoint_display_var)
         setpoint_display.grid(row=0, column=3, sticky="e", padx=2)
-        attach_tooltip(setpoint_display, "Temperature target currently reported by the prober. Editing a target above does not apply it until Set Temperature or RUN is pressed.")
+        attach_tooltip(setpoint_label, "Shows the chuck temperature target currently reported by the prober.")
 
         # Mini profile plot
         self.profile_fig = Figure(figsize=(2.0, 0.8), dpi=100, layout='compressed')
@@ -119,7 +117,6 @@ class TemperatureUI:
         self.profile_fig.patch.set_alpha(0)
         self.profile_ax.set_facecolor("none")
         self.profile_widget.configure(bg=self.root.cget('bg'), highlightthickness=0)
-        attach_tooltip(self.profile_widget, "Before a sweep, previews the temperature steps. During a run, shows the recorded chuck temperature, setpoints and estimated schedule; timing estimates are not guaranteed.")
 
         # trace sweep field for live preview
         self.sweep_var.trace_add('write', lambda *_: self._update_sweep_plot())

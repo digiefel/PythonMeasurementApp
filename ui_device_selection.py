@@ -61,7 +61,8 @@ class DeviceSelectionDialog:
         instructions.pack(padx=10, pady=(10, 5))
 
         if self.unpositioned_devices:
-            manual_frame = ttk.LabelFrame(self.dialog, text="Unknown coordinates (manual positioning)")
+            manual_label = ttk.Label(self.dialog, text="Unknown coordinates (manual positioning)")
+            manual_frame = ttk.LabelFrame(self.dialog, labelwidget=manual_label)
             manual_frame.pack(padx=10, pady=5, fill="x")
             self.manual_list = tk.Listbox(
                 manual_frame, selectmode=tk.MULTIPLE, exportselection=False,
@@ -76,7 +77,7 @@ class DeviceSelectionDialog:
                 if device.name in self.selected_devices:
                     self.manual_list.selection_set(index)
             self.manual_list.bind("<<ListboxSelect>>", self._update_manual_selection)
-            attach_tooltip(self.manual_list, "Click names to include or exclude devices without coordinates. During a run, the app asks you to position each of these devices manually before measuring.")
+            attach_tooltip(manual_label, "Select devices to position manually. The app asks you to position each one before measuring it.")
         
         # Canvas frame
         canvas_frame = ttk.Frame(self.dialog)
@@ -98,23 +99,23 @@ class DeviceSelectionDialog:
         
         select_all_button = ttk.Button(button_frame, text="Select All", command=self._select_all)
         select_all_button.pack(side="left", padx=5)
-        attach_tooltip(select_all_button, "Select every device in this subsite, including those that require manual positioning.")
+        attach_tooltip(select_all_button, "Select every device in this subsite.")
         clear_button = ttk.Button(button_frame, text="Clear Selection", command=self._clear_selection)
         clear_button.pack(side="left", padx=5)
-        attach_tooltip(clear_button, "Clear the multi-device selection. After confirming with OK, RUN will use the main Device selector instead.")
+        attach_tooltip(clear_button, "Clear the device selection.")
         refresh_button = self.refresh_button = ttk.Button(button_frame, text="Refresh Prober Position", command=lambda: self._refresh_prober())
         refresh_button.pack(side="left", padx=5)
-        attach_tooltip(refresh_button, "Read the current chuck position and update the red marker on the map. Does not move the chuck or change coordinate alignment.")
+        attach_tooltip(refresh_button, "Read the current chuck position and update the red marker on the map.")
         
         self.selection_label = ttk.Label(button_frame, text="Selected: 0")
         self.selection_label.pack(side="left", padx=20)
         
         cancel_button = ttk.Button(button_frame, text="Cancel", command=self._cancel)
         cancel_button.pack(side="right", padx=5)
-        attach_tooltip(cancel_button, "Close without changing the app's device selection.")
+        attach_tooltip(cancel_button, "Discard your changes and close Device Selection.")
         ok_button = ttk.Button(button_frame, text="OK", command=self._ok)
         ok_button.pack(side="right", padx=5)
-        attach_tooltip(ok_button, "Use this selection for RUN. Devices are measured in their original order in the subsite, not in the order clicked. Does not start a run.")
+        attach_tooltip(ok_button, "Use the selected devices for the next run.")
         
         # Bind events
         self.canvas.bind("<Button-1>", self._on_mouse_down)

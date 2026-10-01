@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Optional, Callable
 from sentio_prober_control.Communication.CommunicatorVisa import CommunicatorVisa
@@ -12,6 +13,8 @@ from sentio_prober_control.Sentio.Enumerations import (
 )
 from sentio_prober_control.Sentio.Response import Response
 from instrumentio.availability import check_gpib_interface
+
+logger = logging.getLogger(__name__)
 
 
 class ProberController:
@@ -67,7 +70,7 @@ class ProberController:
             return True
         except Exception as e:
             err = f"SENTIO initialization failed: {e}"
-            self.log(f"Warning: {err}")
+            logger.exception("SENTIO initialization failed at %s", self.DEFAULT_ADDRESS)
             self._last_init_error = err
             self.prober = None
             if comm is not None:
@@ -106,7 +109,7 @@ class ProberController:
 
     def _get(self) -> SentioProber:
         if not self.enabled or self.prober is None:
-            raise RuntimeError("SENTIO prober control is disabled or unavailable. Use Reconnect instruments to connect.")
+            raise RuntimeError("SENTIO prober control is disabled or unavailable.")
         return self.prober
 
     # --- Positioning helpers ---

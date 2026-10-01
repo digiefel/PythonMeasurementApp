@@ -27,8 +27,7 @@ def show_light_settings(parent, settings, on_apply):
         variable=level, length=240, highlightthickness=0,
     )
     normal_slider.grid(row=0, column=1, sticky="ew", columnspan=2)
-    attach_tooltip(normal_slider, "Brightness used by Light ON and restored after measurements when Auto-adjust is enabled. 0 turns the light off.")
-    attach_tooltip(normal_label, "Normal scope brightness from 0 to 100 percent. Changes take effect when you press Apply, not while dragging the slider.")
+    attach_tooltip(normal_label, "Set the scope brightness used when you turn the light on. With Auto-adjust enabled, this brightness is restored after each measurement.")
 
     measurement_label = ttk.Label(body, text="During measurement (%)")
     measurement_label.grid(row=1, column=0, sticky="w", padx=(0, 12))
@@ -37,8 +36,7 @@ def show_light_settings(parent, settings, on_apply):
         variable=measurement_level, length=240, highlightthickness=0,
     )
     measurement_slider.grid(row=1, column=1, sticky="ew")
-    attach_tooltip(measurement_slider, "Brightness applied before each measurement when Auto-adjust is enabled. 0 measures with the light off.")
-    attach_tooltip(measurement_label, "Scope brightness used during measurements. Only used when Auto-adjust is checked; otherwise the slider is disabled and measurements leave the light untouched.")
+    attach_tooltip(measurement_label, "Set the scope brightness used during measurements when Auto-adjust is enabled. Set it to 0 to measure with the light off.")
 
     def update_slider_state():
         enabled = auto_adjust.get()
@@ -51,7 +49,7 @@ def show_light_settings(parent, settings, on_apply):
         body, text="Auto-adjust", variable=auto_adjust, command=update_slider_state,
     )
     auto_check.grid(row=1, column=2, sticky="w", padx=(12, 0))
-    attach_tooltip(auto_check, "Use the measurement brightness during measurements and restore the normal brightness afterward. Uncheck to leave the light under manual control, including during Stop and Skip.")
+    attach_tooltip(auto_check, "Automatically switch to the measurement brightness before each measurement and restore the normal brightness afterward.")
     update_slider_state()
 
     ttk.Label(
@@ -70,10 +68,10 @@ def show_light_settings(parent, settings, on_apply):
     buttons.grid(row=3, column=0, columnspan=3, sticky="e")
     cancel_button = ttk.Button(buttons, text="Cancel", command=dialog.destroy)
     cancel_button.grid(row=0, column=0, padx=(0, 6))
-    attach_tooltip(cancel_button, "Close without applying or saving changes to the light settings.")
+    attach_tooltip(cancel_button, "Discard your changes and close Light settings.")
     apply_button = ttk.Button(buttons, text="Apply", command=apply)
     apply_button.grid(row=0, column=1)
-    attach_tooltip(apply_button, "Save these light settings and close. If the light is already on, update its normal brightness immediately; otherwise leave it off.")
+    attach_tooltip(apply_button, "Save the light settings and close. If the light is on, apply the normal brightness now.")
     dialog.bind("<Escape>", lambda event: dialog.destroy())
     center_popup(dialog, parent)
     dialog.grab_set()

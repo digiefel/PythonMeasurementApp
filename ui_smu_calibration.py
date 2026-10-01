@@ -14,7 +14,7 @@ from runner import MeasurementAbortRequested, MeasurementSkipRequested
 
 def calibrate_smus(ui):
     if ui._connection_busy or not ui._b1500_available():
-        ui.log("B1500 unavailable. Use Instruments → Reconnect instruments before calibrating.")
+        ui.log("B1500 unavailable. Click Reconnect before calibrating.")
         return
     if ui._run_thread and ui._run_thread.is_alive():
         messagebox.showwarning("SMU Calibration", "Stop the active run before calibrating.", parent=ui.root)

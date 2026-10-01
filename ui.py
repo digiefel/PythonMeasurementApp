@@ -109,7 +109,6 @@ class MainUI:
         # Run options
         self.set_home_var = tk.BooleanVar(value=False)
         self.prober_enabled_var = tk.BooleanVar(value=self.runner.prober_ctrl.enabled)
-        self.connection_status_var = tk.StringVar(value="Checking instruments…")
         self.auto_separation_var = tk.BooleanVar(value=True)
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.prober_light_state = tk.BooleanVar(value=True)
@@ -168,11 +167,6 @@ class MainUI:
     def _format_asu_channel_map(self, channel_map: dict | None = None) -> str:
         channel_map = channel_map or self.config.data.get('b1500', {}).get('asu_channel_map') or {}
         return ", ".join(f"{label}=slot {channel}" for label, channel in channel_map.items()) or "none"
-
-    @staticmethod
-    def _compact_error_message(exc: Exception) -> str:
-        lines = [line.strip() for line in str(exc).splitlines() if line.strip()]
-        return lines[-1] if lines else exc.__class__.__name__
 
     def _apply_cached_smu_channel_map(self):
         b1500_cfg = self.config.data.setdefault('b1500', {})
@@ -354,20 +348,29 @@ class MainUI:
 
     def _refresh_connection_controls(self):
         idle = not self._connection_busy and not self._is_running() and not self._closing
-        ready = idle and self._b1500_available()
-        self.run_button.configure(state=tk.NORMAL if ready and self.procedure_classes else tk.DISABLED)
-        self.instruments_menu.entryconfigure('Reconnect instruments', state=tk.NORMAL if idle else tk.DISABLED)
+        connected = self._b1500_available()
+        ready = idle and connected
+        self.run_button.configure(
+            text="RUN" if connected else "Reconnect",
+            command=self.run if connected else self._start_connection_check,
+            bg="green" if connected else "yellow",
+            fg="white" if connected else "black",
+            activebackground="green" if connected else "yellow",
+            activeforeground="white" if connected else "black",
+            state=tk.NORMAL if idle and (not connected or self.procedure_classes) else tk.DISABLED,
+        )
         self.instruments_menu.entryconfigure('Calibrate SMUs…', state=tk.NORMAL if ready else tk.DISABLED)
         self.prober_enable_cb.configure(state=tk.NORMAL if idle else tk.DISABLED)
         self.load_settings_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
         self._set_cv_calibration_buttons_enabled(ready)
         self._apply_prober_availability_ui()
+
+    def _run_button_tooltip(self):
         if self._connection_busy:
-            self.connection_status_var.set("Checking instruments…")
-        elif self._b1500_available():
-            self.connection_status_var.set("B1500 connected")
-        else:
-            self.connection_status_var.set("B1500 unavailable — Reconnect instruments")
+            return "Checking the instrument connections."
+        if not self._b1500_available():
+            return "The B1500 is unavailable. Check that the instrument and GPIB adapter are connected, then click to reconnect."
+        return "Run the selected procedure on the selected devices."
 
     def _start_connection_check(self, check_b1500=True):
         if self._closing or self._connection_busy or self._is_running():
@@ -396,17 +399,18 @@ class MainUI:
                         b1500 = self.runner.get_b1500(address)
                         if discover:
                             results['discovery'] = b1500.discover_modules()
-                    except Exception as exc:
-                        results['b1500_error'] = self._compact_error_message(exc)
+                    except Exception:
+                        results['b1500_failed'] = True
+                        logger.exception("B1500 connection check failed at %s", address)
                 if not self._closing:
                     self.runner.prober_ctrl.set_enabled(prober_enabled)
                     if prober_enabled:
                         results['prober_available'] = self.runner.prober_ctrl.initialize(force=check_b1500)
                         if results['prober_available']:
                             results['contact'] = self.runner.prober_is_in_contact()
-            except Exception as exc:
+            except Exception:
                 results['prober_available'] = False
-                results['prober_error'] = self._compact_error_message(exc)
+                logger.exception("Prober connection failed")
                 self.runner.prober_ctrl.close()
             finally:
                 if self._closing:
@@ -430,10 +434,9 @@ class MainUI:
                 if proc_name:
                     self.config.data.setdefault('procedures', {})[proc_name] = edited_settings
                 self.render_param_form(proc_name)
-            if 'b1500_error' in results:
-                self.log(f"B1500 unavailable: {results['b1500_error']}. Measurement and calibration controls are disabled; settings remain editable.")
-            self._finish_prober_initialization(results.get('prober_available', False),
-                                               results.get('prober_error') or self.runner.prober_ctrl.get_last_init_error())
+            if results.get('b1500_failed'):
+                self.log("B1500 unavailable: Could not connect to the instrument. See the application log for details. Measurement and calibration controls disabled.")
+            self._finish_prober_initialization(results.get('prober_available', False))
             if self.prober_available:
                 self._set_contact_state(results.get('contact', False))
                 if restore_temperature:
@@ -459,7 +462,7 @@ class MainUI:
             return
         self._start_connection_check(check_b1500=False)
 
-    def _finish_prober_initialization(self, available: bool, error_message: str | None):
+    def _finish_prober_initialization(self, available: bool):
         self.prober_available = bool(available)
         self.temp_ui.set_prober_available(self.prober_available)
         self._apply_prober_availability_ui()
@@ -468,8 +471,6 @@ class MainUI:
             self.runner.temp_ref_c = None
             self.runner.temp_comp_ref_z_heights = None
             self.log(f"Prober control {reason}. Position and contact each device manually; temperature, light and motion control are disabled.")
-            if error_message and self.prober_enabled_var.get():
-                self.log(error_message)
 
     def _apply_prober_availability_ui(self):
         available = self.prober_available and not self._connection_busy
@@ -513,7 +514,6 @@ class MainUI:
     def build_layout(self):
         menu = tk.Menu(self.root)
         instruments = self.instruments_menu = tk.Menu(menu, tearoff=False)
-        instruments.add_command(label="Reconnect instruments", command=self._start_connection_check)
         instruments.add_command(label="Calibrate SMUs…", command=lambda: calibrate_smus(self))
         menu.add_cascade(label="Instruments", menu=instruments)
         self.root.configure(menu=menu)
@@ -530,50 +530,56 @@ class MainUI:
         for col in range(2):
             self.selection_frame.grid_columnconfigure(col, weight=1)
 
-        ttk.Label(self.selection_frame, text="Chip ID", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w")
+        chip_label = ttk.Label(self.selection_frame, text="Chip ID", font=("TkDefaultFont", 10, "bold"))
+        chip_label.grid(row=0, column=0, sticky="w")
         chip_entry = ttk.Entry(self.selection_frame, textvariable=self.chip_var)
         chip_entry.grid(row=0, column=1, sticky="ew", pady=2)
-        attach_tooltip(chip_entry, "Identifies the chip being measured. Used in output folder and file names; required before starting a run.")
+        attach_tooltip(chip_label, "Enter the chip name to use in measurement folders and file names.")
 
-        ttk.Label(self.selection_frame, text="Devices CSV").grid(row=1, column=0, sticky="w")
+        csv_label = ttk.Label(self.selection_frame, text="Devices CSV")
+        csv_label.grid(row=1, column=0, sticky="w")
         csv_frame = ttk.Frame(self.selection_frame)
         csv_frame.grid(row=1, column=1, sticky="ew", pady=2)
         csv_frame.grid_columnconfigure(0, weight=1)
         self.devices_csv_cb = ttk.Combobox(csv_frame, textvariable=self.devices_csv_var)
         self.devices_csv_cb.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.devices_csv_cb.bind('<<ComboboxSelected>>', self.on_devices_csv_selected)
-        attach_tooltip(self.devices_csv_cb, "Choose a devices CSV to load its sites, subsites, device names and coordinates. Changing the CSV clears the multi-device selection.")
+        attach_tooltip(csv_label, "Choose the CSV file containing device names and coordinates.")
         csv_browse_button = ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv)
         csv_browse_button.grid(row=0, column=1, sticky="ew")
-        attach_tooltip(csv_browse_button, "Load a different devices CSV. This changes the available devices and their coordinates, not the procedure settings.")
+        attach_tooltip(csv_browse_button, "Browse for a devices CSV file.")
 
-        ttk.Label(self.selection_frame, text="Output Directory").grid(row=2, column=0, sticky="w")
+        output_label = ttk.Label(self.selection_frame, text="Output Directory")
+        output_label.grid(row=2, column=0, sticky="w")
         output_frame = ttk.Frame(self.selection_frame)
         output_frame.grid(row=2, column=1, sticky="ew", pady=2)
         output_frame.grid_columnconfigure(0, weight=1)
         output_entry = ttk.Entry(output_frame, textvariable=self.output_dir_var)
         output_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        attach_tooltip(output_entry, "Root folder for measurement results. Files are organized below it by Chip ID / Site / Subsite / Device.")
+        attach_tooltip(output_label, "Choose where to save measurement results. The app creates subfolders for each chip, site, subsite and device.")
         output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
         output_browse_button.grid(row=0, column=1, sticky="ew")
-        attach_tooltip(output_browse_button, "Choose and save the root folder for measurement results.")
+        attach_tooltip(output_browse_button, "Browse for a folder to save measurement results.")
 
-        ttk.Label(self.selection_frame, text="Site").grid(row=3, column=0, sticky="w")
+        site_label = ttk.Label(self.selection_frame, text="Site")
+        site_label.grid(row=3, column=0, sticky="w")
         self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
         self.site_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
-        attach_tooltip(self.site_cb, "Select a site from the devices CSV. Changing the site updates its subsites and devices and clears the multi-device selection.")
+        attach_tooltip(site_label, "Select the site to measure.")
 
-        ttk.Label(self.selection_frame, text="Subsite").grid(row=4, column=0, sticky="w")
+        subsite_label = ttk.Label(self.selection_frame, text="Subsite")
+        subsite_label.grid(row=4, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
         self.subsite_cb.grid(row=4, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
-        attach_tooltip(self.subsite_cb, "Select a subsite within the current site. Changing it updates the available devices and clears the multi-device selection.")
+        attach_tooltip(subsite_label, "Select the subsite to measure within the chosen site.")
 
-        ttk.Label(self.selection_frame, text="Device").grid(row=5, column=0, sticky="w")
+        device_label = ttk.Label(self.selection_frame, text="Device")
+        device_label.grid(row=5, column=0, sticky="w")
         self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
         self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
-        attach_tooltip(self.device_cb, "Device used by Go To Device and coordinate alignment. RUN measures this device unless a multi-device selection is active.")
+        attach_tooltip(device_label, "Select the device to measure, move to, or use for coordinate alignment.")
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
@@ -582,11 +588,11 @@ class MainUI:
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
         self.device_selection_button = ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection)
-        self.device_selection_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        attach_tooltip(self.device_selection_button, "Choose multiple devices in the current subsite to measure in one run. Devices without coordinates require manual positioning.")
+        self.device_selection_button.grid(row=0, column=0, columnspan=2, sticky="ew")
+        attach_tooltip(self.device_selection_button, "Choose multiple devices in this subsite to measure in one run.")
         self.selected_devices_label = ttk.Label(device_sel_frame, text="")
-        self.selected_devices_label.grid(row=0, column=1, sticky="w", padx=(4, 0))
-        attach_tooltip(self.selected_devices_label, "Multi-device selection for RUN. If none are selected, RUN uses the Device selector above.")
+        self.selected_devices_label.grid(row=1, column=0, columnspan=2, sticky="w")
+        self.selected_devices_label.grid_remove()
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
@@ -595,17 +601,14 @@ class MainUI:
         action_frame.grid_columnconfigure(1, weight=1)
         load_button = self.load_settings_button = ttk.Button(action_frame, text="Load Settings", command=self.load_settings)
         load_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        attach_tooltip(load_button, "Load a JSON settings file, including saved procedure settings and app selections. Keeps the currently loaded devices CSV.")
+        attach_tooltip(load_button, "Load app and procedure settings from a JSON file.")
         save_button = ttk.Button(action_frame, text="Save Settings", command=self.save_settings)
         save_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
-        attach_tooltip(save_button, "Save the current procedure settings and app selections to a JSON file. Does not start a measurement or save measurement data.")
+        attach_tooltip(save_button, "Save the current app and procedure settings to a JSON file.")
 
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
         self.run_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        attach_tooltip(self.run_button, "Start the selected procedure on the selected devices, or the single Device if no multi-device selection is active. With Temperature enabled, repeat at each configured temperature.")
-        connection_label = ttk.Label(self.selection_frame, textvariable=self.connection_status_var, wraplength=350)
-        connection_label.grid(row=15, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        attach_tooltip(connection_label, "Measurements require a connected B1500 at the selected GPIB address. After connecting hardware or editing that address, use Instruments → Reconnect instruments. Prober control is optional.")
+        attach_tooltip(self.run_button, self._run_button_tooltip)
 
         # Stop controls (shown when running, hidden otherwise)
         self.stop_frame = tk.Frame(self.selection_frame)
@@ -638,8 +641,7 @@ class MainUI:
         self._progress_bar.grid(row=0, column=0, sticky="ew", pady=(4, 1))
         self._progress_label = ttk.Label(self.progress_frame, text="", anchor="center")
         self._progress_label.grid(row=1, column=0, sticky="ew")
-        attach_tooltip(self._progress_bar, "Progress through finished or skipped devices, not through individual measurement points.")
-        attach_tooltip(self._progress_label, "Remaining time and ETA are estimates based on recent device measurement times.")
+        attach_tooltip(self._progress_label, "Shows how many devices have been processed and estimates the time remaining.")
 
         # Temperature controls (separate section below Selection)
         self.temp_ui.build_panel(self.selection_temp_frame)
@@ -653,7 +655,8 @@ class MainUI:
         procedure_header = ttk.Frame(self.procedure_settings_frame, padding=(8, 6))
         procedure_header.grid(row=0, column=0, sticky="ew")
         procedure_header.grid_columnconfigure(1, weight=1)
-        ttk.Label(procedure_header, text="Procedure", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        procedure_label = ttk.Label(procedure_header, text="Procedure", font=("TkDefaultFont", 10, "bold"))
+        procedure_label.grid(row=0, column=0, sticky="w", padx=(0, 12))
         self.proc_cb = ttk.Combobox(
             procedure_header, textvariable=self.proc_var,
             values=list(self.procedure_fields.keys()), state="readonly",
@@ -661,7 +664,7 @@ class MainUI:
         )
         self.proc_cb.grid(row=0, column=1, sticky="ew")
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
-        attach_tooltip(self.proc_cb, "Choose the measurement procedure. Its settings appear below.")
+        attach_tooltip(procedure_label, "Choose the measurement procedure to run.")
         tk.Frame(self.procedure_settings_frame, background="#3b82f6", height=2).grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
         # Only this body is rebuilt when the selected procedure changes.
@@ -672,7 +675,7 @@ class MainUI:
 
         # Prober controls (bottom left)
         self.prober_enable_cb = ttk.Checkbutton(self.root, text="Prober Control", variable=self.prober_enabled_var, command=self._toggle_prober_control)
-        attach_tooltip(self.prober_enable_cb, "Enable automatic prober control. Uncheck to disconnect and position/contact each device manually. Turning control off does not move the chuck, change its temperature, or remove instrument bias. Re-enabling requires coordinate alignment again.")
+        attach_tooltip(self.prober_enable_cb, "Enable automatic prober control, or uncheck to position and contact each device manually.")
         self.prober_frame = ttk.LabelFrame(self.root, labelwidget=self.prober_enable_cb)
         self.prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         for c in range(2):
@@ -685,13 +688,13 @@ class MainUI:
         self.contact_button = tk.Button(contact_row_frame, text="CONTACT", command=self.toggle_contact, bg="yellow", fg="black")
         self.contact_button.grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=0)
         attach_tooltip(self.contact_button, lambda: (
-            "The chuck is in contact. Click to move it to separation."
+            "Move the chuck to separation."
             if self.prober_contact_state.get()
-            else "The chuck is separated. Click to move it to the configured contact height."
+            else "Move the chuck to the configured contact height."
         ))
         self.auto_separation_check = ttk.Checkbutton(contact_row_frame, text="", variable=self.auto_separation_var)
         self.auto_separation_check.grid(row=0, column=1, sticky="w", pady=0)
-        attach_tooltip(self.auto_separation_check, "Move the chuck to separation after each device measurement. Uncheck to leave it in contact after normal measurement completion.")
+        attach_tooltip(self.auto_separation_check, "Move the chuck to separation after each device measurement.")
 
         light_row_frame = ttk.Frame(self.prober_frame)
         light_row_frame.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
@@ -699,16 +702,16 @@ class MainUI:
         self.light_button = tk.Button(light_row_frame, text="Light ON", command=self.toggle_prober_light, bg="green yellow", fg="black")
         self.light_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         attach_tooltip(self.light_button, lambda: (
-            "The scope light is on. Click to turn it off."
+            "Turn the scope light off."
             if self.prober_light_state.get()
-            else "The scope light is off. Click to turn it on at the brightness configured in Light settings."
+            else "Turn the scope light on at the brightness chosen in Light settings."
         ))
-        self.light_settings_button = ttk.Button(light_row_frame, text="Light settings", command=self.open_light_settings)
+        self.light_settings_button = ttk.Button(light_row_frame, text="⚙", width=3, command=self.open_light_settings)
         self.light_settings_button.grid(row=0, column=1)
         attach_tooltip(self.light_settings_button, "Set normal and measurement brightness, and enable or disable automatic light adjustment.")
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
         self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
-        attach_tooltip(self.go_to_device_button, "Move the chuck in X/Y to the selected Device using the current coordinate alignment and temperature compensation. Align coordinates first; devices without coordinates cannot be moved to automatically.")
+        attach_tooltip(self.go_to_device_button, "Move the chuck to the selected device using the current coordinate alignment and temperature compensation.")
         reference_row_frame = ttk.Frame(self.prober_frame)
         reference_row_frame.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         reference_row_frame.grid_columnconfigure(0, weight=1)
@@ -720,7 +723,7 @@ class MainUI:
         attach_tooltip(self.set_home_check, "Perform coordinate alignment every time a run is started, using the currently selected device.")
         self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
         self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
-        attach_tooltip(self.read_position_button, "Read the current chuck X/Y position in micrometres. Does not move the chuck or change coordinate alignment.")
+        attach_tooltip(self.read_position_button, "Read the current chuck X/Y position in micrometres.")
         ttk.Label(self.prober_frame, textvariable=self.position_var).grid(row=2, column=1, sticky="w", padx=4, pady=2)
         comp_frame = ttk.Frame(self.temp_ui.temp_frame)
         comp_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=2, pady=(4, 2))
@@ -736,12 +739,11 @@ class MainUI:
             entry = ttk.Entry(comp_frame, textvariable=variable, width=10)
             entry.grid(row=1, column=column, sticky="ew", padx=2, pady=(0, 2))
             tip = (
-                "Z temperature compensation coefficient in micrometres per degree Celsius. Currently calculates and logs a height offset only; it does not change the chuck height."
+                "Calculate the chuck height correction in micrometres per degree Celsius. This correction is currently recorded in the log only."
                 if axis == "Z" else
-                f"{axis} position correction in micrometres per degree Celsius. Adds coefficient × (current temperature − reference temperature) to device moves. The reference is the first temperature read; 0 disables this axis correction."
+                f"Correct the chuck's {axis} position by this many micrometres per degree Celsius of temperature change, relative to the first temperature reading."
             )
             attach_tooltip(label, tip)
-            attach_tooltip(entry, tip)
 
         # Log section (bottom right)
         log_frame = ttk.LabelFrame(self.root, text="Log")
@@ -883,10 +885,13 @@ class MainUI:
         count = len(self.selected_device_names)
         if count == 0:
             self.selected_devices_label.config(text="")
+            self.selected_devices_label.grid_remove()
         elif count == 1:
             self.selected_devices_label.config(text=f"✓ 1 device selected")
+            self.selected_devices_label.grid()
         else:
             self.selected_devices_label.config(text=f"✓ {count} devices selected")
+            self.selected_devices_label.grid()
 
     def open_device_selection(self):
         """Open the device selection dialog."""
@@ -990,7 +995,6 @@ class MainUI:
                 var = tk.BooleanVar(value=bool(bool_val))
                 chk = ttk.Checkbutton(self.params_frame, variable=var)
                 chk.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
-                field_widget = chk
                 self.param_vars[key] = (var, param)
             elif kind in (SMU, OptionalSMU, WGFMUChannel):
                 label_val = kind.display_value(val)
@@ -1002,7 +1006,6 @@ class MainUI:
                     values = [label_val] + values
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                field_widget = combo
                 self.param_vars[key] = (var, param)
             elif isinstance(kind, Choice):
                 options = self._choice_options_for_param(proc_name, param)
@@ -1013,19 +1016,16 @@ class MainUI:
                     labels = [label_val] + labels
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=labels, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                field_widget = combo
                 self.param_vars[key] = (var, param)
             else:
                 var = tk.StringVar(value=str(val))
                 entry = ttk.Entry(self.params_frame, textvariable=var)
                 entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                field_widget = entry
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
 
             if param.help:
                 attach_tooltip(field_label, param.help)
-                attach_tooltip(field_widget, param.help)
 
         self._bind_current_range_filter(proc_name)
 
@@ -1396,7 +1396,7 @@ class MainUI:
 
     def _on_cv_calibration_button(self, cal_type: str):
         if self._connection_busy or not self._b1500_available():
-            self.log("B1500 unavailable. Use Instruments → Reconnect instruments before calibrating.")
+            self.log("B1500 unavailable. Click Reconnect before calibrating.")
             return
         if self._run_thread and self._run_thread.is_alive():
             messagebox.showwarning("Calibration busy", "A run is in progress. Stop the run before calibrating.")
@@ -1632,7 +1632,7 @@ class MainUI:
 
     def run(self):
         if self._connection_busy or not self._b1500_available():
-            self.log("B1500 unavailable. Use Instruments → Reconnect instruments before starting a run.")
+            self.log("B1500 unavailable. Click Reconnect before starting a run.")
             return
         proc_name = self.proc_var.get()
         if not proc_name:
