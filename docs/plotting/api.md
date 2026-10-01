@@ -204,7 +204,8 @@ The runner hides the bar before and after each device measurement, including on
 abort, skip or error. Procedures that do not report progress leave it hidden.
 Reconfiguring the plots within a measurement preserves its current progress.
 CVSweep reports completed frequency sweeps; VanDerPauw reports completed contact
-sweeps. This is separate from the main window's device-count progress.
+sweeps; PUNDFatigueV2 reports read cycles whose complete voltage and current data
+have been received. This is separate from the main window's device-count progress.
 
 The underlying bridge methods are `runner.plot.set_progress(completed, total,
 message="")` and `runner.plot.clear_progress()`. Progress can be reported before

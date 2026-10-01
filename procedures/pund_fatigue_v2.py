@@ -439,6 +439,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		sample_points = max(1, int(round(read_duration / sample_interval)))
 		expected_total = sample_points * len(read_cycles)
 		source_map = self._configure_plot(device, read_cycles, read_duration)
+		self.report_progress(0, len(read_cycles), "Read cycles received")
 
 		total_time = (
 			(self.fatigue_count_int * fatigue_duration)
@@ -532,6 +533,8 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 
 						read_idx = sample_index // sample_points
 						sample_in_read = sample_index % sample_points
+						if sample_in_read == sample_points - 1:
+							self.report_progress(read_idx + 1, len(read_cycles), "Read cycles received")
 						timestamp = t_v if t_v is not None else t_i
 						if timestamp is None:
 							read_time_s = sample_in_read * sample_interval
