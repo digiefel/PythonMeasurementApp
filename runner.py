@@ -45,7 +45,7 @@ class MeasurementRunner:
         self.temp_device_done_cb: Optional[Callable[[float, int, int, int], None]] = None
         self.b1500: RemoteB1500Session | None = None
         self._b1500_lock = threading.Lock()
-        self.prober_ctrl = ProberController(self.log)
+        self.prober_ctrl = ProberController(self.log, enabled=config.data.get('prober_enabled', True))
         self.current_chip = None
         self.current_site = None
         self.current_subsite = None
@@ -74,6 +74,7 @@ class MeasurementRunner:
 
     def get_b1500(self, address: str, *, connect: bool = True) -> RemoteB1500Session:
         """Connect for a requested run; background probes may only reuse a session."""
+        address = address.strip()
         with self._b1500_lock:
             self.check_stop()
             if self.skip_device_event.is_set():
@@ -153,7 +154,7 @@ class MeasurementRunner:
             raise MeasurementAbortRequested(context or "Stop requested")
 
     def is_prober_available(self) -> bool:
-        return getattr(self.prober_ctrl, "prober", None) is not None
+        return self.prober_ctrl.enabled and self.prober_ctrl.prober is not None
 
     # --- Prober wrappers ---
     def set_subsite_origin(self, x_offset: float, y_offset: float) -> bool:
@@ -206,7 +207,7 @@ class MeasurementRunner:
 
     def prober_restore_light(self) -> bool | None:
         """Restore the normal light level only when automatic adjustment is enabled."""
-        if self.config.data.get('scope_light', {}).get('auto_adjust', True):
+        if self.is_prober_available() and self.config.data.get('scope_light', {}).get('auto_adjust', True):
             return self.prober_set_light(True)
         return None
 
@@ -403,10 +404,10 @@ class MeasurementRunner:
     def _prepare_for_measurement(self, device):
         """Ensure chuck is at the device and in contact before measuring."""
         self.check_stop("Stop before device move")
-        if not has_position(device):
+        if not self.is_prober_available() or not has_position(device):
             callback = self.manual_position_callback
             if callback is None:
-                raise RuntimeError(f"Position unknown for '{device.name}'; manual positioning confirmation is required.")
+                raise RuntimeError(f"Manual positioning confirmation is required for '{device.name}'.")
             self.prober_restore_light()
             if not callback(device):
                 raise MeasurementAbortRequested("Manual positioning cancelled")
@@ -538,15 +539,15 @@ class MeasurementRunner:
             fallback_root
         )
         has_prober = self.is_prober_available()
-        if has_prober:
-            self._prepare_for_measurement(device)
-            light_settings = self.config.data.get('scope_light', {})
-            if light_settings.get('auto_adjust', True):
-                level = light_settings.get('measurement_level', 0)
-                self.prober_set_light(True, on_level=level)
-                self.log(f"Scope light set to measurement level {level}. Starting measurement.")
         # Run measurement procedure
         try:
+            self._prepare_for_measurement(device)
+            if has_prober:
+                light_settings = self.config.data.get('scope_light', {})
+                if light_settings.get('auto_adjust', True):
+                    level = light_settings.get('measurement_level', 0)
+                    self.prober_set_light(True, on_level=level)
+                    self.log(f"Scope light set to measurement level {level}. Starting measurement.")
             self.check_stop("Stop requested just before procedure run")
             gpib_address = settings.get('gpib_address')
             if gpib_address is None and hasattr(proc_class, 'ui_defaults'):

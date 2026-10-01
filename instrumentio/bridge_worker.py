@@ -34,6 +34,7 @@ def main(session_factory=None):
     cancelled = threading.Event()
     finished = threading.Event()
     session = None
+    connection_attempted = False
     operation_active = False
     io_handoff = threading.Lock()
     terminal = ["stopped"]
@@ -109,14 +110,19 @@ def main(session_factory=None):
     threading.Thread(target=read_commands, daemon=True).start()
     threading.Thread(target=watch_shutdown, daemon=True).start()
     try:
-        if session_factory is None:
-            if struct.calcsize("P") != 4:
-                raise RuntimeError("The instrument interpreter must be 32-bit")
-            from instrumentio.sessions import B1500Session
-            session_factory = B1500Session
         message = receive()
         if len(message) != 2 or message[0] != "connect":
             raise ValueError("Expected connection request")
+        if session_factory is None:
+            if struct.calcsize("P") != 4:
+                raise RuntimeError("The instrument interpreter must be 32-bit")
+            from instrumentio.availability import check_native_gpib_interface
+            check_native_gpib_interface(message[1])
+            from instrumentio.sessions import B1500Session
+            session_factory = B1500Session
+        if cancelled.is_set():
+            raise InstrumentCancelled()
+        connection_attempted = True
         session = session_factory(message[1])
         if cancelled.is_set():
             raise InstrumentCancelled()
@@ -155,7 +161,9 @@ def main(session_factory=None):
             logger.warning("Instrument call ended during cancellation:\n%s", details)
         else:
             logger.error("Instrument operation failed:\n%s", details)
-            terminal = ["error", str(exc) or type(exc).__name__, details, False]
+            # A failed preflight cannot have enabled outputs. A failed vendor
+            # initialization still requires the existing emergency cleanup.
+            terminal = ["error", str(exc) or type(exc).__name__, details, not connection_attempted]
     finally:
         cancelled.set()
         if session is not None:

@@ -11,6 +11,7 @@ from sentio_prober_control.Sentio.Enumerations import (
     CameraMountPoint,
 )
 from sentio_prober_control.Sentio.Response import Response
+from instrumentio.availability import check_gpib_interface
 
 
 class ProberController:
@@ -19,8 +20,9 @@ class ProberController:
     DEFAULT_ADDRESS = "GPIB0::28::INSTR"
     INIT_TIMEOUT_MS = 5000
 
-    def __init__(self, log: Callable[[str], None]):
+    def __init__(self, log: Callable[[str], None], enabled: bool = True):
         self.log = log
+        self.enabled = enabled
         self.prober: Optional[SentioProber] = None
         self._last_init_error: Optional[str] = None
         self.subsite_origin = None
@@ -33,6 +35,8 @@ class ProberController:
         Returns False when initialization fails; details are available via
         get_last_init_error().
         """
+        if not self.enabled:
+            return False
         if self.prober is not None:
             if force:
                 self.close()
@@ -40,11 +44,17 @@ class ProberController:
                 return True
         return self._initialize_session()
 
+    def set_enabled(self, enabled: bool):
+        self.enabled = enabled
+        if not enabled:
+            self.close()
+
     def _initialize_session(self) -> bool:
         """Open VISA, create SENTIO prober, and apply startup defaults."""
         self.subsite_origin = None
-        comm = CommunicatorVisa()
+        comm = None
         try:
+            comm = CommunicatorVisa()
             self.log(f"Opening SENTIO prober session at {self.DEFAULT_ADDRESS}")
             self._connect_with_init_timeout(comm)
 
@@ -60,7 +70,8 @@ class ProberController:
             self.log(f"Warning: {err}")
             self._last_init_error = err
             self.prober = None
-            self._cleanup_failed_comm(comm)
+            if comm is not None:
+                self._cleanup_failed_comm(comm)
             return False
 
     def _connect_with_init_timeout(self, comm: CommunicatorVisa) -> None:
@@ -70,6 +81,7 @@ class ProberController:
         CommunicatorVisa.connect(), so we set the internal VISA handle directly.
         """
         rm = getattr(comm, "_CommunicatorVisa__rm")
+        check_gpib_interface(self.DEFAULT_ADDRESS, rm.open_bare_resource, rm.visalib.close)
         visa = rm.open_resource(self.DEFAULT_ADDRESS)
         visa.timeout = self.INIT_TIMEOUT_MS
         setattr(comm, "_CommunicatorVisa__visa", visa)
@@ -93,10 +105,8 @@ class ProberController:
         return self._last_init_error
 
     def _get(self) -> SentioProber:
-        if self.prober is None:
-            if not self.initialize():
-                raise RuntimeError(self._last_init_error or "SENTIO prober is not available.")
-        assert self.prober is not None
+        if not self.enabled or self.prober is None:
+            raise RuntimeError("SENTIO prober control is disabled or unavailable. Use Reconnect instruments to connect.")
         return self.prober
 
     # --- Positioning helpers ---

@@ -102,7 +102,7 @@ class DeviceSelectionDialog:
         clear_button = ttk.Button(button_frame, text="Clear Selection", command=self._clear_selection)
         clear_button.pack(side="left", padx=5)
         attach_tooltip(clear_button, "Clear the multi-device selection. After confirming with OK, RUN will use the main Device selector instead.")
-        refresh_button = ttk.Button(button_frame, text="Refresh Prober Position", command=self._refresh_prober)
+        refresh_button = self.refresh_button = ttk.Button(button_frame, text="Refresh Prober Position", command=lambda: self._refresh_prober())
         refresh_button.pack(side="left", padx=5)
         attach_tooltip(refresh_button, "Read the current chuck position and update the red marker on the map. Does not move the chuck or change coordinate alignment.")
         

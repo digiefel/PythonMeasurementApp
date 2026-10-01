@@ -7,6 +7,7 @@ from models import load_devices_csv
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
+    'prober_enabled': True,
     'output_dir': 'output',
     'fallback_output_dir': 'output',
     'b1500': {

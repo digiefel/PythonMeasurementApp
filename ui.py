@@ -33,7 +33,7 @@ from instrumentio.constants import (
     WGFMU_MEASURE_CURRENT_RANGES,
 )
 from instrumentio.descriptors import describe_data_type, describe_data_type_short, get_cmu_mode_name
-from runner import MeasurementAbortRequested, MeasurementRunner
+from runner import MeasurementAbortRequested, MeasurementSkipRequested, MeasurementRunner
 from instrumentio.bridge import InstrumentCancelled, InstrumentError
 from procedures import load_procedures
 from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
@@ -71,7 +71,10 @@ class MainUI:
         self.runner.contact_state_callback = lambda state: self._post(self._set_contact_state, state)
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
-        self._prober_warning_shown = False
+        self._running = False
+        self._connection_busy = False
+        self._connection_thread = None
+        self._closing = False
         self.prober_available = False
         self.prober_frame = None
         self.device_selection_button = None
@@ -105,6 +108,8 @@ class MainUI:
         self.status_labels = {}
         # Run options
         self.set_home_var = tk.BooleanVar(value=False)
+        self.prober_enabled_var = tk.BooleanVar(value=self.runner.prober_ctrl.enabled)
+        self.connection_status_var = tk.StringVar(value="Checking instruments…")
         self.auto_separation_var = tk.BooleanVar(value=True)
         self.prober_contact_state = tk.BooleanVar(value=False)
         self.prober_light_state = tk.BooleanVar(value=True)
@@ -136,7 +141,8 @@ class MainUI:
         tile_main_window(self.root)
         self._refresh_devices_csv_options()
         self.load_output_dir()
-        self._init_b1500_channel_maps()
+        self._apply_cached_smu_channel_map()
+        self.log(f"SMU channel map: {self._format_smu_channel_map()}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.populate_sites()
         # Default to first procedure in list
@@ -152,8 +158,8 @@ class MainUI:
             self.proc_cb.configure(state='disabled')
             self.run_button.configure(state='disabled')
             self.log("No procedures available. Add a procedure file to procedures/ and restart the app.")
-        self._init_prober_state()
         self.log("================ APPLICATION INITIALIZED ================")
+        self.root.after(0, self._start_connection_check)
 
     def _format_smu_channel_map(self, channel_map: dict | None = None) -> str:
         channel_map = channel_map or SMU_CHANNEL_MAP
@@ -304,25 +310,9 @@ class MainUI:
         messagebox.showerror("Invalid SMU Channel", message)
         return False
 
-    def _init_b1500_channel_maps(self):
-        """Load cached channel maps, then refresh them from the B1500 if possible."""
-        self._apply_cached_smu_channel_map()
-        self.log(f"SMU channel map: {self._format_smu_channel_map()}")
-
+    def _apply_b1500_discovery(self, discovery):
+        """Apply background discovery results on the UI thread."""
         b1500_cfg = self.config.data.setdefault('b1500', {})
-        if not b1500_cfg.get('auto_discover_channels', True):
-            self.log("B1500 channel auto-discovery disabled; using configured SMU map.")
-            return
-
-        address = self.config.data.get('gpib_address', 'GPIB0::17::INSTR')
-        try:
-            b1500 = self.runner.get_b1500(address)
-            discovery = b1500.discover_modules()
-        except Exception as exc:
-            detail = self._compact_error_message(exc)
-            self.log(f"B1500 channel auto-discovery unavailable; using configured SMU map. ({detail})")
-            return
-
         modules = discovery.get('modules') or []
         smu_map = discovery.get('smu_channel_map') or {}
         asu_map = discovery.get('asu_channel_map') or {}
@@ -351,42 +341,153 @@ class MainUI:
             self.log(f"Discovered CMU channels: {', '.join(f'slot {ch}' for ch in cmu_channels)}")
         self.log(f"Discovered ASU channels: {self._format_asu_channel_map(b1500_cfg['asu_channel_map'])}")
 
-    def _init_prober_state(self):
-        available = self.runner.prober_ctrl.initialize()
-        error_message = self.runner.prober_ctrl.get_last_init_error()
-        self._finish_prober_initialization(available, error_message)
+    def _selected_gpib_address(self):
+        item = self.param_vars.get('gpib_address')
+        return item[0].get().strip() if item else self.config.data.get('gpib_address', 'GPIB0::17::INSTR')
+
+    def _b1500_available(self):
+        session = self.runner.b1500
+        return session is not None and session.is_open and session.address == self._selected_gpib_address()
+
+    def _is_running(self):
+        return self._running
+
+    def _refresh_connection_controls(self):
+        idle = not self._connection_busy and not self._is_running() and not self._closing
+        ready = idle and self._b1500_available()
+        self.run_button.configure(state=tk.NORMAL if ready and self.procedure_classes else tk.DISABLED)
+        self.instruments_menu.entryconfigure('Reconnect instruments', state=tk.NORMAL if idle else tk.DISABLED)
+        self.instruments_menu.entryconfigure('Calibrate SMUs…', state=tk.NORMAL if ready else tk.DISABLED)
+        self.prober_enable_cb.configure(state=tk.NORMAL if idle else tk.DISABLED)
+        self.load_settings_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
+        self._set_cv_calibration_buttons_enabled(ready)
+        self._apply_prober_availability_ui()
+        if self._connection_busy:
+            self.connection_status_var.set("Checking instruments…")
+        elif self._b1500_available():
+            self.connection_status_var.set("B1500 connected")
+        else:
+            self.connection_status_var.set("B1500 unavailable — Reconnect instruments")
+
+    def _start_connection_check(self, check_b1500=True):
+        if self._closing or self._connection_busy or self._is_running():
+            return
+        address = self._selected_gpib_address()
+        discover = self.config.data.get('b1500', {}).get('auto_discover_channels', True)
+        prober_enabled = self.prober_enabled_var.get()
+        restore_temperature = self.temp_ui.enabled_var.get()
+        self.temp_ui.set_prober_available(False)
+        self.prober_available = False
+        self._connection_busy = True
+        self.runner.stop_event.clear()
+        self.runner.temp_ref_c = None
+        self.runner.temp_comp_ref_z_heights = None
+        self._refresh_connection_controls()
+        self.log("Checking instrument connections…")
+        results = {}
+
+        def connect():
+            try:
+                if check_b1500:
+                    try:
+                        if self.runner.b1500 is not None:
+                            self.runner.b1500.close()
+                            self.runner.b1500 = None
+                        b1500 = self.runner.get_b1500(address)
+                        if discover:
+                            results['discovery'] = b1500.discover_modules()
+                    except Exception as exc:
+                        results['b1500_error'] = self._compact_error_message(exc)
+                if not self._closing:
+                    self.runner.prober_ctrl.set_enabled(prober_enabled)
+                    if prober_enabled:
+                        results['prober_available'] = self.runner.prober_ctrl.initialize(force=check_b1500)
+                        if results['prober_available']:
+                            results['contact'] = self.runner.prober_is_in_contact()
+            except Exception as exc:
+                results['prober_available'] = False
+                results['prober_error'] = self._compact_error_message(exc)
+                self.runner.prober_ctrl.close()
+            finally:
+                if self._closing:
+                    self.runner.safe_stop()
+                    self.runner.prober_ctrl.close()
+
+        self._connection_thread = threading.Thread(target=connect, daemon=True)
+        self._connection_thread.start()
+
+        def finish_when_ready():
+            if self._closing:
+                return
+            if self._connection_thread.is_alive():
+                self.root.after(100, finish_when_ready)
+                return
+            self._connection_busy = False
+            if 'discovery' in results:
+                proc_name = self.proc_var.get()
+                edited_settings = self.collect_settings()
+                self._apply_b1500_discovery(results['discovery'])
+                if proc_name:
+                    self.config.data.setdefault('procedures', {})[proc_name] = edited_settings
+                self.render_param_form(proc_name)
+            if 'b1500_error' in results:
+                self.log(f"B1500 unavailable: {results['b1500_error']}. Measurement and calibration controls are disabled; settings remain editable.")
+            self._finish_prober_initialization(results.get('prober_available', False),
+                                               results.get('prober_error') or self.runner.prober_ctrl.get_last_init_error())
+            if self.prober_available:
+                self._set_contact_state(results.get('contact', False))
+                if restore_temperature:
+                    self.temp_ui.enabled_var.set(True)
+                    self.temp_ui._toggle_controls()
+            self._refresh_connection_controls()
+
+        self.root.after(100, finish_when_ready)
+
+    def _toggle_prober_control(self):
+        previous = self.config.data.get('prober_enabled', True)
+        if self._connection_busy or self._is_running():
+            self.prober_enabled_var.set(previous)
+            return
+        enabled = self.prober_enabled_var.get()
+        self.config.data['prober_enabled'] = enabled
+        try:
+            self.config.save()
+        except Exception as exc:
+            self.config.data['prober_enabled'] = previous
+            self.prober_enabled_var.set(previous)
+            self.log(f"Could not save prober control setting: {exc}")
+            return
+        self._start_connection_check(check_b1500=False)
 
     def _finish_prober_initialization(self, available: bool, error_message: str | None):
         self.prober_available = bool(available)
         self.temp_ui.set_prober_available(self.prober_available)
         self._apply_prober_availability_ui()
         if not available:
-            self.position_var.set("Prober unavailable")
-            if error_message:
+            reason = "unavailable" if self.prober_enabled_var.get() else "disabled"
+            self.runner.temp_ref_c = None
+            self.runner.temp_comp_ref_z_heights = None
+            self.log(f"Prober control {reason}. Position and contact each device manually; temperature, light and motion control are disabled.")
+            if error_message and self.prober_enabled_var.get():
                 self.log(error_message)
-            if not self._prober_warning_shown:
-                self._prober_warning_shown = True
-                messagebox.showwarning(
-                    "SENTIO Prober Unavailable",
-                    error_message or "Could not initialize the SENTIO probe station."
-                )
-            return
-
-        self._init_contact_state()
 
     def _apply_prober_availability_ui(self):
-        self._set_section_enabled(self.prober_frame, self.prober_available)
+        available = self.prober_available and not self._connection_busy
+        self._set_section_enabled(self.prober_frame, available)
         if self.prober_frame is not None:
-            title = "Prober Control" if self.prober_available else "Prober Control (Unavailable)"
-            self.prober_frame.configure(text=title)
-        self.set_home_check.configure(state=(tk.NORMAL if self.prober_available else tk.DISABLED))
-        if self.device_selection_button is not None:
-            self.device_selection_button.configure(state=(tk.NORMAL if self.prober_available else tk.DISABLED))
-        if not self.prober_available:
-            self.set_home_var.set(False)
-            self.selected_device_names.clear()
+            if available:
+                suffix = ""
+            elif self._connection_busy:
+                suffix = " (Checking)"
+            elif self.prober_enabled_var.get():
+                suffix = " (Unavailable)"
+            else:
+                suffix = " (Disabled)"
+            self.prober_enable_cb.configure(text="Prober Control" + suffix)
+        self.light_settings_button.configure(state=tk.NORMAL if available and not self._is_running() else tk.DISABLED)
+        if not available:
             self._set_contact_state(False)
-            self.position_var.set("Prober unavailable")
+            self.position_var.set("Prober unavailable" if self.prober_enabled_var.get() else "Prober disabled")
         self._update_selected_devices_label()
 
     def _set_section_enabled(self, section, enabled: bool):
@@ -409,18 +510,10 @@ class MainUI:
         except Exception:
             pass
 
-    def _init_contact_state(self):
-        """Query prober for actual contact status and update button accordingly."""
-        if not self.prober_available:
-            return
-        try:
-            self._set_contact_state(self.runner.prober_is_in_contact())
-        except Exception as e:
-            self.log(f"Could not read initial contact state: {e}")
-
     def build_layout(self):
         menu = tk.Menu(self.root)
-        instruments = tk.Menu(menu, tearoff=False)
+        instruments = self.instruments_menu = tk.Menu(menu, tearoff=False)
+        instruments.add_command(label="Reconnect instruments", command=self._start_connection_check)
         instruments.add_command(label="Calibrate SMUs…", command=lambda: calibrate_smus(self))
         menu.add_cascade(label="Instruments", menu=instruments)
         self.root.configure(menu=menu)
@@ -500,7 +593,7 @@ class MainUI:
         action_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=6)
         action_frame.grid_columnconfigure(0, weight=1)
         action_frame.grid_columnconfigure(1, weight=1)
-        load_button = ttk.Button(action_frame, text="Load Settings", command=self.load_settings)
+        load_button = self.load_settings_button = ttk.Button(action_frame, text="Load Settings", command=self.load_settings)
         load_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         attach_tooltip(load_button, "Load a JSON settings file, including saved procedure settings and app selections. Keeps the currently loaded devices CSV.")
         save_button = ttk.Button(action_frame, text="Save Settings", command=self.save_settings)
@@ -510,6 +603,9 @@ class MainUI:
         self.run_button = tk.Button(self.selection_frame, text="RUN", command=self.run, bg="green", fg="white")
         self.run_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         attach_tooltip(self.run_button, "Start the selected procedure on the selected devices, or the single Device if no multi-device selection is active. With Temperature enabled, repeat at each configured temperature.")
+        connection_label = ttk.Label(self.selection_frame, textvariable=self.connection_status_var, wraplength=350)
+        connection_label.grid(row=15, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        attach_tooltip(connection_label, "Measurements require a connected B1500 at the selected GPIB address. After connecting hardware or editing that address, use Instruments → Reconnect instruments. Prober control is optional.")
 
         # Stop controls (shown when running, hidden otherwise)
         self.stop_frame = tk.Frame(self.selection_frame)
@@ -575,7 +671,9 @@ class MainUI:
         self.params_frame.grid_columnconfigure(1, weight=1)
 
         # Prober controls (bottom left)
-        self.prober_frame = ttk.LabelFrame(self.root, text="Prober Control")
+        self.prober_enable_cb = ttk.Checkbutton(self.root, text="Prober Control", variable=self.prober_enabled_var, command=self._toggle_prober_control)
+        attach_tooltip(self.prober_enable_cb, "Enable automatic prober control. Uncheck to disconnect and position/contact each device manually. Turning control off does not move the chuck, change its temperature, or remove instrument bias. Re-enabling requires coordinate alignment again.")
+        self.prober_frame = ttk.LabelFrame(self.root, labelwidget=self.prober_enable_cb)
         self.prober_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=8)
         for c in range(2):
             self.prober_frame.grid_columnconfigure(c, weight=1)
@@ -782,9 +880,6 @@ class MainUI:
 
     def _update_selected_devices_label(self):
         """Update the label showing how many devices are selected."""
-        if not self.prober_available:
-            self.selected_devices_label.config(text="Disabled (no prober)")
-            return
         count = len(self.selected_device_names)
         if count == 0:
             self.selected_devices_label.config(text="")
@@ -795,8 +890,6 @@ class MainUI:
 
     def open_device_selection(self):
         """Open the device selection dialog."""
-        if not self.prober_available:
-            return
         site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         if not subsite or not subsite.devices:
@@ -835,6 +928,7 @@ class MainUI:
             prober_position=prober_pos,
             initially_selected=self.selected_device_names
         )
+        dialog.refresh_button.configure(state=tk.NORMAL if self.prober_available else tk.DISABLED)
         
         # Set up refresh callback
         def refresh_prober():
@@ -879,6 +973,7 @@ class MainUI:
             message = "This procedure has no settings." if proc_name in self.procedure_classes else "Select a procedure to edit settings."
             ttk.Label(self.params_frame, text=message).grid(row=0, column=0, sticky="w", padx=4, pady=4)
             self._render_procedure_actions(proc_name, start_row=1)
+            self._refresh_connection_controls()
             return
 
         settings = self.config.get_procedure_settings(proc_name)
@@ -949,6 +1044,10 @@ class MainUI:
             self._refresh_cv_calibration_readout()
 
         self._render_procedure_actions(proc_name, start_row=len(fields))
+        address_item = self.param_vars.get('gpib_address')
+        if address_item:
+            address_item[0].trace_add('write', lambda *_: self._refresh_connection_controls())
+        self._refresh_connection_controls()
 
     def _procedure_actions(self, proc_name: str, section: str | None = None):
         proc_class = self.procedure_classes.get(proc_name)
@@ -1248,7 +1347,7 @@ class MainUI:
         return channel, frequencies_hz
 
     def _set_cv_calibration_buttons_enabled(self, enabled: bool):
-        state = tk.NORMAL if enabled else tk.DISABLED
+        state = tk.NORMAL if enabled and self._b1500_available() and not self._connection_busy else tk.DISABLED
         for btn in self._cv_calib_buttons.values():
             try:
                 btn.configure(state=state)
@@ -1296,6 +1395,9 @@ class MainUI:
         self._set_cv_calibration_buttons_enabled(True)
 
     def _on_cv_calibration_button(self, cal_type: str):
+        if self._connection_busy or not self._b1500_available():
+            self.log("B1500 unavailable. Use Instruments → Reconnect instruments before calibrating.")
+            return
         if self._run_thread and self._run_thread.is_alive():
             messagebox.showwarning("Calibration busy", "A run is in progress. Stop the run before calibrating.")
             return
@@ -1501,6 +1603,11 @@ class MainUI:
         self.render_param_form(proc_name)
         self.apply_last_selection(self.config.get_last_selection())
         self.log(f'Loaded settings from {path}')
+        self.prober_enabled_var.set(self.config.data.get('prober_enabled', True))
+        if self.prober_enabled_var.get() != self.runner.prober_ctrl.enabled:
+            self._start_connection_check(check_b1500=False)
+        else:
+            self._refresh_connection_controls()
 
     def save_settings(self):
         proc_name = self.proc_var.get()
@@ -1524,6 +1631,9 @@ class MainUI:
         self.log(f'Saved settings to {path}')
 
     def run(self):
+        if self._connection_busy or not self._b1500_available():
+            self.log("B1500 unavailable. Use Instruments → Reconnect instruments before starting a run.")
+            return
         proc_name = self.proc_var.get()
         if not proc_name:
             self.log("Select a procedure before running.")
@@ -1569,7 +1679,7 @@ class MainUI:
         self.runner.auto_separation_after_measurement = bool(self.auto_separation_var.get())
         
         # Determine which devices to run (always a list)
-        if self.prober_available and self.selected_device_names:
+        if self.selected_device_names:
             # Use selected devices (in their original order from subsite)
             devices_to_run = [d for d in subsite.devices if d.name in self.selected_device_names]
         else:
@@ -1857,6 +1967,10 @@ class MainUI:
         confirmed = False
         site = self.runner.current_site.name
         subsite = self.runner.current_subsite.name
+        reason = (
+            "Prober control is disabled or unavailable"
+            if not self.runner.is_prober_available() else "Position unknown"
+        )
 
         def show_prompt():
             if done.is_set():
@@ -1866,8 +1980,10 @@ class MainUI:
             dialog.transient(self.root)
             ttk.Label(
                 dialog,
-                text=f"Position unknown for {site}/{subsite}/{device.name}.\n"
+                text=f"{reason} for {site}/{subsite}/{device.name}.\n"
+                     "Ensure measurement outputs are off before repositioning. "
                      "Position the probes and establish contact manually, then click Continue.",
+                wraplength=440,
                 padding=15,
             ).pack()
 
@@ -1893,21 +2009,34 @@ class MainUI:
         try:
             while not done.wait(0.1):
                 self.runner.check_stop("Stopped during manual positioning")
+                if self.runner.skip_device_event.is_set():
+                    raise MeasurementSkipRequested("Device skipped during manual positioning")
             self.runner.check_stop("Stopped during manual positioning")
+            if self.runner.skip_device_event.is_set():
+                raise MeasurementSkipRequested("Device skipped during manual positioning")
             return confirmed
         finally:
             done.set()
 
     def _post(self, fn, *args):
-        self.root.after(0, lambda: fn(*args))
+        if not self._closing:
+            try:
+                self.root.after(0, lambda: None if self._closing else fn(*args))
+            except (tk.TclError, RuntimeError):
+                if not self._closing:
+                    raise
 
     def _post_log(self, msg):
-        self._post(self.log, msg)
+        if self._closing:
+            logger.info("%s", msg)
+        else:
+            self._post(self.log, msg)
 
     def _post_status(self, info: Optional[dict]):
         self._post(self.show_status, info)
 
     def _set_running_state(self, running: bool):
+        self._running = running
         self.light_settings_button.configure(state=tk.NORMAL if self.prober_available and not running else tk.DISABLED)
         if running:
             self._finish_btn.config(text="Finish & Stop", bg="#d4830a")
@@ -1918,6 +2047,7 @@ class MainUI:
             self.stop_frame.grid_remove()
             self.progress_frame.grid_remove()
             self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self._refresh_connection_controls()
 
     def _set_contact_state(self, in_contact: bool):
         """Update contact button appearance based on contact state."""
@@ -2134,9 +2264,18 @@ class MainUI:
 
     # Temperature UI logic is encapsulated in TemperatureUI (ui_temperature.py)
     def _on_close(self):
+        self._closing = True
         self.root.withdraw()
         self.temp_ui.stop_run()
-        self.runner.safe_stop()
+        if self._connection_busy:
+            # The connection thread owns prober initialization/close. Cancel
+            # B1500 work here; that thread disposes any late connections.
+            self.runner.stop_event.set()
+            self.runner._stop_instrument()
+            self._connection_thread.join(timeout=10)
+        else:
+            self.runner.safe_stop()
+            self.runner.prober_ctrl.close()
         if self._run_thread and self._run_thread.is_alive():
             self._run_thread.join(timeout=10)
         self.plot_bridge.shutdown()
