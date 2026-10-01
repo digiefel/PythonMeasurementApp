@@ -189,7 +189,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('BL_channel', 'BL (Bottom Left)', 'SMU3', SMU),
         parameter('BR_channel', 'BR (Bottom Right)', 'SMU4', SMU),
         parameter('ibias', 'Ibias (A)', 1e-6, float, help='Each sweep runs from -|Ibias| to +|Ibias|. Fits use measured current, not this setpoint.'),
-        parameter('points', 'Points', 75, int, help='Points per sweep, repeated for eight contact configurations. Even counts are supported; odd counts include zero.'),
+        parameter('points', 'Points', 75, int, help='Number of points in each sweep configuration.'),
         parameter('voltage_compliance', 'Voltage Compliance (V)', 10.0, float),
         parameter('power_compliance', 'Power Compliance (W)', 0.0, float),
         parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float), help='Applies to both voltage-sensing SMUs. Auto selects a range; Auto ≥ sets a lower bound; Fixed prevents range changes.'),

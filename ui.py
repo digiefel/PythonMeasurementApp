@@ -534,7 +534,7 @@ class MainUI:
         chip_label.grid(row=0, column=0, sticky="w")
         chip_entry = ttk.Entry(self.selection_frame, textvariable=self.chip_var)
         chip_entry.grid(row=0, column=1, sticky="ew", pady=2)
-        attach_tooltip(chip_label, "Enter the chip name to use in measurement folders and file names.")
+        attach_tooltip(chip_label, "Enter the sample identifier used to save measurement results.")
 
         csv_label = ttk.Label(self.selection_frame, text="Devices CSV")
         csv_label.grid(row=1, column=0, sticky="w")
@@ -547,7 +547,6 @@ class MainUI:
         attach_tooltip(csv_label, "Choose the CSV file containing device names and coordinates.")
         csv_browse_button = ttk.Button(csv_frame, text="Browse...", command=self.browse_devices_csv)
         csv_browse_button.grid(row=0, column=1, sticky="ew")
-        attach_tooltip(csv_browse_button, "Browse for a devices CSV file.")
 
         output_label = ttk.Label(self.selection_frame, text="Output Directory")
         output_label.grid(row=2, column=0, sticky="w")
@@ -556,7 +555,7 @@ class MainUI:
         output_frame.grid_columnconfigure(0, weight=1)
         output_entry = ttk.Entry(output_frame, textvariable=self.output_dir_var)
         output_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        attach_tooltip(output_label, "Choose where to save measurement results. The app creates subfolders for each chip, site, subsite and device.")
+        attach_tooltip(output_label, "Choose where to save measurement results. Data will be saved in {Output Directory}/Site/Subsite/Device/")
         output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
         output_browse_button.grid(row=0, column=1, sticky="ew")
         attach_tooltip(output_browse_button, "Browse for a folder to save measurement results.")
@@ -589,7 +588,7 @@ class MainUI:
         
         self.device_selection_button = ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection)
         self.device_selection_button.grid(row=0, column=0, columnspan=2, sticky="ew")
-        attach_tooltip(self.device_selection_button, "Choose multiple devices in this subsite to measure in one run.")
+        attach_tooltip(self.device_selection_button, "Select which devices in the current subsite should be measured in the next run.")
         self.selected_devices_label = ttk.Label(device_sel_frame, text="")
         self.selected_devices_label.grid(row=1, column=0, columnspan=2, sticky="w")
         self.selected_devices_label.grid_remove()
@@ -664,7 +663,7 @@ class MainUI:
         )
         self.proc_cb.grid(row=0, column=1, sticky="ew")
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
-        attach_tooltip(procedure_label, "Choose the measurement procedure to run.")
+        attach_tooltip(procedure_label, "Choose the measurement script to run.")
         tk.Frame(self.procedure_settings_frame, background="#3b82f6", height=2).grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
         # Only this body is rebuilt when the selected procedure changes.
