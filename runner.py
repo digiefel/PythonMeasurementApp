@@ -527,6 +527,8 @@ class MeasurementRunner:
         self.current_site = site
         self.current_subsite = subsite
         self.report_status(None)
+        if self.plot is not None:
+            self.plot.clear_progress()
 
         output_root = self.config.data['output_dir']
         output_relative = os.path.join(chip_id, site.name, subsite.name, device.name)
@@ -579,6 +581,8 @@ class MeasurementRunner:
             self.log(f"Unexpected Procedure error: {e}") # if it wasn't an abort, log the error
             raise
         finally:
+            if self.plot is not None:
+                self.plot.clear_progress()
             if has_prober:
                 self.prober_restore_light()
         # Move out of contact after completion

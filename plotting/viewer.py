@@ -222,6 +222,8 @@ class PlotViewer:
         self._plot_states: dict[str, _PlotState] = {}
         self._plot_defs: dict[str, PlotDef] = {}
         self._window_tag: int | str | None = None
+        self._progress_tag: int | str | None = None
+        self._progress: dict | None = None
         self._toolbar_tag: int | str | None = None
         self._body_anchor_tag: int | str | None = None
         self._absolute_layout: dict[str, object] | None = None
@@ -294,6 +296,8 @@ class PlotViewer:
         max_col = max((p.col + p.colspan for p in plots), default=1)
 
         self._window_tag = dpg.add_window(label=title, tag="__plot_window__", width=-1, height=-1)
+        self._progress_tag = dpg.add_progress_bar(parent=self._window_tag, width=-1, show=False)
+        self._apply_progress(payload["progress"])
 
         merged_buttons = self._merge_toolbar_buttons(toolbar_buttons)
         self._toolbar_tag = dpg.add_group(parent=self._window_tag, horizontal=True)
@@ -343,6 +347,8 @@ class PlotViewer:
         _ack(self._rsp_queue, req_id)
 
     def _handle_append_batch(self, req_id: str, payload: dict) -> None:
+        if "progress" in payload:
+            self._apply_progress(payload["progress"])
         data: dict[str, list[tuple[float, float]]] = payload["data"]
         for source_name, pairs in data.items():
             ds = self._sources.get(source_name)
@@ -350,6 +356,17 @@ class PlotViewer:
                 continue
             ds.append_pairs(pairs)
             self._redraw_source(source_name)
+
+    def _apply_progress(self, progress: dict) -> None:
+        # Configuration and buffered updates can arrive out of order. Keep the
+        # newest report so an old update cannot undo a reset for the next device.
+        if self._progress is None or progress["revision"] >= self._progress["revision"]:
+            self._progress = progress
+        if self._progress_tag is None:
+            return
+        fraction = self._progress["fraction"]
+        dpg.configure_item(self._progress_tag, show=fraction is not None, overlay=self._progress["overlay"])
+        dpg.set_value(self._progress_tag, fraction if fraction is not None else 0.0)
 
     def _handle_replace_source(self, req_id: str, payload: dict) -> None:
         source_name: str = payload["source"]
@@ -402,6 +419,7 @@ class PlotViewer:
         if self._window_tag is not None and dpg.does_item_exist("__plot_window__"):
             dpg.delete_item("__plot_window__")
         self._window_tag = None
+        self._progress_tag = None
         self._toolbar_tag = None
 
         self._body_anchor_tag = None

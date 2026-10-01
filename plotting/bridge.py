@@ -7,6 +7,7 @@ to the separate viewer process via bounded multiprocessing queues.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import queue
 import threading
@@ -48,6 +49,8 @@ class PlotBridge:
         self._pending: dict[str, list[tuple[float, float]]] = {}
         self._pending_lock = threading.Lock()
         self._last_config: dict | None = None
+        self._progress = {"fraction": None, "overlay": "", "revision": 0}
+        self._progress_dirty = False
 
         self._start_viewer_process()
 
@@ -78,7 +81,9 @@ class PlotBridge:
         
         # Give it a moment to boot, then restore data if there's a last_config
         if self._last_config is not None:
-            self._send_fire_and_forget("configure_figure", self._last_config)
+            self._send_fire_and_forget("configure_figure", {
+                **self._last_config, "progress": self._progress,
+            })
             
             # Send current data points to plot
             for source_name, ds in self._sources.items():
@@ -125,15 +130,34 @@ class PlotBridge:
 
         self._send_and_wait(
             "configure_figure",
-            {
-                "title": title,
-                "plots": plots,
-                "toolbar_buttons": toolbar_buttons or [],
-                "row_ratios": list(row_ratios or []),
-                "column_ratios": list(column_ratios or []),
-            },
+            {**self._last_config, "progress": self._progress},
             timeout_s=5.0,
         )
+
+    def set_progress(self, completed: float, total: float, message: str = "") -> None:
+        """Show measurement progress; updates are coalesced with plot data."""
+        completed, total = float(completed), float(total)
+        if (
+            not math.isfinite(completed) or not math.isfinite(total)
+            or total <= 0 or not 0 <= completed <= total
+        ):
+            raise ValueError("Progress requires finite values with 0 <= completed <= total and total > 0.")
+        counts = f"{completed:g} / {total:g}"
+        overlay = f"{message}: {counts}" if message else counts
+        self._queue_progress(completed / total, overlay)
+
+    def clear_progress(self) -> None:
+        """Hide measurement progress, retaining the plots."""
+        self._queue_progress(None, "")
+
+    def _queue_progress(self, fraction: float | None, overlay: str) -> None:
+        with self._pending_lock:
+            self._progress = {
+                "fraction": fraction,
+                "overlay": overlay,
+                "revision": self._progress["revision"] + 1,
+            }
+            self._progress_dirty = True
 
     def append_point(self, source: str, x: float, y: float) -> None:
         """Append a single point to a named source."""
@@ -254,12 +278,16 @@ class PlotBridge:
 
     def _flush_deltas(self) -> None:
         with self._pending_lock:
-            if not self._pending:
+            if not self._pending and not self._progress_dirty:
                 return
             batch = self._pending.copy()
             self._pending.clear()
+            payload = {"data": batch}
+            if self._progress_dirty:
+                payload["progress"] = self._progress
+                self._progress_dirty = False
 
-        envelope = _make_envelope("append_batch", {"data": batch})
+        envelope = _make_envelope("append_batch", payload)
         try:
             self._cmd_queue.put_nowait(envelope)
         except queue.Full:
@@ -268,6 +296,8 @@ class PlotBridge:
                 logger.warning("cmd_queue full — deltas buffered for retry")
                 self._last_warn_ts = now
             with self._pending_lock:
+                if "progress" in payload:
+                    self._progress_dirty = True
                 for source, pairs in batch.items():
                     existing = self._pending.get(source, [])
                     self._pending[source] = pairs + existing

@@ -386,6 +386,7 @@ class CVSweepProcedure(MeasurementProcedure):
 
         nonzero_statuses = set()
         all_results = []
+        self.report_progress(0, len(self.frequencies), 'Frequency sweeps')
 
         try:
             # Start from all switches open so the selected CMU channel is the only active path.
@@ -394,7 +395,7 @@ class CVSweepProcedure(MeasurementProcedure):
             b1500.set_cmu_integ(self.integration_mode, self.integration_value)
             b1500.force_cmu_ac_level(self.cmu_channel, self.ac_level)
 
-            for freq in self.frequencies:
+            for index, freq in enumerate(self.frequencies, start=1):
                 self.check_stop(b1500)
                 b1500.set_cmu_freq(self.cmu_channel, freq)
                 tag = self._freq_label(freq)
@@ -427,6 +428,7 @@ class CVSweepProcedure(MeasurementProcedure):
                 for row in rows:
                     # Prefix every row with frequency so the CSV stays self-describing after concatenating sweeps.
                     all_results.append([freq] + row)
+                self.report_progress(index, len(self.frequencies), 'Frequency sweeps')
 
         finally:
             try:

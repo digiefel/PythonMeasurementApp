@@ -304,18 +304,20 @@ class VanDerPauwProcedure(MeasurementProcedure):
         self.log(f'Starting Van der Pauw measurement on {device.name}')
         self.runner.configure_plot(f'Van der Pauw — {device.name}', self.plot_definitions(),
                                    column_ratios=(1.6, 1.0, 1.0))
+        self.report_progress(0, len(CONTACT_SWEEPS), 'Contact sweeps')
         rows, readings_by_contacts = [], {}
         self._result = None
         base = self.format_filename('VanDerPauw', device.name)
         try:
             b1500.reset()
             b1500.enable_error_detect(True)
-            for contact_sweep in CONTACT_SWEEPS:
+            for index, contact_sweep in enumerate(CONTACT_SWEEPS, start=1):
                 self.check_stop(b1500)
                 name = contact_sweep[0]
                 self.log(f'Measuring SMUs: {self.sweep_label(contact_sweep)}')
                 readings_by_contacts[name] = self.perform_iv_sweep(b1500, contact_sweep, rows)
                 self._plot_raw(name, readings_by_contacts[name])
+                self.report_progress(index, len(CONTACT_SWEEPS), 'Contact sweeps')
             result = analyze_measurement(readings_by_contacts, self.points)
             self._result = result
             self.save_data([r.csv_row() for r in rows], f'{base}.csv', RAW_HEADERS, add_timestamp=False)

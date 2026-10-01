@@ -225,6 +225,11 @@ class MeasurementProcedure(ABC):
     def log(self, message: str):
         self.runner.log(message)
 
+    def report_progress(self, completed: float, total: float, message: str = "") -> None:
+        """Report completed steps in this device measurement above the plots."""
+        if self.runner.plot is not None:
+            self.runner.plot.set_progress(completed, total, message)
+
     @staticmethod
     def _truthy_setting(value) -> bool:
         if isinstance(value, str):

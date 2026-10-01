@@ -55,6 +55,12 @@ Viewer deltas are coalesced and flushed at 30 Hz (every ~33 ms).
 Multiple appends to the same source within one interval are merged into a single
 `append_batch` command.
 
+Procedure progress uses this same buffered update path. The bridge keeps only
+the latest report and includes it in an `append_batch` payload when it changes,
+retrying on a full command queue. Configuration and viewer restart also carry the
+current progress. Each report has an increasing revision so older buffered
+updates cannot overwrite a newer report or reset.
+
 This means:
 - Procedure-visible data is never dependent on viewer queue state.
 - High-frequency appends produce bounded queue traffic.

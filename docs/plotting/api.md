@@ -183,6 +183,33 @@ Blocks until viewer acknowledges.
 - They apply to stretched grid columns and to the supported split-span layout used by
   `IVSweep`.
 
+### Measurement progress
+
+Procedures can display completed steps and an optional message above the plots:
+
+```python
+total_steps = len(sweeps)
+self.report_progress(0, total_steps, "Sweeps")
+for index, sweep in enumerate(sweeps, start=1):
+    # Perform the sweep.
+    self.report_progress(index, total_steps, "Sweeps")
+```
+
+`completed` and `total` must be finite numbers, with `total > 0` and
+`0 <= completed <= total`. The bar displays `completed / total`, prefixed by the
+message when provided. Reporting progress returns immediately; the viewer receives
+the latest report with the next buffered plot update.
+
+The runner hides the bar before and after each device measurement, including on
+abort, skip or error. Procedures that do not report progress leave it hidden.
+Reconfiguring the plots within a measurement preserves its current progress.
+CVSweep reports completed frequency sweeps; VanDerPauw reports completed contact
+sweeps. This is separate from the main window's device-count progress.
+
+The underlying bridge methods are `runner.plot.set_progress(completed, total,
+message="")` and `runner.plot.clear_progress()`. Progress can be reported before
+plot configuration; it appears when the procedure configures the figure.
+
 ### append_point
 
 ```python
