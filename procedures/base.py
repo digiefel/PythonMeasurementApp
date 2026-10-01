@@ -73,6 +73,18 @@ class OptionalSMU:
         return SMU.collect_value(ui_value)
 
 
+class SMUOrGNDU(SMU):
+    """A fixed return terminal: a numbered SMU or the unprogrammable GNDU."""
+    @staticmethod
+    def coerce(value):
+        return "GNDU" if str(value).strip().upper() == "GNDU" else SMU.coerce(value)
+
+    @classmethod
+    def display_value(cls, value):
+        value = cls.coerce(value)
+        return "GNDU" if value == "GNDU" else SMU.display_value(value)
+
+
 class WGFMUChannel:
     @staticmethod
     def coerce(value):
@@ -196,7 +208,7 @@ class MeasurementProcedure(ABC):
             return float(value)
         if kind is str:
             return str(value)
-        if kind in (SMU, OptionalSMU, WGFMUChannel):
+        if kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel):
             return kind.coerce(value)
         if isinstance(kind, Choice):
             return kind.coerce(value)
@@ -279,7 +291,7 @@ class MeasurementProcedure(ABC):
         active = []
         seen = set()
         for ch in active_channels or []:
-            if ch is None:
+            if ch in (None, "GNDU"):
                 continue
             try:
                 numeric = SMU.coerce(ch)

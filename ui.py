@@ -36,7 +36,7 @@ from instrumentio.descriptors import describe_data_type, describe_data_type_shor
 from runner import MeasurementAbortRequested, MeasurementSkipRequested, MeasurementRunner
 from instrumentio.bridge import InstrumentCancelled, InstrumentError
 from procedures import load_procedures
-from procedures.base import Choice, OptionalSMU, SMU, WGFMUChannel
+from procedures.base import Choice, OptionalSMU, SMU, SMUOrGNDU, WGFMUChannel
 from tooltip_helper import attach_tooltip
 from ui_smu_calibration import calibrate_smus
 from plotting import PlotBridge
@@ -242,7 +242,9 @@ class MainUI:
                 continue
             var, param = item
             try:
-                channels.append(param.kind.collect_value(var.get()))
+                channel = param.kind.collect_value(var.get())
+                if channel != "GNDU":
+                    channels.append(channel)
             except Exception:
                 pass
         return channels
@@ -267,7 +269,7 @@ class MainUI:
 
         errors = []
         for param in self.procedure_fields.get(proc_name, []):
-            if param.kind not in (SMU, OptionalSMU):
+            if param.kind not in (SMU, OptionalSMU, SMUOrGNDU):
                 continue
             value = settings.get(param.key)
             if value is None:
@@ -276,6 +278,8 @@ class MainUI:
                 channel = param.kind.coerce(value)
             except Exception:
                 errors.append(f"{param.label}: invalid SMU value {value!r}")
+                continue
+            if channel == "GNDU":
                 continue
             module = module_by_channel.get(channel)
             if module and module.get('kind') != 'SMU':
@@ -995,12 +999,14 @@ class MainUI:
                 chk = ttk.Checkbutton(self.params_frame, variable=var)
                 chk.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
-            elif kind in (SMU, OptionalSMU, WGFMUChannel):
+            elif kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel):
                 label_val = kind.display_value(val)
                 var = tk.StringVar(value=label_val)
                 values = list(WGFMU_CHANNEL_MAP.keys()) if kind is WGFMUChannel else list(SMU_CHANNEL_MAP.keys())
                 if kind is OptionalSMU:
                     values = ["None"] + values
+                elif kind is SMUOrGNDU:
+                    values.append("GNDU")
                 if label_val not in values:
                     values = [label_val] + values
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
@@ -1090,7 +1096,7 @@ class MainUI:
             try:
                 if kind is bool:
                     settings[key] = bool(var.get())
-                elif kind in (SMU, OptionalSMU, WGFMUChannel):
+                elif kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel):
                     settings[key] = kind.collect_value(var.get())
                 elif isinstance(kind, Choice):
                     settings[key] = kind.collect_value(var.get())

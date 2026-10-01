@@ -2,7 +2,7 @@ import math
 import os
 
 from plotting import PlotDef, Curve, HLine, LinearFit, linear_fit
-from procedures.base import Choice, MeasurementProcedure, MeasurementAbortRequested, OptionalSMU, SMU, parameter
+from procedures.base import Choice, MeasurementProcedure, MeasurementAbortRequested, OptionalSMU, SMU, SMUOrGNDU, parameter
 from instrumentio.constants import B1500_CURRENT_RANGES
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
@@ -22,14 +22,16 @@ from instrumentio.descriptors import describe_status_bits
 class IVSweepProcedure(MeasurementProcedure):
     """
     Two-terminal IV sweep.
-    Forces a voltage ramp across the high/low SMU pair and measures both
-    terminal currents. Optional symmetric mode drives high/low at +/- V/2.
+    Forces a voltage ramp through a high SMU and a return SMU or GNDU.
+    GNDU has no current reading: its CSV return current is NaN.
+    Optional symmetric mode drives two SMUs at +/- V/2.
     """
     NAME = "IVSweep"
     PARAMETERS = (
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('high_channel', 'High SMU', 4, SMU),
-        parameter('low_channel', 'Low SMU', 3, SMU),
+        parameter('low_channel', 'Low Terminal', 3, SMUOrGNDU,
+                  help='Select the return SMU, or GNDU for a grounded return.'),
         parameter('sense_high', 'Sense High SMU (optional)', None, OptionalSMU),
         parameter('sense_low', 'Sense Low SMU (optional)', None, OptionalSMU),
         parameter('start_voltage', 'Start Voltage (V)', 0.0, float),
@@ -87,6 +89,8 @@ class IVSweepProcedure(MeasurementProcedure):
         self.check_stop(b1500)
         if high == low:
             raise ValueError("High SMU and Low SMU must be different channels.")
+        if low == "GNDU" and self.symmetric_terminals:
+            raise ValueError("Symmetric terminal voltages require a return SMU; GNDU is fixed at 0 V.")
         if self.butterfly_sweep and self.points < 2:
             raise ValueError("Butterfly sweep requires at least 2 points.")
         if self.butterfly_sweep and self.start_voltage != 0.0:
@@ -98,7 +102,8 @@ class IVSweepProcedure(MeasurementProcedure):
         b1500.set_switch(B1500_CH_ALL, False)
         # Enable the force pair; optional sense SMUs are enabled below as high-impedance voltage probes.
         b1500.set_switch(high, True)
-        b1500.set_switch(low, True)
+        if low != "GNDU":
+            b1500.set_switch(low, True)
         # use the other SMUs to sense voltage (i.e. force zero current)
         if sense_high is not None:
             b1500.set_switch(sense_high, True)
@@ -113,10 +118,17 @@ class IVSweepProcedure(MeasurementProcedure):
 
         # Hold low terminal at 0 V with compliance
         b1500.reset_timestamp()
-        b1500.force_voltage(low, 0.0, self.current_compliance)
+        if low != "GNDU":
+            b1500.force_voltage(low, 0.0, self.current_compliance)
 
         self.check_stop(b1500)
 
+        current_curves = [Curve("I_pos", color="C0", legend_label="I+(V)")]
+        if low != "GNDU":
+            current_curves.append(Curve("I_neg", color="C1", legend_label="-I-(V)"))
+        current_curves.append(LinearFit(
+            "I_pos", color="C3", legend_label_template="Fit (R={resistance_si})",
+        ))
         runner.configure_plot(f'IV sweep - {device.name}', [
             PlotDef(
                 "iv",
@@ -126,15 +138,7 @@ class IVSweepProcedure(MeasurementProcedure):
                 title="Current",
                 xlabel="Voltage (V)",
                 ylabels=("Current (A)",),
-                elements=[
-                    Curve("I_pos", color="C0", legend_label="I+(V)"),
-                    Curve("I_neg", color="C1", legend_label="-I-(V)"),
-                    LinearFit(
-                        "I_pos",
-                        color="C3",
-                        legend_label_template="Fit (R={resistance_si})",
-                    ),
-                ],
+                elements=current_curves,
             ),
             PlotDef(
                 "log_i",
@@ -165,9 +169,13 @@ class IVSweepProcedure(MeasurementProcedure):
         ], row_ratios=(1.0, 1.0), column_ratios=(2.0, 1.0))
 
         # Begin sweep with streaming readout
-        channels = [high, low]
-        modes = [B1500_IM_MODE, B1500_IM_MODE]
-        ranges = [self.current_range, self.current_range]
+        channels = [high]
+        modes = [B1500_IM_MODE]
+        ranges = [self.current_range]
+        if low != "GNDU":
+            channels.append(low)
+            modes.append(B1500_IM_MODE)
+            ranges.append(self.current_range)
         if sense_high is not None:
             channels.append(sense_high)
             modes.append(B1500_VM_MODE)
@@ -253,7 +261,7 @@ class IVSweepProcedure(MeasurementProcedure):
         sense_low = self.sense_low
         max_points = len(device_voltages)
 
-        # start_measure streams interleaved records: high I, low I, optional sense V, source V, and timestamps.
+        # Stream high I, return-SMU I (if present), optional sense V, source V, and timestamps.
         b1500.start_measure(
             channels,
             modes,
@@ -313,13 +321,16 @@ class IVSweepProcedure(MeasurementProcedure):
                 timestamps.append(value)
 
             # Update plot with any newly paired points
-            # High and low current records can arrive at different times, so plot only complete pairs.
-            while plotted < min(len(high_currents), len(low_currents), max_points):
+            # Wait for both currents when using a return SMU; GNDU produces no readings.
+            point_count = min(len(high_currents), max_points)
+            if low != "GNDU":
+                point_count = min(point_count, len(low_currents))
+            while plotted < point_count:
                 v_val = v_source_values[plotted] if plotted < len(v_source_values) else device_voltages[plotted]
                 ip_val = high_currents[plotted]
-                in_val = low_currents[plotted]
                 runner.plot.append_point("I_pos", v_val, ip_val)
-                runner.plot.append_point("I_neg", v_val, -in_val)
+                if low != "GNDU":
+                    runner.plot.append_point("I_neg", v_val, -low_currents[plotted])
                 # Stream the log-axis source too; a final bulk append makes the view jump.
                 runner.plot.append_point("log_I", v_val, max(abs(ip_val), floor))
                 self._update_resistance_source(runner, v_val)
@@ -331,21 +342,20 @@ class IVSweepProcedure(MeasurementProcedure):
         b1500.finish_measure()
 
         # Ensure any remaining points are pushed to the plot
-        for idx in range(plotted, min(len(high_currents), len(low_currents), max_points)):
+        for idx in range(plotted, point_count):
             v_val = v_source_values[idx] if idx < len(v_source_values) else device_voltages[idx]
             ip_val = high_currents[idx]
-            in_val = low_currents[idx]
             runner.plot.append_point("I_pos", v_val, ip_val)
-            runner.plot.append_point("I_neg", v_val, -in_val)
+            if low != "GNDU":
+                runner.plot.append_point("I_neg", v_val, -low_currents[idx])
             runner.plot.append_point("log_I", v_val, max(abs(ip_val), floor))
             self._update_resistance_source(runner, v_val)
 
         results = []
-        point_count = min(max_points, len(high_currents), len(low_currents))
         for i in range(point_count):
             v_val = v_source_values[i] if i < len(v_source_values) else device_voltages[i]
             ip_val = high_currents[i]
-            in_val = low_currents[i]
+            in_val = low_currents[i] if low != "GNDU" else math.nan
             t_val = timestamps[i] if i < len(timestamps) else 0.0
             # Collapse per-record status bits into one CSV status column for the point.
             status_combined = 0

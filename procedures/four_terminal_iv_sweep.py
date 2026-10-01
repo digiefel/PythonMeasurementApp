@@ -1,4 +1,4 @@
-from procedures.base import Choice, MeasurementProcedure, SMU, parameter
+from procedures.base import Choice, MeasurementProcedure, SMU, SMUOrGNDU, parameter
 from instrumentio.constants import B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
@@ -18,7 +18,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('force_high_channel', 'Force High SMU', 4, SMU),
         parameter('sense_high_channel', 'Sense High SMU', 5, SMU),
-        parameter('force_low_channel', 'Force Low SMU', 3, SMU),
+        parameter('force_low_channel', 'Force Low Terminal', 3, SMUOrGNDU,
+                  help='Select the return SMU, or GNDU for a grounded return.'),
         parameter('sense_low_channel', 'Sense Low SMU', 6, SMU),
         parameter('start_current', 'Start Current (A)', 0.0, float),
         parameter('stop_current', 'Stop Current (A)', 1e-6, float),
@@ -63,7 +64,7 @@ class FourTerminalIVProcedure(MeasurementProcedure):
     def perform_iv_sweep(self, b1500, device):
         """
         Perform the 4-terminal I-V sweep measurement.
-        Forces current through force terminals, holds a return SMU at 0 V, and measures voltage on two sense SMUs.
+        Forces current, returns through a 0 V SMU or GNDU, and measures voltage on two sense SMUs.
         Returns list of [Current, VoltageDiff, Time, Status] tuples.
         """
         runner = self.runner
@@ -75,9 +76,10 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         self.check_stop(b1500)
         self.prepare_asu_channels(b1500, (source_channel, return_channel, sense_high, sense_low))
 
-        # Enable all four SMUs: two force current, two force zero current as voltage probes.
+        # GNDU stays at 0 V without SMU commands.
         b1500.set_switch(source_channel, True)
-        b1500.set_switch(return_channel, True)
+        if return_channel != "GNDU":
+            b1500.set_switch(return_channel, True)
         b1500.set_switch(sense_high, True)
         b1500.set_switch(sense_low, True)
 
@@ -87,7 +89,8 @@ class FourTerminalIVProcedure(MeasurementProcedure):
         b1500.reset_timestamp()
 
         # Hold the return SMU at 0 V with a safe current compliance
-        b1500.force_voltage(return_channel, 0.0, self.current_compliance)
+        if return_channel != "GNDU":
+            b1500.force_voltage(return_channel, 0.0, self.current_compliance)
         # Sense SMUs force 0 A, which makes their voltage readings high-impedance probes.
         b1500.force_current(sense_high, 0.0, B1500_AUTO_RANGE)
         b1500.force_current(sense_low, 0.0, B1500_AUTO_RANGE)
@@ -116,10 +119,15 @@ class FourTerminalIVProcedure(MeasurementProcedure):
             power_compliance=self.power_compliance
         )
 
-        # Configure the interleaved measurement stream: source/return current plus two sense voltages.
-        channels = [source_channel, sense_high, return_channel, sense_low]
-        modes = [B1500_IM_MODE, B1500_VM_MODE, B1500_IM_MODE, B1500_VM_MODE]
-        ranges = [B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE, B1500_AUTO_RANGE]
+        # Stream source current, return-SMU current (if present), and two sense voltages.
+        channels = [source_channel, sense_high]
+        modes = [B1500_IM_MODE, B1500_VM_MODE]
+        if return_channel != "GNDU":
+            channels.append(return_channel)
+            modes.append(B1500_IM_MODE)
+        channels.append(sense_low)
+        modes.append(B1500_VM_MODE)
+        ranges = [B1500_AUTO_RANGE] * len(channels)
 
         self.check_stop(b1500)
 
