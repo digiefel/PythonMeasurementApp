@@ -1396,7 +1396,7 @@ class MainUI:
 
     def _on_cv_calibration_button(self, cal_type: str):
         if self._connection_busy or not self._b1500_available():
-            self.log("B1500 unavailable. Click Reconnect before calibrating.")
+            self.log("B1500 unavailable. Reconnect to calibrate.")
             return
         if self._run_thread and self._run_thread.is_alive():
             messagebox.showwarning("Calibration busy", "A run is in progress. Stop the run before calibrating.")
