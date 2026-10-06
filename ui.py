@@ -387,8 +387,6 @@ class MainUI:
         self.prober_available = False
         self._connection_busy = True
         self.runner.stop_event.clear()
-        self.runner.temp_ref_c = None
-        self.runner.temp_comp_ref_z_heights = None
         self._refresh_connection_controls()
         self.log("Checking instrument connections…")
         results = {}
@@ -397,9 +395,6 @@ class MainUI:
             try:
                 if check_b1500:
                     try:
-                        if self.runner.b1500 is not None:
-                            self.runner.b1500.close()
-                            self.runner.b1500 = None
                         b1500 = self.runner.get_b1500(address)
                         if discover:
                             results['discovery'] = b1500.discover_modules()
@@ -409,7 +404,12 @@ class MainUI:
                 if not self._closing:
                     self.runner.prober_ctrl.set_enabled(prober_enabled)
                     if prober_enabled:
-                        results['prober_available'] = self.runner.prober_ctrl.initialize(force=check_b1500)
+                        # Reconnecting the B1500 must not discard prober alignment
+                        # or temperature compensation in an existing session.
+                        if self.runner.prober_ctrl.prober is None:
+                            self.runner.temp_ref_c = None
+                            self.runner.temp_comp_ref_z_heights = None
+                        results['prober_available'] = self.runner.prober_ctrl.initialize()
                         if results['prober_available']:
                             results['contact'] = self.runner.prober_is_in_contact()
             except Exception:
@@ -2053,6 +2053,11 @@ class MainUI:
             self.progress_frame.grid_remove()
             self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._refresh_connection_controls()
+
+        if not running and self.runner.b1500 is not None and not self.runner.b1500.is_open:
+            # Abort/Skip retires the measurement connection. Restore it after
+            # the run ends, without forcing the prober to reconnect.
+            self._start_connection_check()
 
     def _set_contact_state(self, in_contact: bool):
         """Update contact button appearance based on contact state."""
