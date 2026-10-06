@@ -309,6 +309,20 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
 	@staticmethod
+	def _format_cycle_count(count):
+		if count <= 1000:
+			return str(int(count))
+		mantissa, exponent = f"{count:.4e}".split('e')
+		return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
+
+	def _report_fatigue_progress(self, cycles_sent):
+		self.report_progress(
+			cycles_sent, self.fatigue_count_int, "Fatigue cycles sent",
+			count_labels=(self._format_cycle_count(cycles_sent),
+			              self._format_cycle_count(self.fatigue_count_int)),
+		)
+
+	@staticmethod
 	def _add_vectors(wgfmu, pattern_name, vectors):
 		for dt, voltage in vectors:
 			if dt > 0:
@@ -439,7 +453,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 		sample_points = max(1, int(round(read_duration / sample_interval)))
 		expected_total = sample_points * len(read_cycles)
 		source_map = self._configure_plot(device, read_cycles, read_duration)
-		self.report_progress(0, len(read_cycles), "Read cycles received")
+		self._report_fatigue_progress(0)
 
 		total_time = (
 			(self.fatigue_count_int * fatigue_duration)
@@ -534,7 +548,7 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 						read_idx = sample_index // sample_points
 						sample_in_read = sample_index % sample_points
 						if sample_in_read == sample_points - 1:
-							self.report_progress(read_idx + 1, len(read_cycles), "Read cycles received")
+							self._report_fatigue_progress(read_cycles[read_idx])
 						timestamp = t_v if t_v is not None else t_i
 						if timestamp is None:
 							read_time_s = sample_in_read * sample_interval

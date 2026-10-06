@@ -134,7 +134,8 @@ class PlotBridge:
             timeout_s=5.0,
         )
 
-    def set_progress(self, completed: float, total: float, message: str = "") -> None:
+    def set_progress(self, completed: float, total: float, message: str = "", *,
+                     count_labels: tuple[str, str] | None = None) -> None:
         """Show measurement progress; updates are coalesced with plot data."""
         completed, total = float(completed), float(total)
         if (
@@ -142,7 +143,7 @@ class PlotBridge:
             or total <= 0 or not 0 <= completed <= total
         ):
             raise ValueError("Progress requires finite values with 0 <= completed <= total and total > 0.")
-        counts = f"{completed:g} / {total:g}"
+        counts = " / ".join(count_labels) if count_labels is not None else f"{completed:g} / {total:g}"
         overlay = f"{message}: {counts}" if message else counts
         self._queue_progress(completed / total, overlay)
 
