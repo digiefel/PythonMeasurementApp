@@ -17,6 +17,7 @@ def load_ui():
         'tkinter': Mock(),
         'ui_temperature': SimpleNamespace(TemperatureUI=Mock()),
         'ui_device_selection': SimpleNamespace(DeviceSelectionDialog=Mock()),
+        'ui_site_selection': SimpleNamespace(SiteSelectionDialog=Mock()),
         'ui_light_settings': SimpleNamespace(show_light_settings=Mock()),
         'tooltip_helper': SimpleNamespace(attach_tooltip=Mock()),
         'prober': SimpleNamespace(ProberController=Mock()),

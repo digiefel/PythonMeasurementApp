@@ -435,7 +435,7 @@ class MeasurementRunner:
             if self.stop_event.wait(delay_s):
                 self.check_stop("Stop during post-contact delay")
     
-    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, proc_class, settings, devices_to_run, poll_interval_s: float = 2.0, tolerance_c: float = 0.5):
+    def run_temperature_sweep(self, temp_list_c, wait_after_stable_s, chip_id, site, subsite, proc_class, settings, devices_to_run, poll_interval_s: float = 2.0, tolerance_c: float = 0.5, *, measurement_queue=None):
         """Set each target temperature, wait for stability, then run the procedure(s)."""
         if not self.is_prober_available():
             raise RuntimeError("Temperature sweep requires a connected prober.")
@@ -456,7 +456,10 @@ class MeasurementRunner:
                         self.log(f"Temp phase start cb error: {e}")
                 run_settings = dict(settings)
                 run_settings['temperature_c'] = target
-                self.run_devices(chip_id, site, subsite, devices_to_run, proc_class, run_settings)
+                if measurement_queue is None:
+                    self.run_devices(chip_id, site, subsite, devices_to_run, proc_class, run_settings)
+                else:
+                    self.run_queue(chip_id, measurement_queue, proc_class, run_settings)
                 if self.temp_phase_cb:
                     try:
                         self.temp_phase_cb("measure_end", idx)
@@ -472,17 +475,19 @@ class MeasurementRunner:
         # TODO restore to uncontrolled if ui checkbox says so
 
     def run_devices(self, chip_id, site, subsite, devices, proc_class, settings):
-        """
-        Run the given procedure for a specific list of devices.
-        """
+        """Run the given procedure for devices in one subsite."""
+        self.run_queue(chip_id, [(site, subsite, device) for device in devices], proc_class, settings)
+
+    def run_queue(self, chip_id, measurement_queue, proc_class, settings):
+        """Run an ordered queue of (site, subsite, device) measurements."""
         if not chip_id:
             raise ValueError("Chip ID is required to run devices.")
-        if not devices:
+        if not measurement_queue:
             self.log("No devices to run.")
             return
-        total = len(devices)
+        total = len(measurement_queue)
         try:
-            for idx, device in enumerate(devices):
+            for idx, (site, subsite, device) in enumerate(measurement_queue):
                 t0 = time.monotonic()
                 skipped = False
                 try:
@@ -498,9 +503,7 @@ class MeasurementRunner:
                         self.device_progress_cb(idx + 1, total, elapsed)
                     except Exception as e:
                         self.log(f"Device progress cb error: {e}")
-                if skipped:
-                    continue
-                if self.temp_device_done_cb and self._current_temp_step is not None:
+                if not skipped and self.temp_device_done_cb and self._current_temp_step is not None:
                     try:
                         self.temp_device_done_cb(time.time(), self._current_temp_step, idx + 1, total)
                     except Exception as e:

@@ -12,6 +12,11 @@ from tooltip_helper import attach_tooltip
 
 class DeviceSelectionDialog:
     """Dialog for visual device selection on a 2D canvas."""
+    TITLE = "Device Selection"
+    ITEM_KIND = "device"
+    INSTRUCTIONS = "Click + drag to select rectangle. Ctrl+Click to toggle individual devices. Selected devices shown in blue."
+    SELECT_ALL_TOOLTIP = "Select every device in this subsite."
+    MANUAL_TOOLTIP = "Select devices to position manually. The app asks you to position each one before measuring it."
     
     def __init__(self, parent, devices, prober_position=None, initially_selected=None):
         """
@@ -47,14 +52,14 @@ class DeviceSelectionDialog:
     
     def _create_dialog(self):
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("Device Selection")
+        self.dialog.title(self.TITLE)
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
         
         # Instructions
         instructions = ttk.Label(
             self.dialog,
-            text="Click + drag to select rectangle. Ctrl+Click to toggle individual devices. Selected devices shown in blue.",
+            text=self.INSTRUCTIONS,
             wraplength=680,
             justify="left"
         )
@@ -77,7 +82,7 @@ class DeviceSelectionDialog:
                 if device.name in self.selected_devices:
                     self.manual_list.selection_set(index)
             self.manual_list.bind("<<ListboxSelect>>", self._update_manual_selection)
-            attach_tooltip(manual_label, "Select devices to position manually. The app asks you to position each one before measuring it.")
+            attach_tooltip(manual_label, self.MANUAL_TOOLTIP)
         
         # Canvas frame
         canvas_frame = ttk.Frame(self.dialog)
@@ -99,10 +104,10 @@ class DeviceSelectionDialog:
         
         select_all_button = ttk.Button(button_frame, text="Select All", command=self._select_all)
         select_all_button.pack(side="left", padx=5)
-        attach_tooltip(select_all_button, "Select every device in this subsite.")
+        attach_tooltip(select_all_button, self.SELECT_ALL_TOOLTIP)
         clear_button = ttk.Button(button_frame, text="Clear Selection", command=self._clear_selection)
         clear_button.pack(side="left", padx=5)
-        attach_tooltip(clear_button, "Clear the device selection.")
+        attach_tooltip(clear_button, f"Clear the {self.ITEM_KIND} selection.")
         refresh_button = self.refresh_button = ttk.Button(button_frame, text="Refresh Prober Position", command=lambda: self._refresh_prober())
         refresh_button.pack(side="left", padx=5)
         attach_tooltip(refresh_button, "Read the current chuck position and update the red marker on the map.")
@@ -112,10 +117,10 @@ class DeviceSelectionDialog:
         
         cancel_button = ttk.Button(button_frame, text="Cancel", command=self._cancel)
         cancel_button.pack(side="right", padx=5)
-        attach_tooltip(cancel_button, "Discard your changes and close Device Selection.")
+        attach_tooltip(cancel_button, f"Discard your changes and close {self.TITLE}.")
         ok_button = ttk.Button(button_frame, text="OK", command=self._ok)
         ok_button.pack(side="right", padx=5)
-        attach_tooltip(ok_button, "Use the selected devices for the next run.")
+        attach_tooltip(ok_button, f"Use the selected {self.ITEM_KIND}s for the next run.")
         
         # Bind events
         self.canvas.bind("<Button-1>", self._on_mouse_down)
@@ -132,13 +137,17 @@ class DeviceSelectionDialog:
         y = self.parent.winfo_y() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
         self.dialog.geometry(f"+{x}+{y}")
     
+    def _plot_points(self):
+        return [(device.x, device.y) for device in self.devices]
+
     def _calculate_transform(self):
         """Calculate transformation from device coordinates to canvas coordinates."""
         if not self.devices:
             return lambda x, y: (self.canvas_width // 2, self.canvas_height // 2)
         
-        xs = [d.x for d in self.devices]
-        ys = [d.y for d in self.devices]
+        points = self._plot_points()
+        xs = [x for x, _ in points]
+        ys = [y for _, y in points]
         
         # Include prober position in bounds if available
         if self.prober_position:
@@ -200,24 +209,7 @@ class DeviceSelectionDialog:
         
         # Draw devices
         for device in self.devices:
-            cx, cy = transform(device.x, device.y)
-            is_selected = device.name in self.selected_devices
-            fill_color = "dodgerblue" if is_selected else "black"
-            outline_color = "blue" if is_selected else "black"
-            
-            oval_id = self.canvas.create_oval(
-                cx - self.point_radius, cy - self.point_radius,
-                cx + self.point_radius, cy + self.point_radius,
-                fill=fill_color, outline=outline_color, width=2,
-                tags=("device", device.name)
-            )
-            text_id = self.canvas.create_text(
-                cx + self.label_offset, cy - self.label_offset,
-                text=device.name, anchor="sw", font=("TkDefaultFont", 8),
-                fill="darkblue" if is_selected else "black",
-                tags=("device_label", device.name)
-            )
-            self.device_items[device.name] = (oval_id, text_id)
+            self.device_items[device.name] = self._draw_device(device, transform)
         
         # Draw prober position (red X)
         if self.prober_position:
@@ -239,6 +231,27 @@ class DeviceSelectionDialog:
                 fill="red", tags="prober_label"
             )
     
+    def _draw_device(self, device, transform):
+        cx, cy = transform(device.x, device.y)
+        selected = device.name in self.selected_devices
+        oval_id = self.canvas.create_oval(
+            cx - self.point_radius, cy - self.point_radius,
+            cx + self.point_radius, cy + self.point_radius,
+            fill="dodgerblue" if selected else "black",
+            outline="blue" if selected else "black", width=2,
+            tags=("device", device.name),
+        )
+        text_id = self.canvas.create_text(
+            cx + self.label_offset, cy - self.label_offset,
+            text=device.name, anchor="sw", font=("TkDefaultFont", 8),
+            fill="darkblue" if selected else "black", tags=("device_label", device.name),
+        )
+        return oval_id, text_id
+
+    def _contains_point(self, device, transform, x, y):
+        cx, cy = transform(device.x, device.y)
+        return ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5 <= self.point_radius + 4
+
     def _update_device_appearance(self, device_name, selected):
         """Update the visual appearance of a device."""
         if device_name not in self.device_items:
@@ -325,9 +338,7 @@ class DeviceSelectionDialog:
         clicked_device = None
         
         for device in self.devices:
-            cx, cy = transform(device.x, device.y)
-            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
-            if dist <= self.point_radius + 4:  # Small tolerance
+            if self._contains_point(device, transform, x, y):
                 clicked_device = device
                 break
         

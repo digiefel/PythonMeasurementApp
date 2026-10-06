@@ -12,6 +12,7 @@ from typing import Optional
 from si_utils import parse_si_value, parse_si_list, format_si_value, format_si_compact_0
 from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
+from ui_site_selection import SiteSelectionDialog
 from ui_light_settings import show_light_settings
 
 from config import Config
@@ -82,6 +83,7 @@ class MainUI:
         self.cmu_mode_options = [(code, get_cmu_mode_name(code)) for code, _ in B1500_CMU_MEASUREMENT_MODES]
         # One ordered selection shared by the selector, dialog and device actions.
         self._selected_devices = ()
+        self._selected_sites = ()
 
         self.root.title("Python Measurement App")
         for col, weight in enumerate((1, 1)):
@@ -91,7 +93,6 @@ class MainUI:
         self.root.grid_rowconfigure(2, weight=1)
 
         # GUI state
-        self.site_var = tk.StringVar()
         self.subsite_var = tk.StringVar()
         self.devices_csv_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
@@ -565,10 +566,10 @@ class MainUI:
 
         site_label = ttk.Label(self.selection_frame, text="Site")
         site_label.grid(row=3, column=0, sticky="w")
-        self.site_cb = ttk.Combobox(self.selection_frame, textvariable=self.site_var, values=[s.name for s in self.config.sites])
+        self.site_cb = ttk.Combobox(self.selection_frame, state='readonly', values=[s.name for s in self.config.sites])
         self.site_cb.grid(row=3, column=1, sticky="ew", pady=2)
-        self.site_cb.bind('<<ComboboxSelected>>', self.update_subsites)
-        attach_tooltip(site_label, "Select the site to measure.")
+        self.site_cb.bind('<<ComboboxSelected>>', self.on_site_selected)
+        attach_tooltip(site_label, "Select a single site here, or multiple sites in Site Selection. The chosen subsite and device names are measured at each site; motion uses the first available selected device.")
 
         subsite_label = ttk.Label(self.selection_frame, text="Subsite")
         subsite_label.grid(row=4, column=0, sticky="w")
@@ -590,12 +591,18 @@ class MainUI:
         device_sel_frame.grid_columnconfigure(0, weight=1, uniform="devsel")
         device_sel_frame.grid_columnconfigure(1, weight=1, uniform="devsel")
         
+        self.site_selection_button = ttk.Button(device_sel_frame, text="Site Selection...", command=self.open_site_selection)
+        self.site_selection_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        attach_tooltip(self.site_selection_button, "Select sites to measure using the device and subsite names chosen below the Site field.")
         self.device_selection_button = ttk.Button(device_sel_frame, text="Device Selection...", command=self.open_device_selection)
-        self.device_selection_button.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.device_selection_button.grid(row=0, column=1, sticky="ew")
         attach_tooltip(self.device_selection_button, "Select which devices in the current subsite should be measured in the next run.")
         self.selected_devices_label = ttk.Label(device_sel_frame, text="")
-        self.selected_devices_label.grid(row=1, column=0, columnspan=2, sticky="w")
+        self.selected_devices_label.grid(row=1, column=1, sticky="w")
         self.selected_devices_label.grid_remove()
+        self.selected_sites_label = ttk.Label(device_sel_frame, text="")
+        self.selected_sites_label.grid(row=1, column=0, sticky="w")
+        self.selected_sites_label.grid_remove()
 
         # Action buttons
         action_frame = ttk.Frame(self.selection_frame)
@@ -785,7 +792,7 @@ class MainUI:
             self.devices_csv_var.set(self.config.devices_csv_path)
             self.log(f"Failed to load devices CSV '{target}': {e}")
             return
-        self._set_selected_devices(())
+        self._set_selected_sites(())
         self._refresh_devices_csv_options()
         self.populate_sites()
         self.log(f"Loaded devices CSV: {self.config.devices_csv_path}")
@@ -833,26 +840,66 @@ class MainUI:
     def populate_sites(self):
         site_names = [s.name for s in self.config.sites]
         self.site_cb['values'] = site_names
-        if not site_names:
-            self.site_var.set('')
-            self.subsite_var.set('')
-            self.subsite_cb['values'] = []
-            self.device_cb['values'] = []
-            self._set_selected_devices(())
-            return
-        current = self.site_var.get()
-        self.site_var.set(current if current in site_names else site_names[0])
+        current = [name for name in self.selected_site_names if name in site_names]
+        self._set_selected_sites(current or site_names[:1])
+
+    @property
+    def selected_site_names(self):
+        return tuple(site.name for site in self._selected_sites)
+
+    def _first_selected_site(self):
+        return self._selected_sites[0] if self._selected_sites else None
+
+    def _set_selected_sites(self, names):
+        names = set(names)
+        self._selected_sites = tuple(site for site in self.config.sites if site.name in names)
+        self.site_cb.set(', '.join(self.selected_site_names))
+        count = len(self._selected_sites)
+        self.selected_sites_label.config(text=f"✓ {count} site{'s' if count != 1 else ''} selected" if count else '')
+        if count:
+            self.selected_sites_label.grid()
+        else:
+            self.selected_sites_label.grid_remove()
         self.update_subsites()
 
+    def on_site_selected(self, event=None):
+        self._set_selected_sites((self.site_cb.get(),))
+
+    def open_site_selection(self):
+        if not self.config.sites:
+            messagebox.showwarning("No Sites", "Please load a devices CSV with sites first.")
+            return
+
+        def read_position():
+            if not self.prober_available:
+                return None
+            try:
+                pos = self.runner.prober_read_position()
+                origin = self.runner.prober_ctrl.subsite_origin
+                return (pos[0] - origin[0], pos[1] - origin[1]) if pos and origin else None
+            except Exception as exc:
+                self.log(f"Could not read prober position: {exc}")
+                return None
+
+        dialog = SiteSelectionDialog(
+            self.root, self.config.sites, self.subsite_var.get(), self.selected_device_names,
+            prober_position=read_position(), initially_selected=self.selected_site_names,
+        )
+        dialog.refresh_button.configure(state=tk.NORMAL if self.prober_available else tk.DISABLED)
+        dialog.set_refresh_callback(lambda: dialog.update_prober_position(read_position()))
+        result = dialog.show()
+        if result is not None:
+            self._set_selected_sites(result)
+            self.log(f"Selected {len(self._selected_sites)} site(s): {', '.join(self.selected_site_names)}")
+
     def update_subsites(self, event=None):
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        if not site:
+        if not self._selected_sites:
             self.subsite_cb['values'] = []
             self.device_cb['values'] = []
             self.subsite_var.set('')
             self._set_selected_devices(())
             return
-        subsite_names = [sub.name for sub in site.subsites]
+        subsite_names = list(dict.fromkeys(sub.name for site in self._selected_sites for sub in site.subsites))
         self.subsite_cb['values'] = subsite_names
         if not subsite_names:
             self.device_cb['values'] = []
@@ -864,30 +911,40 @@ class MainUI:
         self.update_devices()
 
     def update_devices(self, event=None):
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
-        if not subsite:
+        choices = self._device_choices()
+        if not choices:
             self.device_cb['values'] = []
             self._set_selected_devices(())
             return
-        device_names = [d.name for d in subsite.devices]
+        device_names = [d.name for d in choices]
         self.device_cb['values'] = device_names
-        if device_names:
-            current = self.selected_device_names[0] if self.selected_device_names else None
-            self._set_selected_devices((current if current in device_names else device_names[0],))
-        else:
-            self._set_selected_devices(())
+        current = [name for name in self.selected_device_names if name in device_names]
+        self._set_selected_devices(current or device_names[:1])
 
     @property
     def selected_device_names(self):
         return tuple(device.name for device in self._selected_devices)
 
+    def _selected_subsites(self):
+        return tuple(sub for site in self._selected_sites for sub in site.subsites
+                     if sub.name == self.subsite_var.get())
+
+    def _device_choices(self):
+        devices = {}
+        for subsite in self._selected_subsites():
+            for device in subsite.devices:
+                devices.setdefault(device.name, device)
+        return tuple(devices.values())
+
+    def _selection_subsite(self):
+        subsites = self._selected_subsites()
+        device = self._first_selected_device()
+        return next((sub for sub in subsites if device in sub.devices), subsites[0] if subsites else None)
+
     def _set_selected_devices(self, names):
-        """Set the selection in subsite order and render all selection controls."""
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
+        """Set the selection in site/subsite order and render all selection controls."""
         names = set(names)
-        self._selected_devices = tuple(d for d in subsite.devices if d.name in names) if subsite else ()
+        self._selected_devices = tuple(d for d in self._device_choices() if d.name in names)
         self.device_cb.set(', '.join(self.selected_device_names))
         self._update_selected_devices_label()
         multiple = len(self._selected_devices) > 1
@@ -915,9 +972,9 @@ class MainUI:
 
     def open_device_selection(self):
         """Open the device selection dialog."""
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
-        if not subsite or not subsite.devices:
+        subsite = self._selection_subsite()
+        devices = self._device_choices()
+        if not subsite or not devices:
             messagebox.showwarning("No Devices", "Please select a subsite with devices first.")
             return
         
@@ -949,7 +1006,7 @@ class MainUI:
         # Open the dialog
         dialog = DeviceSelectionDialog(
             self.root,
-            subsite.devices,
+            devices,
             prober_position=prober_pos,
             initially_selected=self.selected_device_names
         )
@@ -1651,6 +1708,57 @@ class MainUI:
         self.config.set_last_selection(self.build_last_selection())
         self.log(f'Saved settings to {path}')
 
+    def _build_measurement_queue(self):
+        """Resolve selected device names at every site and report missing entries."""
+        queue, missing = [], []
+        for site in self._selected_sites:
+            subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None)
+            if subsite is None:
+                missing.append(f"{site.name}: subsite '{self.subsite_var.get()}' is missing")
+                continue
+            devices = {device.name: device for device in subsite.devices}
+            for name in self.selected_device_names:
+                if name in devices:
+                    queue.append((site, subsite, devices[name]))
+                else:
+                    missing.append(f"{site.name}/{subsite.name}: device '{name}' is missing")
+        return queue, missing
+
+    def _confirm_skip_missing(self, missing):
+        skip_missing = False
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Missing devices or subsites")
+        dialog.transient(self.root)
+        ttk.Label(dialog, text="The following selections are unavailable:", padding=15).pack(anchor="w")
+        details = ttk.Frame(dialog, padding=(15, 0, 15, 0))
+        details.pack(fill="both", expand=True)
+        missing_list = tk.Text(details, width=68, height=min(12, len(missing)), wrap="word")
+        scrollbar = ttk.Scrollbar(details, command=missing_list.yview)
+        scrollbar.pack(side="right", fill="y")
+        missing_list.configure(yscrollcommand=scrollbar.set)
+        missing_list.pack(side="left", fill="both", expand=True)
+        missing_list.insert("1.0", '\n'.join(missing))
+        missing_list.configure(state="disabled")
+        ttk.Label(dialog, text="Skip these entries and measure the available devices?", padding=15).pack()
+
+        def finish(accepted):
+            nonlocal skip_missing
+            skip_missing = accepted
+            dialog.destroy()
+
+        buttons = ttk.Frame(dialog, padding=(15, 0, 15, 15))
+        buttons.pack(anchor="e")
+        cancel_button = ttk.Button(buttons, text="Cancel", command=lambda: finish(False))
+        cancel_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text="Skip missing", command=lambda: finish(True)).grid(row=0, column=1)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.bind("<Escape>", lambda event: finish(False))
+        center_popup(dialog, self.root)
+        dialog.grab_set()
+        cancel_button.focus_set()
+        self.root.wait_window(dialog)
+        return skip_missing
+
     def run(self):
         if self._connection_busy or not self._b1500_available():
             self.log("B1500 unavailable. Click Reconnect before starting a run.")
@@ -1669,11 +1777,11 @@ class MainUI:
         if not chip_id:
             messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
             return
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+        site = self._first_selected_site()
         if site is None:
             self.log("Select a valid site before running.")
             return
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None)
+        subsite = self._selection_subsite()
         if subsite is None:
             self.log("Select a valid subsite before running.")
             return
@@ -1682,6 +1790,13 @@ class MainUI:
         if device is None:
             self.log("Select a valid device before running.")
             return
+        measurement_queue, missing = self._build_measurement_queue()
+        if missing:
+            if not self._confirm_skip_missing(missing):
+                self.log("Run cancelled because selected devices or subsites are missing.")
+                return
+            self.log("Skipping missing selections:\n" + '\n'.join(missing))
+        site, subsite, device = measurement_queue[0]
         temp_info = self.temp_ui.collect_run_inputs()
         if temp_info is None:
             return
@@ -1700,7 +1815,7 @@ class MainUI:
         set_home = self.set_home_var.get()
         self.runner.auto_separation_after_measurement = bool(self.auto_separation_var.get())
         
-        device_count = len(devices_to_run)
+        device_count = len(measurement_queue)
         if self._run_thread and self._run_thread.is_alive():
             self.log("A run is already in progress.")
             return
@@ -1734,11 +1849,12 @@ class MainUI:
                         proc_class,
                         settings,
                         devices_to_run=devices_to_run,
-                        poll_interval_s=poll_interval
+                        poll_interval_s=poll_interval,
+                        measurement_queue=measurement_queue,
                     )
                 else:
                     self.runner.current_temp_c = None
-                    self.runner.run_devices(chip_id, site, subsite, devices_to_run, proc_class, settings)
+                    self.runner.run_queue(chip_id, measurement_queue, proc_class, settings)
             except MeasurementAbortRequested:
                 self._post_log('Run aborted by user.')
             except InstrumentError as e:
@@ -2308,17 +2424,21 @@ class MainUI:
         site_names = [s.name for s in self.config.sites]
         if site_names:
             preferred_site = last_sel.get('site')
-            self.site_var.set(preferred_site if preferred_site in site_names else site_names[0])
-            self.update_subsites()
-            selected_site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-            if selected_site and selected_site.subsites:
-                sub_names = [sub.name for sub in selected_site.subsites]
+            if last_sel.get('selected_sites'):
+                self._set_selected_sites(last_sel['selected_sites'])
+            elif preferred_site in site_names:
+                self._set_selected_sites((preferred_site,))
+            elif 'selected_sites' in last_sel and not preferred_site:
+                self._set_selected_sites(())
+            else:
+                self._set_selected_sites(site_names[:1])
+            sub_names = list(dict.fromkeys(sub.name for site in self._selected_sites for sub in site.subsites))
+            if sub_names:
                 preferred_sub = last_sel.get('subsite')
                 self.subsite_var.set(preferred_sub if preferred_sub in sub_names else sub_names[0])
                 self.update_devices()
-                selected_sub = next((sub for sub in selected_site.subsites if sub.name == self.subsite_var.get()), None)
-                if selected_sub and selected_sub.devices:
-                    dev_names = [d.name for d in selected_sub.devices]
+                dev_names = [d.name for d in self._device_choices()]
+                if dev_names:
                     preferred_dev = last_sel.get('device')
                     if last_sel.get('selected_devices'):
                         self._set_selected_devices(last_sel['selected_devices'])
@@ -2345,7 +2465,8 @@ class MainUI:
     def build_last_selection(self):
         """Capture current UI selections; new fields are automatically persisted."""
         data = {
-            'site': self.site_var.get(),
+            'site': self.selected_site_names[0] if self.selected_site_names else '',
+            'selected_sites': list(self.selected_site_names),
             'subsite': self.subsite_var.get(),
             'device': self.selected_device_names[0] if self.selected_device_names else '',
             'procedure': self.proc_var.get(),

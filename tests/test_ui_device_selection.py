@@ -34,12 +34,12 @@ class DeviceSelectionTests(unittest.TestCase):
         subsite = Subsite('sub', self.devices)
         ui.config = SimpleNamespace(sites=[Site('site', [subsite])], data={})
         ui._selected_devices = ()
-        ui.site_var = Value('site')
+        ui._selected_sites = tuple(ui.config.sites)
         ui.subsite_var = Value('sub')
         ui.site_cb = Value()
         ui.subsite_cb = Value()
         ui.device_cb = Value()
-        for name in ('selected_devices_label', 'go_to_device_button', 'set_reference_button'):
+        for name in ('selected_devices_label', 'selected_sites_label', 'go_to_device_button', 'set_reference_button'):
             setattr(ui, name, Mock())
         for name, value in (
             ('proc_var', 'test'), ('set_home_var', False), ('auto_separation_var', True),
@@ -152,7 +152,7 @@ class DeviceSelectionTests(unittest.TestCase):
         with patch.object(self.module.threading, 'Thread',
                           side_effect=lambda target, daemon: SimpleNamespace(start=target)):
             ui.run()
-        self.assertEqual(ui.runner.run_devices.call_args.args[3], self.devices[:2])
+        self.assertEqual([entry[2] for entry in ui.runner.run_queue.call_args.args[1]], self.devices[:2])
         ui.runner.set_subsite_origin.assert_called_once_with(10, 20)
         self.assertIs(ui._confirm_run_alignment.call_args.args[2], self.devices[0])
 
