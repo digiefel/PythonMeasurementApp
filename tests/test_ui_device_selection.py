@@ -63,7 +63,7 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(self.ui.device_cb.get(), 'B, A')
         self.assertIs(self.ui._first_selected_device(), self.devices[0])
         self.ui.go_to_device_button.configure.assert_called_with(text='Go To 1st Device')
-        self.ui.set_reference_button.configure.assert_called_with(text='Align X,Y To 1st Device')
+        self.ui.set_reference_button.configure.assert_called_with(text='Set X,Y To 1st Device')
 
     def test_dropdown_replaces_multi_selection_with_one_device(self):
         self.ui._set_selected_devices({'B', 'A'})

@@ -725,7 +725,7 @@ class MainUI:
         reference_row_frame = ttk.Frame(self.prober_frame)
         reference_row_frame.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         reference_row_frame.grid_columnconfigure(0, weight=1)
-        self.set_reference_button = ttk.Button(reference_row_frame, text="Align coordinates to device", command=self.prober_set_reference)
+        self.set_reference_button = ttk.Button(reference_row_frame, text="Set X,Y To Device", command=self.prober_set_reference)
         self.set_reference_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         attach_tooltip(self.set_reference_button, "First position the probes on the first selected device. Click to align the app’s device coordinates with the current chuck position and enable automatic probing")
         self.set_home_check = ttk.Checkbutton(reference_row_frame, text="", variable=self.set_home_var)
@@ -949,7 +949,7 @@ class MainUI:
         self._update_selected_devices_label()
         multiple = len(self._selected_devices) > 1
         self.go_to_device_button.configure(text="Go To 1st Device" if multiple else "Go To Device")
-        self.set_reference_button.configure(text="Align X,Y To 1st Device" if multiple else "Align coordinates to device")
+        self.set_reference_button.configure(text="Set X,Y To 1st Device" if multiple else "Set X,Y To Device")
 
     def on_device_selected(self, event=None):
         self._set_selected_devices((self.device_cb.get(),))
