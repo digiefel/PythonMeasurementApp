@@ -2,9 +2,10 @@
 Device Selection Dialog
 
 Provides a visual interface for selecting devices on a 2D canvas.
-Supports rectangle selection and Ctrl+click for individual device toggling.
+Supports rectangle selection, Ctrl+click toggling, zooming, and panning.
 """
 
+import sys
 import tkinter as tk
 from tkinter import ttk
 from tooltip_helper import attach_tooltip
@@ -40,6 +41,8 @@ class DeviceSelectionDialog:
         self.margin = 60
         self.point_radius = 8
         self.label_offset = 6
+        self._view = None  # (scale, canvas X offset, canvas Y offset)
+        self._pan_start = None
         
         # Rectangle selection state
         self.drag_start = None
@@ -59,7 +62,7 @@ class DeviceSelectionDialog:
         # Instructions
         instructions = ttk.Label(
             self.dialog,
-            text=self.INSTRUCTIONS,
+            text=self.INSTRUCTIONS + " Scroll to zoom; right- or middle-drag to pan.",
             wraplength=680,
             justify="left"
         )
@@ -87,6 +90,15 @@ class DeviceSelectionDialog:
         # Canvas frame
         canvas_frame = ttk.Frame(self.dialog)
         canvas_frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        navigation = ttk.Frame(canvas_frame)
+        navigation.pack(fill="x", pady=(0, 5))
+        for text, command in (
+            ("Fit View", self._fit_view),
+            ("−", lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1 / 1.2)),
+            ("+", lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1.2)),
+        ):
+            ttk.Button(navigation, text=text, command=command).pack(side="left", padx=(0, 5))
         
         self.canvas = tk.Canvas(
             canvas_frame,
@@ -126,6 +138,14 @@ class DeviceSelectionDialog:
         self.canvas.bind("<Button-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+        for button in (2, 3):
+            self.canvas.bind(f"<Button-{button}>", self._on_pan_start)
+            self.canvas.bind(f"<B{button}-Motion>", self._on_pan_drag)
+            self.canvas.bind(f"<ButtonRelease-{button}>", self._on_pan_end)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         
         # Draw devices
         self._draw_devices()
@@ -133,6 +153,7 @@ class DeviceSelectionDialog:
         
         # Center dialog
         self.dialog.update_idletasks()
+        self._fit_view()
         x = self.parent.winfo_x() + (self.parent.winfo_width() - self.dialog.winfo_width()) // 2
         y = self.parent.winfo_y() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
         self.dialog.geometry(f"+{x}+{y}")
@@ -140,11 +161,8 @@ class DeviceSelectionDialog:
     def _plot_points(self):
         return [(device.x, device.y) for device in self.devices]
 
-    def _calculate_transform(self):
-        """Calculate transformation from device coordinates to canvas coordinates."""
-        if not self.devices:
-            return lambda x, y: (self.canvas_width // 2, self.canvas_height // 2)
-        
+    def _fitted_view(self):
+        """Fit all device bounds and the prober marker to the current canvas."""
         points = self._plot_points()
         xs = [x for x, _ in points]
         ys = [y for _, y in points]
@@ -153,6 +171,8 @@ class DeviceSelectionDialog:
         if self.prober_position:
             xs.append(self.prober_position[0])
             ys.append(self.prober_position[1])
+        if not xs:
+            return 1.0, self.canvas_width / 2, self.canvas_height / 2
         
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
@@ -166,8 +186,8 @@ class DeviceSelectionDialog:
             max_y += 100
         
         # Available drawing area
-        draw_width = self.canvas_width - 2 * self.margin
-        draw_height = self.canvas_height - 2 * self.margin
+        draw_width = max(1, self.canvas_width - 2 * self.margin)
+        draw_height = max(1, self.canvas_height - 2 * self.margin)
         
         # Calculate scale (maintain aspect ratio)
         scale_x = draw_width / (max_x - min_x)
@@ -178,15 +198,82 @@ class DeviceSelectionDialog:
         center_x = (min_x + max_x) / 2
         center_y = (min_y + max_y) / 2
         
-        def transform(x, y):
-            # Transform to canvas coordinates
-            # Invert X: more negative device X -> right side of canvas (prober moves right)
-            # Invert Y: more positive device Y -> bottom of canvas (prober moves down)
-            cx = self.margin + draw_width / 2 - (x - center_x) * scale  # Invert X
-            cy = self.margin + draw_height / 2 + (y - center_y) * scale  # Invert Y
-            return cx, cy
-        
-        return transform
+        return scale, self.canvas_width / 2 + center_x * scale, self.canvas_height / 2 - center_y * scale
+
+    def _calculate_transform(self):
+        """Use the same viewport for drawing and selection hit testing."""
+        if self._view is None:
+            self._view = self._fitted_view()
+        scale, offset_x, offset_y = self._view
+        # Prober axes: negative X goes right; positive Y goes down.
+        return lambda x, y: (offset_x - x * scale, offset_y + y * scale)
+
+    def _cancel_rectangle(self):
+        if self.selection_rect is not None:
+            self.canvas.delete(self.selection_rect)
+        self.selection_rect = None
+        self.drag_start = None
+
+    def _fit_view(self):
+        self._cancel_rectangle()
+        self._view = self._fitted_view()
+        self._draw_devices()
+
+    def _zoom_at(self, x, y, factor):
+        """Zoom around a canvas point, keeping the point under the cursor fixed."""
+        self._calculate_transform()
+        scale, offset_x, offset_y = self._view
+        fit_scale = self._fitted_view()[0]
+        new_scale = max(fit_scale / 20, min(fit_scale * 1000, scale * factor))
+        ratio = new_scale / scale
+        self._cancel_rectangle()
+        self._view = new_scale, x + (offset_x - x) * ratio, y + (offset_y - y) * ratio
+        self._draw_devices()
+
+    def _on_mouse_wheel(self, event):
+        if event.num == 4:
+            steps = 1
+        elif event.num == 5:
+            steps = -1
+        else:
+            steps = event.delta if sys.platform == "darwin" else event.delta / 120
+        if steps:
+            self._zoom_at(event.x, event.y, 1.1 ** max(-10, min(10, steps)))
+        return "break"
+
+    def _on_pan_start(self, event):
+        self._cancel_rectangle()
+        self._pan_start = event.x, event.y
+        self.canvas.configure(cursor="fleur")
+        return "break"
+
+    def _on_pan_drag(self, event):
+        if self._pan_start is not None:
+            self._calculate_transform()
+            scale, offset_x, offset_y = self._view
+            x, y = self._pan_start
+            self._view = scale, offset_x + event.x - x, offset_y + event.y - y
+            self._pan_start = event.x, event.y
+            self._draw_devices()
+        return "break"
+
+    def _on_pan_end(self, event):
+        self._pan_start = None
+        self.canvas.configure(cursor="")
+        return "break"
+
+    def _on_canvas_resize(self, event):
+        if event.width <= 1 or event.height <= 1:
+            return
+        if (event.width, event.height) == (self.canvas_width, self.canvas_height):
+            return
+        self._cancel_rectangle()
+        if self._view is not None:
+            scale, offset_x, offset_y = self._view
+            self._view = (scale, offset_x + (event.width - self.canvas_width) / 2,
+                          offset_y + (event.height - self.canvas_height) / 2)
+        self.canvas_width, self.canvas_height = event.width, event.height
+        self._draw_devices()
     
     def _draw_devices(self):
         """Draw all devices and prober position on canvas."""
@@ -284,6 +371,8 @@ class DeviceSelectionDialog:
     
     def _on_mouse_down(self, event):
         """Handle mouse button press."""
+        if self._pan_start is not None:
+            return
         self.drag_start = (event.x, event.y)
         self.selection_rect = None
     
