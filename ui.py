@@ -80,8 +80,8 @@ class MainUI:
         self.device_selection_button = None
         # Keep CMU mode labels sourced from shared bindings metadata.
         self.cmu_mode_options = [(code, get_cmu_mode_name(code)) for code, _ in B1500_CMU_MEASUREMENT_MODES]
-        # Selected devices for custom runs (device names)
-        self.selected_device_names = set()
+        # One ordered selection shared by the selector, dialog and device actions.
+        self._selected_devices = ()
 
         self.root.title("Python Measurement App")
         for col, weight in enumerate((1, 1)):
@@ -93,7 +93,6 @@ class MainUI:
         # GUI state
         self.site_var = tk.StringVar()
         self.subsite_var = tk.StringVar()
-        self.device_var = tk.StringVar()
         self.devices_csv_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
         self.proc_var = tk.StringVar()
@@ -580,9 +579,10 @@ class MainUI:
 
         device_label = ttk.Label(self.selection_frame, text="Device")
         device_label.grid(row=5, column=0, sticky="w")
-        self.device_cb = ttk.Combobox(self.selection_frame, textvariable=self.device_var)
+        self.device_cb = ttk.Combobox(self.selection_frame, state='readonly')
         self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
-        attach_tooltip(device_label, "Select the device to measure, move to, or use for coordinate alignment.")
+        self.device_cb.bind('<<ComboboxSelected>>', self.on_device_selected)
+        attach_tooltip(device_label, "Select a single device here, or multiple devices in Device Selection. Motion and coordinate alignment use the first selected device.")
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
@@ -714,16 +714,16 @@ class MainUI:
         attach_tooltip(self.light_settings_button, "Set normal and measurement brightness, and enable or disable automatic light adjustment.")
         self.go_to_device_button = ttk.Button(self.prober_frame, text="Go To Device", command=self.prober_go_to_device)
         self.go_to_device_button.grid(row=1, column=0, sticky="ew", padx=4, pady=2)
-        attach_tooltip(self.go_to_device_button, "Move the chuck to the selected device using the current coordinate alignment and temperature compensation.")
+        attach_tooltip(self.go_to_device_button, "Move the chuck to the first selected device using the current coordinate alignment and temperature compensation.")
         reference_row_frame = ttk.Frame(self.prober_frame)
         reference_row_frame.grid(row=1, column=1, sticky="ew", padx=2, pady=2)
         reference_row_frame.grid_columnconfigure(0, weight=1)
         self.set_reference_button = ttk.Button(reference_row_frame, text="Align coordinates to device", command=self.prober_set_reference)
         self.set_reference_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        attach_tooltip(self.set_reference_button, "First position the probes on the selected device. Click to align the app’s device coordinates with the current chuck position and enable automatic probing")
+        attach_tooltip(self.set_reference_button, "First position the probes on the first selected device. Click to align the app’s device coordinates with the current chuck position and enable automatic probing")
         self.set_home_check = ttk.Checkbutton(reference_row_frame, text="", variable=self.set_home_var)
         self.set_home_check.grid(row=0, column=1, sticky="w")
-        attach_tooltip(self.set_home_check, "Perform coordinate alignment every time a run is started, using the currently selected device.")
+        attach_tooltip(self.set_home_check, "Perform coordinate alignment every time a run is started, using the first selected device.")
         self.read_position_button = ttk.Button(self.prober_frame, text="Read Position", command=self.read_position)
         self.read_position_button.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
         attach_tooltip(self.read_position_button, "Read the current chuck X/Y position in micrometres.")
@@ -785,7 +785,7 @@ class MainUI:
             self.devices_csv_var.set(self.config.devices_csv_path)
             self.log(f"Failed to load devices CSV '{target}': {e}")
             return
-        self.selected_device_names.clear()
+        self._set_selected_devices(())
         self._refresh_devices_csv_options()
         self.populate_sites()
         self.log(f"Loaded devices CSV: {self.config.devices_csv_path}")
@@ -836,11 +836,9 @@ class MainUI:
         if not site_names:
             self.site_var.set('')
             self.subsite_var.set('')
-            self.device_var.set('')
             self.subsite_cb['values'] = []
             self.device_cb['values'] = []
-            self.selected_device_names.clear()
-            self._update_selected_devices_label()
+            self._set_selected_devices(())
             return
         current = self.site_var.get()
         self.site_var.set(current if current in site_names else site_names[0])
@@ -852,14 +850,14 @@ class MainUI:
             self.subsite_cb['values'] = []
             self.device_cb['values'] = []
             self.subsite_var.set('')
-            self.device_var.set('')
+            self._set_selected_devices(())
             return
         subsite_names = [sub.name for sub in site.subsites]
         self.subsite_cb['values'] = subsite_names
         if not subsite_names:
             self.device_cb['values'] = []
             self.subsite_var.set('')
-            self.device_var.set('')
+            self._set_selected_devices(())
             return
         current = self.subsite_var.get()
         self.subsite_var.set(current if current in subsite_names else subsite_names[0])
@@ -870,18 +868,37 @@ class MainUI:
         subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
         if not subsite:
             self.device_cb['values'] = []
-            self.device_var.set('')
+            self._set_selected_devices(())
             return
         device_names = [d.name for d in subsite.devices]
         self.device_cb['values'] = device_names
         if device_names:
-            current = self.device_var.get()
-            self.device_var.set(current if current in device_names else device_names[0])
+            current = self.selected_device_names[0] if self.selected_device_names else None
+            self._set_selected_devices((current if current in device_names else device_names[0],))
         else:
-            self.device_var.set('')
-        # Clear selected devices when subsite changes
-        self.selected_device_names.clear()
+            self._set_selected_devices(())
+
+    @property
+    def selected_device_names(self):
+        return tuple(device.name for device in self._selected_devices)
+
+    def _set_selected_devices(self, names):
+        """Set the selection in subsite order and render all selection controls."""
+        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
+        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
+        names = set(names)
+        self._selected_devices = tuple(d for d in subsite.devices if d.name in names) if subsite else ()
+        self.device_cb.set(', '.join(self.selected_device_names))
         self._update_selected_devices_label()
+        multiple = len(self._selected_devices) > 1
+        self.go_to_device_button.configure(text="Go To 1st Device" if multiple else "Go To Device")
+        self.set_reference_button.configure(text="Align X,Y To 1st Device" if multiple else "Align coordinates to device")
+
+    def on_device_selected(self, event=None):
+        self._set_selected_devices((self.device_cb.get(),))
+
+    def _first_selected_device(self):
+        return self._selected_devices[0] if self._selected_devices else None
 
     def _update_selected_devices_label(self):
         """Update the label showing how many devices are selected."""
@@ -905,7 +922,7 @@ class MainUI:
             return
         
         # Get currently selected device (used for origin if "set subsite origin" is checked)
-        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        device = self._first_selected_device()
         set_home_checked = self.set_home_var.get()
         
         # Get current prober position
@@ -961,10 +978,9 @@ class MainUI:
         
         result = dialog.show()
         if result is not None:
-            self.selected_device_names = result
-            self._update_selected_devices_label()
+            self._set_selected_devices(result)
             if len(result) > 0:
-                self.log(f"Selected {len(result)} device(s): {', '.join(sorted(result))}")
+                self.log(f"Selected {len(self._selected_devices)} device(s): {', '.join(self.selected_device_names)}")
 
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
@@ -1661,7 +1677,8 @@ class MainUI:
         if subsite is None:
             self.log("Select a valid subsite before running.")
             return
-        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None)
+        devices_to_run = list(self._selected_devices)
+        device = self._first_selected_device()
         if device is None:
             self.log("Select a valid device before running.")
             return
@@ -1682,13 +1699,6 @@ class MainUI:
         self.config.data['last_selection'] = self.build_last_selection()
         set_home = self.set_home_var.get()
         self.runner.auto_separation_after_measurement = bool(self.auto_separation_var.get())
-        
-        # Determine which devices to run (always a list)
-        if self.selected_device_names:
-            # Use selected devices (in their original order from subsite)
-            devices_to_run = [d for d in subsite.devices if d.name in self.selected_device_names]
-        else:
-            devices_to_run = [device]
         
         device_count = len(devices_to_run)
         if self._run_thread and self._run_thread.is_alive():
@@ -1857,9 +1867,7 @@ class MainUI:
     def prober_set_reference(self):
         if not self.prober_available:
             return
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
-        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        device = self._first_selected_device()
         if not device:
             self.log("Select site, subsite, and device before setting reference.")
             return
@@ -1876,9 +1884,7 @@ class MainUI:
     def prober_go_to_device(self):
         if not self.prober_available:
             return
-        site = next((s for s in self.config.sites if s.name == self.site_var.get()), None)
-        subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None) if site else None
-        device = next((d for d in subsite.devices if d.name == self.device_var.get()), None) if subsite else None
+        device = self._first_selected_device()
         if not device:
             self.log("Select site, subsite, and device before moving.")
             return
@@ -2314,16 +2320,20 @@ class MainUI:
                 if selected_sub and selected_sub.devices:
                     dev_names = [d.name for d in selected_sub.devices]
                     preferred_dev = last_sel.get('device')
-                    self.device_var.set(preferred_dev if preferred_dev in dev_names else dev_names[0])
+                    if last_sel.get('selected_devices'):
+                        self._set_selected_devices(last_sel['selected_devices'])
+                    elif preferred_dev in dev_names:
+                        self._set_selected_devices((preferred_dev,))
+                    elif 'selected_devices' in last_sel and not preferred_dev:
+                        self._set_selected_devices(())
+                    else:
+                        self._set_selected_devices((dev_names[0],))
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'auto_separation_after_measurement' in last_sel:
             self.auto_separation_var.set(bool(last_sel['auto_separation_after_measurement']))
         if 'chip' in last_sel:
             self.chip_var.set(last_sel['chip'])
-        if 'selected_devices' in last_sel:
-            self.selected_device_names = set(last_sel['selected_devices'])
-            self._update_selected_devices_label()
         if 'temp_comp_x_um_per_c' in last_sel:
             self.temp_comp_x_var.set(str(last_sel.get('temp_comp_x_um_per_c', '0.0')))
         if 'temp_comp_y_um_per_c' in last_sel:
@@ -2337,7 +2347,7 @@ class MainUI:
         data = {
             'site': self.site_var.get(),
             'subsite': self.subsite_var.get(),
-            'device': self.device_var.get(),
+            'device': self.selected_device_names[0] if self.selected_device_names else '',
             'procedure': self.proc_var.get(),
             'set_home_before_run': self.set_home_var.get(),
             'auto_separation_after_measurement': self.auto_separation_var.get(),
