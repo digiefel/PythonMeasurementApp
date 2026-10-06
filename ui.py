@@ -528,7 +528,7 @@ class MainUI:
         self.selection_temp_frame = ttk.Frame(self.root)
         self.selection_temp_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         self.selection_temp_frame.grid_rowconfigure(0, weight=3)
-        self.selection_temp_frame.grid_rowconfigure(1, weight=1)
+        self.selection_temp_frame.grid_rowconfigure(2, weight=1)
         self.selection_temp_frame.grid_columnconfigure(0, weight=1)
 
         self.selection_frame = ttk.LabelFrame(self.selection_temp_frame, text="Selection")
@@ -565,7 +565,6 @@ class MainUI:
         output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
         output_browse_button.grid(row=0, column=1, sticky="ew")
         attach_tooltip(output_browse_button, "Browse for a folder to save measurement results.")
-        ttk.Button(output_frame, text="Data Management…", command=self.open_data_management).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(3, 0))
 
         site_label = ttk.Label(self.selection_frame, text="Site")
         site_label.grid(row=3, column=0, sticky="w")
@@ -656,8 +655,13 @@ class MainUI:
         self._progress_label.grid(row=1, column=0, sticky="ew")
         attach_tooltip(self._progress_label, "Shows how many devices have been processed and estimates the time remaining.")
 
-        # Temperature controls (separate section below Selection)
+        ttk.Button(self.selection_temp_frame, text="Data Management…", command=self.open_data_management).grid(
+            row=1, column=0, sticky="ew", pady=(6, 0),
+        )
+
+        # Temperature controls (below the standalone data-management button)
         self.temp_ui.build_panel(self.selection_temp_frame)
+        self.temp_ui.temp_frame.grid_configure(row=2)
 
         # Procedure settings section
         self.procedure_settings_frame = ttk.LabelFrame(self.root, text="Procedure Settings")

@@ -1,7 +1,7 @@
 # Data management
 
-Open **Data Management…** beside the output-directory setting. The browser uses
-that directory as its data source; changing chips in the browser does not change
+Open **Data Management…** between the Selection and Temperature sections. The browser uses
+the selected output directory as its data source; changing chips in the browser does not change
 the chip or site selected for a measurement run.
 
 The left two-thirds show the whole sample using the loaded `devices.csv`, with a
