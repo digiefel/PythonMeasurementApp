@@ -256,6 +256,7 @@ class SiteMapTests(unittest.TestCase):
         dialog.prober_position = None
         dialog.canvas_width, dialog.canvas_height, dialog.margin = 700, 500, 60
         dialog._view = None
+        dialog._annotation_window = None
         dialog.point_radius = 8
         dialog.device_items = {}
         dialog.canvas = Mock()

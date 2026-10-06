@@ -58,6 +58,7 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 
 ## Documentation
 
+- **Data management:** [browse measurements, edit device notes/status, and correct assignments](docs/data_management.md).
 - **Setting tooltips:** hover over a setting for the explanation declared beside
   its parameter in the procedure source.
 - **Procedure implementation:** docstrings and comments in [procedures/](procedures/)

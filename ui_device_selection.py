@@ -9,6 +9,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk
 from tooltip_helper import attach_tooltip
+from data_management import STATUS_COLORS
 
 
 class DeviceSelectionDialog:
@@ -19,13 +20,14 @@ class DeviceSelectionDialog:
     SELECT_ALL_TOOLTIP = "Select every device in this subsite."
     MANUAL_TOOLTIP = "Select devices to position manually. The app asks you to position each one before measuring it."
     
-    def __init__(self, parent, devices, prober_position=None, initially_selected=None):
+    def __init__(self, parent, devices, prober_position=None, initially_selected=None, annotations=None):
         """
         Args:
             parent: Parent tk window
             devices: List of Device objects with .name, .x, .y attributes
             prober_position: Tuple (x, y) of current prober position, or None
             initially_selected: Set of device names that should be pre-selected
+            annotations: Optional name-to-status/details mapping from device notes
         """
         self.parent = parent
         self.devices = [device for device in devices if device.x is not None and device.y is not None]
@@ -34,6 +36,8 @@ class DeviceSelectionDialog:
         self.prober_position = prober_position
         self.selected_devices = set(initially_selected) if initially_selected else set()
         self.result = None  # Will be set to the selected device names on OK
+        self.annotations = annotations or {}
+        self._annotation_window = None
         
         # Canvas parameters
         self.canvas_width = 700
@@ -134,7 +138,20 @@ class DeviceSelectionDialog:
         ok_button.pack(side="right", padx=5)
         attach_tooltip(ok_button, f"Use the selected {self.ITEM_KIND}s for the next run.")
         
-        # Bind events
+        self._bind_canvas_events()
+
+        # Draw devices
+        self._draw_devices()
+        self._update_selection_label()
+
+        # Center dialog
+        self.dialog.update_idletasks()
+        self._fit_view()
+        x = self.parent.winfo_x() + (self.parent.winfo_width() - self.dialog.winfo_width()) // 2
+        y = self.parent.winfo_y() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+
+    def _bind_canvas_events(self):
         self.canvas.bind("<Button-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
@@ -146,17 +163,7 @@ class DeviceSelectionDialog:
             self.canvas.bind(f"<B{button}-Motion>", self._on_pan_drag)
             self.canvas.bind(f"<ButtonRelease-{button}>", self._on_pan_end)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
-        
-        # Draw devices
-        self._draw_devices()
-        self._update_selection_label()
-        
-        # Center dialog
-        self.dialog.update_idletasks()
-        self._fit_view()
-        x = self.parent.winfo_x() + (self.parent.winfo_width() - self.dialog.winfo_width()) // 2
-        y = self.parent.winfo_y() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
-        self.dialog.geometry(f"+{x}+{y}")
+        self.canvas.bind("<Destroy>", lambda event: self._hide_annotation(), add="+")
     
     def _plot_points(self):
         return [(device.x, device.y) for device in self.devices]
@@ -277,6 +284,7 @@ class DeviceSelectionDialog:
     
     def _draw_devices(self):
         """Draw all devices and prober position on canvas."""
+        self._hide_annotation()
         self.canvas.delete("all")
         self.device_items.clear()
         
@@ -321,19 +329,41 @@ class DeviceSelectionDialog:
     def _draw_device(self, device, transform):
         cx, cy = transform(device.x, device.y)
         selected = device.name in self.selected_devices
+        annotation = self.annotations.get(device.name, {})
+        status = annotation.get('status', '')
+        color = STATUS_COLORS.get(status, 'black')
         oval_id = self.canvas.create_oval(
             cx - self.point_radius, cy - self.point_radius,
             cx + self.point_radius, cy + self.point_radius,
-            fill="dodgerblue" if selected else "black",
-            outline="blue" if selected else "black", width=2,
+            fill=color if status else ("dodgerblue" if selected else "black"),
+            outline="blue" if selected else color, width=3 if selected else 2,
             tags=("device", device.name),
         )
         text_id = self.canvas.create_text(
             cx + self.label_offset, cy - self.label_offset,
-            text=device.name, anchor="sw", font=("TkDefaultFont", 8),
+            text=getattr(device, 'display_name', device.name) + (f' [{status}]' if status else '')
+                 + (' *' if annotation.get('has_notes') else ''),
+            anchor="sw", font=("TkDefaultFont", 8),
             fill="darkblue" if selected else "black", tags=("device_label", device.name),
         )
+        if annotation.get('details'):
+            for item in (oval_id, text_id):
+                self.canvas.tag_bind(item, '<Enter>', lambda event, text=annotation['details']: self._show_annotation(event, text))
+                self.canvas.tag_bind(item, '<Leave>', lambda event: self._hide_annotation())
         return oval_id, text_id
+
+    def _show_annotation(self, event, text):
+        self._hide_annotation()
+        self._annotation_window = window = tk.Toplevel(self.canvas)
+        window.wm_overrideredirect(True)
+        window.geometry(f'+{event.x_root + 12}+{event.y_root + 12}')
+        tk.Label(window, text=text, justify='left', wraplength=400,
+                 background='#ffffe0', relief='solid', borderwidth=1, padx=5, pady=5).pack()
+
+    def _hide_annotation(self):
+        if self._annotation_window is not None:
+            self._annotation_window.destroy()
+            self._annotation_window = None
 
     def _contains_point(self, device, transform, x, y):
         cx, cy = transform(device.x, device.y)
@@ -344,11 +374,13 @@ class DeviceSelectionDialog:
         if device_name not in self.device_items:
             return
         oval_id, text_id = self.device_items[device_name]
-        fill_color = "dodgerblue" if selected else "black"
-        outline_color = "blue" if selected else "black"
+        status = self.annotations.get(device_name, {}).get('status', '')
+        color = STATUS_COLORS.get(status, 'black')
+        fill_color = color if status else ("dodgerblue" if selected else "black")
+        outline_color = "blue" if selected else color
         text_color = "darkblue" if selected else "black"
         
-        self.canvas.itemconfig(oval_id, fill=fill_color, outline=outline_color)
+        self.canvas.itemconfig(oval_id, fill=fill_color, outline=outline_color, width=3 if selected else 2)
         self.canvas.itemconfig(text_id, fill=text_color)
     
     def _update_selection_label(self):

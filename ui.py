@@ -14,6 +14,7 @@ from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
 from ui_site_selection import SiteSelectionDialog
 from ui_light_settings import show_light_settings
+from data_management import selection_annotations
 
 from config import Config
 from models import has_position
@@ -73,6 +74,7 @@ class MainUI:
         self.runner.light_state_callback = lambda state: self._post(self._set_light_state, state)
         self._run_thread = None
         self._running = False
+        self._data_manager = None
         self._connection_busy = False
         self._connection_thread = None
         self._closing = False
@@ -563,6 +565,7 @@ class MainUI:
         output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
         output_browse_button.grid(row=0, column=1, sticky="ew")
         attach_tooltip(output_browse_button, "Browse for a folder to save measurement results.")
+        ttk.Button(output_frame, text="Data Management…", command=self.open_data_management).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(3, 0))
 
         site_label = ttk.Label(self.selection_frame, text="Site")
         site_label.grid(row=3, column=0, sticky="w")
@@ -1003,12 +1006,22 @@ class MainUI:
             except Exception as e:
                 self.log(f"Could not read prober position: {e}")
         
+        annotations = {}
+        try:
+            annotations = selection_annotations(
+                self.config.data.get('output_dir', ''), self.chip_var.get().strip(),
+                self._selected_sites, self.subsite_var.get(), [device.name for device in devices],
+            )
+        except (OSError, ValueError, UnicodeError) as exc:
+            messagebox.showwarning('Device notes', f'Could not read device notes:\n{exc}')
+
         # Open the dialog
         dialog = DeviceSelectionDialog(
             self.root,
             devices,
             prober_position=prober_pos,
-            initially_selected=self.selected_device_names
+            initially_selected=self.selected_device_names,
+            annotations=annotations,
         )
         dialog.refresh_button.configure(state=tk.NORMAL if self.prober_available else tk.DISABLED)
         
@@ -1038,6 +1051,25 @@ class MainUI:
             self._set_selected_devices(result)
             if len(result) > 0:
                 self.log(f"Selected {len(self._selected_devices)} device(s): {', '.join(self.selected_device_names)}")
+
+    def open_data_management(self):
+        """Browse the selected output directory without changing the measurement context."""
+        if not self.update_output_dir_from_ui():
+            return
+        if self._data_manager is not None and self._data_manager.window.winfo_exists():
+            if os.path.abspath(str(self._data_manager.data_root)) == os.path.abspath(self.config.data['output_dir']):
+                self._data_manager.sites = self.config.sites
+                self._data_manager.refresh()
+                self._data_manager.window.lift()
+                self._data_manager.window.focus_set()
+                return
+            if not self._data_manager.close():
+                return
+        from ui_data_management import DataManagementWindow
+        self._data_manager = DataManagementWindow(
+            self.root, self.config.data['output_dir'], self.config.sites,
+            chip=self.chip_var.get().strip(), is_running=self._is_running,
+        )
 
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
@@ -2396,6 +2428,9 @@ class MainUI:
 
     # Temperature UI logic is encapsulated in TemperatureUI (ui_temperature.py)
     def _on_close(self):
+        if self._data_manager is not None and self._data_manager.window.winfo_exists():
+            if not self._data_manager.close():
+                return
         self._closing = True
         self.root.withdraw()
         self.temp_ui.stop_run()

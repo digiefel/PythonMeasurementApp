@@ -17,6 +17,7 @@ class DeviceCanvasTests(unittest.TestCase):
         }):
             cls.module = importlib.import_module('ui_device_selection')
             cls.site_module = importlib.import_module('ui_site_selection')
+            cls.sample_module = importlib.import_module('ui_sample_view')
 
     def setUp(self):
         self.dialog = self.module.DeviceSelectionDialog.__new__(self.module.DeviceSelectionDialog)
@@ -30,6 +31,8 @@ class DeviceCanvasTests(unittest.TestCase):
         self.dialog.device_items = {}
         self.dialog.prober_position = None
         self.dialog.manual_list = None
+        self.dialog.annotations = {}
+        self.dialog._annotation_window = None
         self.dialog.canvas = Mock()
         self.dialog.selection_label = Mock()
 
@@ -172,6 +175,42 @@ class DeviceCanvasTests(unittest.TestCase):
         calls = dialog.canvas.create_rectangle.call_args_list
         self.assertEqual(calls[0].args, dialog._canvas_bounds(item.bounds, transform))
         self.assertEqual(calls[1].args, dialog._canvas_bounds(item.selected_bounds, transform, padding=1))
+
+    def test_status_colors_survive_selection_and_notes_have_a_visible_marker(self):
+        dialog = self.dialog
+        dialog.annotations = {'B': {'status': 'Bad', 'details': 'leaky', 'has_notes': True}}
+        dialog._draw_devices()
+        marker = dialog.canvas.create_oval.call_args_list[1]
+        label = dialog.canvas.create_text.call_args_list[3]
+        self.assertEqual(marker.kwargs['fill'], 'firebrick')
+        self.assertEqual(marker.kwargs['outline'], 'blue')
+        self.assertEqual(label.kwargs['text'], 'B [Bad] *')
+        dialog._update_device_appearance('B', False)
+        self.assertEqual(dialog.canvas.itemconfig.call_args_list[-2].kwargs['fill'], 'firebrick')
+        self.assertEqual(dialog.canvas.itemconfig.call_args_list[-2].kwargs['outline'], 'firebrick')
+        for status, color in (('Good', 'forestgreen'), ('OK', 'gold')):
+            dialog.annotations['B']['status'] = status
+            dialog._draw_devices()
+            self.assertEqual(dialog.canvas.create_oval.call_args_list[-2].kwargs['fill'], color)
+
+    def test_sample_map_context_click_is_distinct_from_panning(self):
+        dialog = self.dialog
+        dialog.__class__ = self.sample_module.SampleMap
+        dialog.devices = [SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
+                                           identity=SimpleNamespace(site='S'))]
+        dialog.selected_devices = set()
+        dialog.on_context = Mock()
+        dialog._context_start = None
+        dialog._draw_devices()
+        x, y = dialog._calculate_transform()(0, 0)
+        dialog._on_pan_start(SimpleNamespace(x=x, y=y))
+        dialog._on_pan_end(SimpleNamespace(x=x, y=y))
+        self.assertEqual(dialog.on_context.call_args.args[0], 'device')
+        dialog.on_context.reset_mock()
+        dialog._on_pan_start(SimpleNamespace(x=x, y=y))
+        dialog._on_pan_drag(SimpleNamespace(x=x + 30, y=y + 20))
+        dialog._on_pan_end(SimpleNamespace(x=x + 30, y=y + 20))
+        dialog.on_context.assert_not_called()
 
 
 if __name__ == '__main__':

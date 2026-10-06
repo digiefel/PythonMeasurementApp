@@ -1,0 +1,94 @@
+# Data management
+
+Open **Data Management…** beside the output-directory setting. The browser uses
+that directory as its data source; changing chips in the browser does not change
+the chip or site selected for a measurement run.
+
+The left two-thirds show the whole sample using the loaded `devices.csv`, with a
+searchable chip picker in the top-left. Sites have dashed boundaries. Scroll to
+zoom, right- or middle-drag to pan, and use **Fit View** to restore the overview.
+Click or drag to select devices; Ctrl+Click toggles individual devices. A blue
+outline indicates selection. With no devices selected, the gallery shows the
+whole chip's measurements.
+
+If any device is missing from the layout or lacks absolute coordinates, the map
+is replaced by a list with Site, Subsite, Device, and Status columns. This includes
+devices found in saved data that are absent from `devices.csv`. You can also choose
+**List View** when all coordinates are available.
+
+## Device notes and status
+
+Select one device to edit its notes and assessment. The optional assessments are
+**Good** (green), **OK** (yellow), and **Bad** (red); **Clear** removes the assessment.
+These assessments are independent of the tags in `devices.csv`, which this
+feature does not change. An assessment does not exclude a device from measurement.
+
+Notes are saved automatically shortly after editing, when the editor loses focus,
+and before changing selections, opening artifacts, applying corrections, or closing.
+If saving fails, the unsaved text stays in the editor and selection changes and
+closing are blocked until it can be saved.
+
+Each physical device uses an ordinary text file:
+
+```text
+<output directory>/<chip>/<site>/<subsite>/<device>/notes.txt
+```
+
+```text
+Status: Bad
+
+Leaky after the last fatigue run.
+```
+
+Existing notes without a recognized first `Status:` line are kept as free text.
+The status can also be recorded before taking any measurements.
+
+The regular **Device Selection…** dialog reads the same notes and assessments.
+Status labels and colors appear on its markers, and an asterisk indicates notes;
+hover to read them. If several selected sites have different assessments for the
+same device name, the label says **Mixed**, and hovering shows each site's status.
+
+## Measurement gallery
+
+The right-hand gallery shows saved plot thumbnails, procedure, timestamp, and
+device path, newest first. A plain click selects a measurement and opens its plot
+in the associated image application. Ctrl+Click (or Command+Click on macOS) toggles
+selection; Shift+Click selects a range. Ctrl+A or Command+A selects the gallery.
+The gallery is paginated to avoid loading every image into memory.
+
+Right-click a measurement for **Open Data**, **Open Plot**, or
+**Correct Assignment…**. A WGFMU sampling run's combination CSVs and shared plot
+are treated as one measurement, so they move together.
+
+A warning popup reports missing identity metadata or disagreements between a
+CSV's Chip/Site/Subsite/Device header and its containing directory. Warnings are
+shown together and do not repeat for every click; **Show Warning…** reopens the
+details from a measurement's context menu.
+
+## Correcting an assignment
+
+Use **Correct Assignment…** for selected gallery measurements. For whole folders,
+use **Correct Selected Device Folders…**, right-click a device or site on the map
+or list, or right-click a chip in the chip picker. Chip, site, subsite, and device
+folder scopes are supported.
+
+Enter the correct Chip, Site, Subsite, or Device names. Blank fields retain each
+file's existing directory identity. **Preview Changes** lists the destination of
+every file and the corrected identity for each CSV header. Editing a field
+invalidates that preview; **Apply Changes** becomes available after previewing.
+Keeping the fields unchanged also repairs mismatched or missing CSV headers.
+
+Corrections change the identity prefix of standard measurement filenames while
+preserving timestamps, temperature, procedure names, and combination suffixes.
+Data and plots are kept together. Other CSV metadata and numeric data are preserved.
+Unrecognized filenames are retained, with their destination visible in the preview.
+
+Whole-folder corrections include `notes.txt` and other device-folder contents.
+Correcting individual measurements leaves the notes attached to their original
+device. Existing destinations and collisions within a batch are rejected; files
+are never silently overwritten. Changed source files invalidate the preview.
+Corrections stage originals and restore them if an operation fails. If recovery
+itself fails, the error gives the location of the retained originals.
+
+File correction is unavailable during a measurement run. No extra pre-run
+chip/site reminder is added.
