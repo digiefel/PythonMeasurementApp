@@ -178,7 +178,7 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._draw_devices()
         calls = dialog.canvas.create_rectangle.call_args_list
         self.assertEqual(calls[0].args, dialog._canvas_bounds(item.bounds, transform))
-        self.assertEqual(calls[1].args, dialog._canvas_bounds(item.selected_bounds, transform, padding=1))
+        self.assertEqual(calls[1].args, dialog._canvas_bounds(item.selected_bounds, transform, padding=16))
 
     def test_status_colors_survive_selection_and_notes_have_a_visible_marker(self):
         dialog = self.dialog
@@ -253,6 +253,36 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._fit_view()
         self.assertTrue(all(label is None for _, label in dialog.device_items.values()))
         self.assertEqual(marker_ids, {name: marker for name, (marker, _) in dialog.device_items.items()})
+
+    def test_sample_site_box_and_padding_scale_together_when_zooming_out(self):
+        dialog = self.make_sample_map([
+            SimpleNamespace(name=f'S/Sub/{x}', display_name=f'Sub/{x}', x=x, y=x,
+                            identity=SimpleNamespace(site='S', subsite='Sub'))
+            for x in (0, 1000)])
+        dialog.canvas.create_rectangle.side_effect = range(1, 100)
+        dialog._draw_devices()
+        before = dialog.site_bounds['S']
+        dialog._zoom_at(350, 250, 0.25)
+        after = dialog.site_bounds['S']
+        for i, (old, new) in enumerate(zip(before, after)):
+            anchor = 350 if i % 2 == 0 else 250
+            self.assertAlmostEqual(new - anchor, (old - anchor) * 0.25)
+        box_id = dialog._site_items['S'][0]
+        drawn = [call.args[1:] for call in dialog.canvas.coords.call_args_list if call.args[0] == box_id]
+        self.assertEqual(drawn[-1], after)
+        self.assertAlmostEqual(after[0], dialog._calculate_transform()(1000, 0)[0] - 64 * dialog._view[0])
+
+    def test_site_selection_outer_and_selected_boxes_scale_together(self):
+        bounds = (0, 0, 1000, 500)
+        for padding in (64, 16):
+            with self.subTest(padding=padding):
+                first = self.site_module.SiteSelectionDialog._canvas_bounds(
+                    bounds, lambda x, y: (350 - x * 0.2, 250 + y * 0.2), padding)
+                second = self.site_module.SiteSelectionDialog._canvas_bounds(
+                    bounds, lambda x, y: (350 - x * 0.05, 250 + y * 0.05), padding)
+                for i, (old, new) in enumerate(zip(first, second)):
+                    anchor = 350 if i % 2 == 0 else 250
+                    self.assertAlmostEqual(new - anchor, (old - anchor) * 0.25)
 
     def test_sample_pan_moves_site_context_bounds_without_recreating_canvas_items(self):
         dialog = self.make_sample_map([SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,

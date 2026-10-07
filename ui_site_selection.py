@@ -56,10 +56,11 @@ class SiteSelectionDialog(DeviceSelectionDialog):
                 for point in ((item.bounds[0], item.bounds[1]), (item.bounds[2], item.bounds[3]))]
 
     @staticmethod
-    def _canvas_bounds(bounds, transform, padding=4):
-        x0, y0 = transform(bounds[0], bounds[1])
-        x1, y1 = transform(bounds[2], bounds[3])
-        return min(x0, x1) - padding, min(y0, y1) - padding, max(x0, x1) + padding, max(y0, y1) + padding
+    def _canvas_bounds(bounds, transform, padding=64):
+        # Pad in sample coordinates so the entire box scales with zoom.
+        x0, y0 = transform(bounds[0] - padding, bounds[1] - padding)
+        x1, y1 = transform(bounds[2] + padding, bounds[3] + padding)
+        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
     def _draw_device(self, item, transform):
         selected = item.name in self.selected_devices
@@ -71,7 +72,7 @@ class SiteSelectionDialog(DeviceSelectionDialog):
         )
         if item.selected_bounds is not None:
             self.canvas.create_rectangle(
-                *self._canvas_bounds(item.selected_bounds, transform, padding=1),
+                *self._canvas_bounds(item.selected_bounds, transform, padding=16),
                 outline="forestgreen", width=2, dash=(4, 3),
                 tags=('map_content',),
             )

@@ -107,10 +107,11 @@ class SampleMap(DeviceSelectionDialog):
         self.canvas.tk.call('::pma_map_positions', str(self.canvas), tuple(positions), tuple(labels))
         self._refresh_manual_list()
         self.site_bounds = {}
+        padding = 64 * scale  # A fixed margin in sample coordinates, not screen pixels.
         for site, points in sites.items():
             xs, ys = zip(*points)
             left, top, right, bottom = min(xs), min(ys), max(xs), max(ys)
-            self.site_bounds[site] = left - 18, top - 35, right + 18, bottom + 18
+            self.site_bounds[site] = (left - padding, top - padding, right + padding, bottom + padding)
             if site not in self._site_items:
                 box = self.canvas.create_rectangle(0, 0, 0, 0, outline='gray75', dash=(3, 3),
                                                    tags=('map_content', 'site_box', site))
@@ -120,9 +121,9 @@ class SampleMap(DeviceSelectionDialog):
                                                            tags=('map_content',))
                 self._site_items[site] = box, label, background
             box, label, background = self._site_items[site]
-            self.canvas.coords(box, left - 18, top - 25, right + 18, bottom + 18)
+            self.canvas.coords(box, *self.site_bounds[site])
             self.canvas.tag_lower(box)
-            self.canvas.coords(label, left - 15, top - 28)
+            self.canvas.coords(label, left - padding, top - padding - 3)
             bounds = self.canvas.bbox(label)
             if bounds:
                 x0, y0, x1, y1 = bounds
