@@ -66,6 +66,7 @@ class SampleMap(DeviceSelectionDialog):
     def _initial_fit(self):
         self._fit_job = None
         self._fit_view()
+        self.canvas.focus_set()
 
     def _on_destroy(self, event):
         if event.widget == self.frame:
@@ -306,6 +307,11 @@ class SampleMap(DeviceSelectionDialog):
         super()._update_selection_label()
         self._draw_devices()
         self.on_select(set(self.selected_devices))
+
+    def _on_arrow_key(self, event):
+        result = super()._on_arrow_key(event)
+        self._draw_devices()
+        return result
 
     def _on_pan_start(self, event):
         self._context_start = event.x, event.y

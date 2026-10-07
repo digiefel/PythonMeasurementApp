@@ -75,6 +75,21 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog.canvas.create_oval.assert_not_called()
         dialog.canvas.delete.assert_not_called()
 
+    def test_arrow_keys_pan_viewport_preserving_zoom_and_selection(self):
+        dialog = self.dialog
+        dialog._view = (0.5, 350, 250)
+        for key, state, dx, dy in (('Left', 0, 40, 0), ('Right', 0, -40, 0),
+                                   ('Up', 0, 0, 40), ('Down', 0, 0, -40), ('Right', 1, -160, 0)):
+            with self.subTest(key=key, shift=bool(state)):
+                before = dialog._view
+                dialog.drag_start, dialog.selection_rect = (0, 0), 42
+                self.assertEqual(dialog._on_arrow_key(SimpleNamespace(keysym=key, state=state)), 'break')
+                self.assertEqual(dialog._view, (before[0], before[1] + dx, before[2] + dy))
+                self.assertEqual(dialog.selected_devices, {'B'})
+                self.assertIsNone(dialog.drag_start)
+                self.assertIsNone(dialog.selection_rect)
+        dialog.canvas.create_oval.assert_not_called()
+
     def test_click_and_ctrl_click_hit_device_after_navigation(self):
         self.navigate()
         dialog = self.dialog
@@ -284,6 +299,22 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._on_double_click(SimpleNamespace(x=300, y=250))
         self.assertTrue(dialog._visible_locations)
         self.assertEqual(dialog.selected_devices, {item.name for item in items})
+
+    def test_keyboard_pan_refreshes_visibility_and_merged_location_hit_testing(self):
+        items = [SimpleNamespace(name=f'S/{sub}/A', x=0, y=0,
+                                 identity=SimpleNamespace(site='S', subsite=sub, device='A'))
+                 for sub in ('FeCap', 'FeCapBD')]
+        dialog = self.make_sample_map(items)
+        dialog._view = (2, -80, 250)
+        dialog._draw_devices()
+        self.assertFalse(dialog._visible_locations)
+        dialog._on_arrow_key(SimpleNamespace(keysym='Left', state=1))
+        self.assertEqual(dialog._view, (2, 80, 250))
+        target = dialog._target_at(80, 250)
+        self.assertEqual(target.names, {item.name for item in items})
+        self.assertTrue(dialog._visible_locations)
+        self.assertEqual(dialog.selected_devices, set())
+        self.assertFalse(dialog.on_context.called)
 
     def test_sample_site_box_and_padding_scale_together_when_zooming_out(self):
         dialog = self.make_sample_map([

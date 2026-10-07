@@ -8,7 +8,8 @@ The left two-thirds show the whole sample using the loaded `devices.csv`, with a
 searchable chip picker in the top-left. The overview shows filled site boxes.
 Scroll to reveal subsite outlines, then device markers and their details as space
 permits. Double-click a region to zoom to it, right- or middle-drag to pan, and use
-**Fit View** to restore the overview. Hidden and off-screen devices do not receive
+**Fit View** to restore the overview. Click the canvas to use arrow keys for panning;
+hold Shift for larger steps. Hidden and off-screen devices do not receive
 position updates. Click a region to select its devices; click or drag over devices
 to select them. Ctrl+Click toggles selection. A blue outline indicates selection;
 collapsed regions show how many of their devices are selected. With no devices selected, the gallery shows the

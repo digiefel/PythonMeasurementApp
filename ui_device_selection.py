@@ -66,7 +66,7 @@ class DeviceSelectionDialog:
         # Instructions
         instructions = ttk.Label(
             self.dialog,
-            text=self.INSTRUCTIONS + " Scroll to zoom; right- or middle-drag to pan.",
+            text=self.INSTRUCTIONS + " Scroll to zoom; right- or middle-drag to pan. Arrow keys pan; Shift moves faster.",
             wraplength=680,
             justify="left"
         )
@@ -147,6 +147,7 @@ class DeviceSelectionDialog:
         # Center dialog
         self.dialog.update_idletasks()
         self._fit_view()
+        self.canvas.focus_set()
         x = self.parent.winfo_x() + (self.parent.winfo_width() - self.dialog.winfo_width()) // 2
         y = self.parent.winfo_y() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
         self.dialog.geometry(f"+{x}+{y}")
@@ -155,6 +156,9 @@ class DeviceSelectionDialog:
         self.canvas.bind("<Button-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+        self.canvas.configure(takefocus=True)
+        for key in ('Left', 'Right', 'Up', 'Down'):
+            self.canvas.bind(f'<{key}>', self._on_arrow_key)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)
@@ -240,6 +244,7 @@ class DeviceSelectionDialog:
         self._draw_devices()
 
     def _on_mouse_wheel(self, event):
+        self.canvas.focus_set()
         if event.num == 4:
             steps = 1
         elif event.num == 5:
@@ -251,21 +256,35 @@ class DeviceSelectionDialog:
         return "break"
 
     def _on_pan_start(self, event):
+        self.canvas.focus_set()
         self._cancel_rectangle()
         self._pan_start = event.x, event.y
         self.canvas.configure(cursor="fleur")
         return "break"
 
+    def _pan_by(self, dx, dy):
+        self._calculate_transform()
+        scale, offset_x, offset_y = self._view
+        self._view = scale, offset_x + dx, offset_y + dy
+        self._hide_annotation()
+        self.canvas.move('map_content', dx, dy)
+
+    def _on_arrow_key(self, event):
+        if self._pan_start is not None:
+            return 'break'
+        self._cancel_rectangle()
+        step = 160 if event.state & 0x1 else 40
+        # Move the viewport toward the arrow, shifting the content oppositely.
+        dx, dy = {'Left': (step, 0), 'Right': (-step, 0),
+                  'Up': (0, step), 'Down': (0, -step)}[event.keysym]
+        self._pan_by(dx, dy)
+        return 'break'
+
     def _on_pan_drag(self, event):
         if self._pan_start is not None:
-            self._calculate_transform()
-            scale, offset_x, offset_y = self._view
             x, y = self._pan_start
-            dx, dy = event.x - x, event.y - y
-            self._view = scale, offset_x + dx, offset_y + dy
+            self._pan_by(event.x - x, event.y - y)
             self._pan_start = event.x, event.y
-            self._hide_annotation()
-            self.canvas.move('map_content', dx, dy)
         return "break"
 
     def _on_pan_end(self, event):
@@ -423,6 +442,7 @@ class DeviceSelectionDialog:
     
     def _on_mouse_down(self, event):
         """Handle mouse button press."""
+        self.canvas.focus_set()
         if self._pan_start is not None:
             return
         self.drag_start = (event.x, event.y)

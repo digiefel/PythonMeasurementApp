@@ -219,7 +219,7 @@ class DataManagementWindow:
         self.map = self.device_list = None
         drawable = any(has_position(device) for device in self.layout.values())
         self.view_toggle.configure(text='Map View' if as_list else 'List View', state='normal' if drawable else 'disabled')
-        self.explanation.configure(text='Scroll to reveal subsites and devices; double-click a region to zoom in. Right/middle-drag to pan.'
+        self.explanation.configure(text='Scroll to reveal subsites and devices; double-click a region to zoom in. Arrows or right/middle-drag to pan.'
                                    if not as_list else 'Select devices to browse their measurements and notes.')
         if as_list:
             self.device_list = ttk.Treeview(self.view_frame, columns=('site', 'subsite', 'device', 'status'), show='headings', selectmode='extended')
