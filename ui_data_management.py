@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from collections import defaultdict
 import math
+import re
+from datetime import datetime
 import os
 import subprocess
 import sys
@@ -11,7 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from data_management import (
-    IDENTITY_KEYS, STATUSES, STATUS_COLORS, Identity, chips_in, scan_chip,
+    IDENTITY_KEYS, STATUSES, STATUS_COLORS, chips_in, scan_chip,
     layout_devices, missing_geometry, read_notes, write_notes, plan_correction, apply_correction,
 )
 from ui_sample_view import SampleMap
@@ -45,6 +47,8 @@ class DataManagementWindow:
         self._notes_dirty = self._loading_notes = False
         self._warned = set()
         self._sash_set = False
+        self._gallery_width = 360
+        self._captions = {}
         self.window = tk.Toplevel(parent)
         self.window.title('Data Management')
         self.window.geometry('1250x800')
@@ -72,23 +76,19 @@ class DataManagementWindow:
         picker.pack(side='left', anchor='nw', padx=4, pady=4)
         self.search = tk.StringVar()
         ttk.Entry(picker, textvariable=self.search, width=24).pack(fill='x', padx=4, pady=4)
-        self.chip_list = tk.Listbox(picker, height=3, width=24, exportselection=False)
+        self.chip_list = tk.Listbox(picker, height=2, width=24, exportselection=False)
         self.chip_list.pack(fill='x', padx=4, pady=(0, 4))
         self.search.trace_add('write', lambda *_: self._filter_chips())
         self.chip_list.bind('<<ListboxSelect>>', self._choose_chip)
-        self.chip_list.bind('<Button-3>', self._chip_menu)
-        self.chip_list.bind('<Button-2>', self._chip_menu)
         legend = ttk.Frame(header)
-        legend.pack(side='left', padx=12, anchor='nw', pady=10)
+        legend.pack(side='left', padx=8, anchor='nw', pady=4)
         for status, color in STATUS_COLORS.items():
-            tk.Label(legend, text=f'● {status}', foreground=color).pack(anchor='w')
-        ttk.Label(legend, text='Blue outline: selected').pack(anchor='w')
+            tk.Label(legend, text=f'● {status}', foreground=color).grid(row=0, column=list(STATUS_COLORS).index(status), padx=(0, 6))
+        ttk.Label(legend, text='Blue outline: selected').grid(row=1, column=0, columnspan=3, sticky='w', pady=(3, 0))
         self.view_toggle = ttk.Button(header, text='List View', command=self._toggle_view)
         self.view_toggle.pack(side='right', padx=4, pady=4)
         self.explanation = ttk.Label(left, wraplength=650)
         self.explanation.pack(fill='x', padx=5, pady=4)
-        self.folder_button = ttk.Button(left, text='Correct Selected Device Folders…', command=self._correct_devices)
-        self.folder_button.pack(side='bottom', anchor='w', padx=4, pady=5)
         self.view_frame = ttk.Frame(left)
         self.view_frame.pack(fill='both', expand=True)
 
@@ -111,23 +111,23 @@ class DataManagementWindow:
         self.clear_status_button.pack(side='left')
         self.save_label = ttk.Label(controls)
         self.save_label.pack(side='right')
-        self.notes = tk.Text(self.notes_frame, width=1, height=6, wrap='word', undo=True, state='disabled')
+        self.notes = tk.Text(self.notes_frame, width=1, height=3, wrap='word', undo=True, state='disabled')
         self.notes.pack(fill='x', padx=5, pady=(0, 5))
         self.notes.bind('<<Modified>>', self._notes_changed)
         self.notes.bind('<FocusOut>', lambda event: self.save_notes())
 
-        gallery_header = ttk.Frame(right)
-        gallery_header.pack(fill='x', padx=5, pady=4)
-        self.gallery_label = ttk.Label(gallery_header, text='Measurements')
+        self.notes_hint = ttk.Label(right, text='Select a device to edit notes and tag.', wraplength=340)
+        gallery_header = self.gallery_header = ttk.Frame(right)
+        gallery_header.pack(fill='x', padx=5, pady=3)
+        self.gallery_label = ttk.Label(gallery_header, text='Measurements', justify='left')
         self.gallery_label.pack(side='left')
-        ttk.Button(gallery_header, text='Correct Assignment…', command=self._correct_measurements).pack(side='right')
-        navigation = ttk.Frame(right)
-        navigation.pack(fill='x', padx=5)
-        ttk.Button(navigation, text='Previous', command=lambda: self._change_page(-1)).pack(side='left')
-        self.page_label = ttk.Label(navigation)
-        self.page_label.pack(side='left', padx=6)
-        ttk.Button(navigation, text='Next', command=lambda: self._change_page(1)).pack(side='right')
-        self.gallery_canvas = tk.Canvas(right, highlightthickness=0)
+        ttk.Button(gallery_header, text='›', width=2, command=lambda: self._change_page(1)).pack(side='right')
+        self.page_label = ttk.Label(gallery_header)
+        self.page_label.pack(side='right', padx=4)
+        ttk.Button(gallery_header, text='‹', width=2, command=lambda: self._change_page(-1)).pack(side='right')
+        ttk.Button(right, text='Correct Assignment…', command=self._correct_measurements).pack(
+            side='bottom', anchor='e', padx=5, pady=5)
+        self.gallery_canvas = tk.Canvas(right, highlightthickness=0, background='#f4f5f7')
         scroll = ttk.Scrollbar(right, orient='vertical', command=self.gallery_canvas.yview)
         scroll.pack(side='right', fill='y')
         self.gallery_canvas.pack(fill='both', expand=True, padx=5, pady=5)
@@ -135,13 +135,23 @@ class DataManagementWindow:
         self.gallery_frame = ttk.Frame(self.gallery_canvas)
         self.gallery_window = self.gallery_canvas.create_window(0, 0, window=self.gallery_frame, anchor='nw')
         self.gallery_frame.bind('<Configure>', lambda event: self.gallery_canvas.configure(scrollregion=self.gallery_canvas.bbox('all')))
-        self.gallery_canvas.bind('<Configure>', lambda event: self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width))
+        self.gallery_canvas.bind('<Configure>', self._resize_gallery)
         self.gallery_canvas.bind('<MouseWheel>', self._scroll_gallery)
         self.gallery_canvas.bind('<Button-4>', self._scroll_gallery)
         self.gallery_canvas.bind('<Button-5>', self._scroll_gallery)
         self.gallery_canvas.bind('<Control-a>', self._select_all_measurements)
         if sys.platform == 'darwin':
             self.gallery_canvas.bind('<Command-a>', self._select_all_measurements)
+
+    def _resize_gallery(self, event):
+        if event.width <= 1:
+            return
+        self._gallery_width = event.width
+        self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width)
+        self.gallery_label.configure(wraplength=max(80, event.width - 150))
+        for labels in self._captions.values():
+            for label in labels:
+                label.configure(wraplength=max(100, event.width - 150))
 
     def _position_panes(self, event):
         if not self._sash_set and event.width > 1:
@@ -301,6 +311,12 @@ class DataManagementWindow:
     def _load_notes(self, identity):
         status, notes = read_notes(self.data_root, identity) if identity else ('', '')
         self._loading_notes = True
+        if identity:
+            self.notes_hint.pack_forget()
+            self.notes_frame.pack(fill='x', padx=5, pady=4, before=self.gallery_header)
+        else:
+            self.notes_frame.pack_forget()
+            self.notes_hint.pack(fill='x', padx=5, pady=5, before=self.gallery_header)
         self._notes_identity = identity
         self.notes_identity_label.configure(text=identity.label if identity else 'Select one device to edit notes and status.')
         self.notes.configure(state='normal')
@@ -374,7 +390,7 @@ class DataManagementWindow:
     def _render_gallery(self):
         for child in self.gallery_frame.winfo_children():
             child.destroy()
-        self.cards, self.photos = {}, []
+        self.cards, self.photos, self._captions = {}, [], {}
         pages = max(1, math.ceil(len(self.gallery_items) / self.PAGE_SIZE))
         self.page = min(self.page, pages - 1)
         self.page_label.configure(text=f'{self.page + 1} / {pages}')
@@ -382,27 +398,53 @@ class DataManagementWindow:
         first = self.page * self.PAGE_SIZE
         for index in range(first, min(len(self.gallery_items), first + self.PAGE_SIZE)):
             item = self.gallery_items[index]
-            card = tk.Frame(self.gallery_frame, borderwidth=2, relief='solid', background='white')
-            card.pack(fill='x', padx=3, pady=4)
+            card = tk.Frame(self.gallery_frame, background='white', highlightthickness=1, highlightbackground='gray85')
+            card.pack(fill='x', padx=2, pady=2)
             self.cards[index] = card
             image = None
             if item.plot_files:
                 try:
                     image = tk.PhotoImage(master=self.window, file=str(item.plot_files[0]))
-                    factor = max(1, math.ceil(max(image.width() / 300, image.height() / 170)))
+                    factor = max(1, math.ceil(max(image.width() / 128, image.height() / 84)))
                     image = image.subsample(factor, factor)
                     self.photos.append(image)
                 except tk.TclError:
                     pass
-            picture = tk.Label(card, image=image, text='' if image else 'No readable plot', background='white', foreground='black')
-            picture.pack(fill='x', pady=3)
+            thumbnail = tk.Frame(card, width=132, height=max(48, image.height() if image else 48), background='white')
+            thumbnail.pack(side='left', padx=(3, 5), pady=3)
+            thumbnail.pack_propagate(False)
+            picture = tk.Label(thumbnail, image=image, text='' if image else 'No plot',
+                               background='white', foreground='gray45')
+            picture.pack(fill='both', expand=True)
+            caption = tk.Frame(card, background='white')
+            caption.pack(side='left', fill='both', expand=True, padx=(0, 4), pady=3)
             title = item.metadata.get('Procedure', item.name)
-            caption = tk.Label(card, text=f'{title}\n{item.timestamp}\n{item.identity.site}/{item.identity.subsite}/{item.identity.device}'
-                               + ('\n⚠ Folder / header mismatch' if item.warnings else ''),
-                               justify='left', wraplength=310, background='white', foreground='black')
-            caption.pack(fill='x', padx=4, pady=3)
-            for widget in (card, picture, caption):
+            # Standard filenames repeat identity and timestamp; keep their procedure suffix.
+            if 'Procedure' not in item.metadata:
+                title = re.sub(r'^.*?\d{8}_\d{6}_?', '', title)
+            timestamp = item.timestamp
+            if timestamp:
+                try:
+                    timestamp = datetime.strptime(timestamp[:15], '%Y%m%d_%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    pass
+            lines = [(title + (' ⚠' if item.warnings else ''), True),
+                     (timestamp, False),
+                     (f'{item.identity.site} · {item.identity.subsite}/{item.identity.device}', False)]
+            labels = []
+            for text, bold in lines:
+                if not text:
+                    continue
+                label = tk.Label(caption, text=text, anchor='w', justify='left',
+                                 wraplength=max(100, self._gallery_width - 150),
+                                 font=('TkDefaultFont', 10, 'bold') if bold else ('TkDefaultFont', 9),
+                                 background='white', foreground='gray20' if bold else 'gray40')
+                label.pack(fill='x', anchor='w')
+                labels.append(label)
+            self._captions[index] = labels
+            for widget in (card, thumbnail, picture, caption, *labels):
                 widget.bind('<Button-1>', lambda event, i=index: self._gallery_click(i, event))
+                widget.bind('<Double-Button-1>', lambda event, i=index: self._gallery_open(i, event))
                 widget.bind('<Button-3>', lambda event, i=index: self._gallery_menu(i, event))
                 widget.bind('<Button-2>', lambda event, i=index: self._gallery_menu(i, event))
                 widget.bind('<MouseWheel>', self._scroll_gallery)
@@ -440,8 +482,15 @@ class DataManagementWindow:
             self.gallery_selection = {index}
             self.gallery_anchor = index
         self._paint_gallery_selection()
-        if not ctrl and not shift and self.gallery_items[index].plot_files:
-            self._open_artifacts(self.gallery_items[index].plot_files)
+
+    def _gallery_open(self, index, event=None):
+        if not self.save_notes():
+            return 'break'
+        self.gallery_selection = {index}
+        self.gallery_anchor = index
+        self._paint_gallery_selection()
+        self._open_artifacts(self.gallery_items[index].plot_files)
+        return 'break'
 
     def _select_all_measurements(self, event=None):
         if self.save_notes():
@@ -451,8 +500,8 @@ class DataManagementWindow:
 
     def _paint_gallery_selection(self):
         for index, card in self.cards.items():
-            card.configure(highlightbackground='dodgerblue' if index in self.gallery_selection else 'white',
-                           highlightthickness=3)
+            card.configure(highlightbackground='dodgerblue' if index in self.gallery_selection else 'gray85',
+                           highlightthickness=2 if index in self.gallery_selection else 1)
         self.gallery_label.configure(text=f'{len(self.gallery_items)} measurements · {len(self.gallery_selection)} selected')
 
     def _change_page(self, step):
@@ -496,14 +545,6 @@ class DataManagementWindow:
         finally:
             menu.grab_release()
 
-    def _chip_menu(self, event):
-        index = self.chip_list.nearest(event.y)
-        if self.visible_chips:
-            chip = self.visible_chips[index]
-            menu = tk.Menu(self.window, tearoff=False)
-            menu.add_command(label=f'Correct Chip Folder: {chip}…', command=lambda: self._correct(folders=[(chip,)]))
-            self._popup(menu, event)
-
     def _list_menu(self, event):
         key = self.device_list.identify_row(event.y)
         identity = next((identity for identity in self.all_identities if self._key(identity) == key), None)
@@ -511,33 +552,13 @@ class DataManagementWindow:
             self._map_menu('device', identity, event)
 
     def _map_menu(self, scope, value, event):
-        if not self.save_notes():
+        identities = value if scope == 'devices' else (value,) if scope == 'device' else ()
+        if not identities or not self.save_notes():
             return
         menu = tk.Menu(self.window, tearoff=False)
-        if scope == 'devices':
-            folders = [identity.parts for identity in value]
-            menu.add_command(label='Correct Device Folders…', command=lambda: self._correct(folders=folders))
-            subsite_folders = sorted({identity.parts[:3] for identity in value})
-            site_folders = sorted({identity.parts[:2] for identity in value})
-            menu.add_command(label='Correct Subsite Folder(s)…', command=lambda: self._correct(folders=subsite_folders))
-            menu.add_command(label='Correct Site Folder(s)…', command=lambda: self._correct(folders=site_folders))
-            for identity in value:
-                menu.add_command(label=f'Notes / Tag: {identity.subsite}/{identity.device}',
-                                 command=lambda identity=identity: self._select_notes_identity(identity))
-        elif scope == 'subsites':
-            site, subsites = value
-            menu.add_command(label=f'Correct Subsite Folder(s): {", ".join(subsites)}…',
-                             command=lambda: self._correct(folders=[(self.chip, site, name) for name in subsites]))
-        elif scope == 'device':
-            folders = [identity.parts for identity in sorted(self.selected_identities)] if value in self.selected_identities else [value.parts]
-            menu.add_command(label='Correct Device Folder(s)…', command=lambda: self._correct(folders=folders))
-            menu.add_command(label=f'Correct Subsite Folder: {value.subsite}…',
-                             command=lambda: self._correct(folders=[value.parts[:3]]))
-            menu.add_command(label=f'Correct Site Folder: {value.site}…',
-                             command=lambda: self._correct(folders=[value.parts[:2]]))
-        elif scope == 'site':
-            menu.add_command(label=f'Correct Site Folder: {value}…', command=lambda: self._correct(folders=[(self.chip, value)]))
-        menu.add_command(label='Correct Chip Folder…', command=lambda: self._correct(folders=[(self.chip,)]))
+        for identity in identities:
+            menu.add_command(label=f'Notes / Tag: {identity.subsite}/{identity.device}',
+                             command=lambda identity=identity: self._select_notes_identity(identity))
         self._popup(menu, event)
 
     def _select_notes_identity(self, identity):
@@ -546,22 +567,19 @@ class DataManagementWindow:
         self.notes_member.set(self._key(identity))
         self._load_notes(identity)
 
-    def _correct_devices(self):
-        self._correct(folders=[identity.parts for identity in sorted(self.selected_identities)])
-
     def _correct_measurements(self):
         self._correct(measurements=[self.gallery_items[index] for index in sorted(self.gallery_selection)])
 
-    def _correct(self, measurements=(), folders=()):
+    def _correct(self, measurements=()):
         if not self.save_notes():
             return
-        if not measurements and not folders:
-            messagebox.showinfo('Correct Assignment', 'Select measurements or device folders first.', parent=self.window)
+        if not measurements:
+            messagebox.showinfo('Correct Assignment', 'Select measurements first.', parent=self.window)
             return
         if self.is_running():
             messagebox.showinfo('Correct Assignment', 'Wait for the measurement run to finish before correcting saved files.', parent=self.window)
             return
-        CorrectionDialog(self, measurements, folders)
+        CorrectionDialog(self, measurements)
 
     def close(self):
         if not self.save_notes():
@@ -585,23 +603,23 @@ class WarningPopup:
         text.pack(fill='both', expand=True)
         text.insert('1.0', '\n\n'.join(warnings))
         text.configure(state='disabled')
-        ttk.Label(window, text='Use Correct Assignment… on the affected measurements or folders to fix them.').pack(padx=10, pady=8)
+        ttk.Label(window, text='Select the affected measurements and use Correct Assignment… to fix them.').pack(padx=10, pady=8)
         ttk.Button(window, text='Close', command=window.destroy).pack(pady=(0, 10))
 
 
 class CorrectionDialog:
-    def __init__(self, browser, measurements, folders):
-        self.browser, self.measurements, self.folders = browser, measurements, folders
+    def __init__(self, browser, measurements):
+        self.browser, self.measurements = browser, measurements
         self.plan = ()
         self.window = tk.Toplevel(browser.window)
         self.window.title('Correct Assignment')
         self.window.transient(browser.window)
         self.window.grab_set()
-        scope = '\n'.join('/'.join(folder) for folder in folders) if folders else f'{len(measurements)} selected measurement(s)'
+        scope = f'{len(measurements)} selected measurement(s)'
         ttk.Label(self.window, text=f'Apply to: {scope}\nBlank fields keep their current values.', wraplength=750).pack(padx=10, pady=10)
         fields = ttk.Frame(self.window)
         fields.pack(fill='x', padx=10)
-        identities = [item.identity for item in measurements] if measurements else [Identity(*(tuple(folder) + ('',) * (4 - len(folder)))) for folder in folders]
+        identities = [item.identity for item in measurements]
         self.variables = {}
         for row, key in enumerate(IDENTITY_KEYS):
             values = {identity.parts[row] for identity in identities}
@@ -636,7 +654,7 @@ class CorrectionDialog:
         self._invalidate()
         try:
             changes = {key: variable.get().strip() for key, variable in self.variables.items()}
-            self.plan = plan_correction(self.browser.data_root, self.measurements, self.folders, changes)
+            self.plan = plan_correction(self.browser.data_root, measurements=self.measurements, changes=changes)
             lines = []
             for item in self.plan:
                 source, destination = item.source.relative_to(self.browser.data_root), item.destination.relative_to(self.browser.data_root)

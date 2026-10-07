@@ -68,6 +68,8 @@ class DataBrowserTests(unittest.TestCase):
         browser.notes = TextValue()
         browser.status = TextValue()
         browser.search = TextValue()
+        browser._gallery_width = 360
+        browser._captions = {}
         browser.annotations = {}
         browser.layout = data.layout_devices(browser.sites, browser.chip)
         browser.notes_member = TextValue()
@@ -75,7 +77,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.measurements, browser.gallery_items = [], []
         browser.gallery_selection, browser.cards, browser.photos = set(), {}, []
         browser.page, browser.gallery_anchor = 0, None
-        for name in ('window', 'notes_frame', 'notes_identity_label', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
+        for name in ('window', 'notes_frame', 'notes_identity_label', 'notes_hint', 'gallery_header', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
                      'view_frame', 'view_toggle', 'explanation', 'gallery_frame', 'gallery_canvas',
                      'page_label', 'gallery_label'):
             setattr(browser, name, Mock())
@@ -205,21 +207,24 @@ class DataBrowserTests(unittest.TestCase):
         self.assertTrue(browser._notes_dirty)
         browser.window.destroy.assert_not_called()
 
-    def test_gallery_modifier_selection_and_plain_click_open_plot(self):
+    def test_gallery_click_selects_modifiers_extend_selection_and_double_click_opens(self):
         browser = self.browser
         plot = Path('/tmp/plot.png')
         browser.gallery_items = [SimpleNamespace(plot_files=(plot,)) for _ in range(5)]
         with patch.object(browser, '_open_artifacts') as opened:
             browser._gallery_click(1, SimpleNamespace(state=0))
             self.assertEqual(browser.gallery_selection, {1})
-            opened.assert_called_once_with((plot,))
+            opened.assert_not_called()
             browser._gallery_click(3, SimpleNamespace(state=1))
             self.assertEqual(browser.gallery_selection, {1, 2, 3})
             browser._gallery_click(2, SimpleNamespace(state=4))
             self.assertEqual(browser.gallery_selection, {1, 3})
             browser._gallery_click(4, SimpleNamespace(state=0), additive=True)
             self.assertEqual(browser.gallery_selection, {1, 3, 4})
-            opened.assert_called_once()
+            opened.assert_not_called()
+            browser._gallery_open(2)
+            self.assertEqual(browser.gallery_selection, {2})
+            opened.assert_called_once_with((plot,))
 
     def test_warning_popup_consolidates_and_does_not_repeat_on_every_selection(self):
         self.make_measurement(self.a, wrong_header=True)
@@ -230,15 +235,44 @@ class DataBrowserTests(unittest.TestCase):
         popup.assert_called_once()
         self.assertIn('Wrong', popup.call_args.args[1][0])
 
+    def test_select_all_includes_other_pages_and_correction_uses_only_selected_measurements(self):
+        browser = self.browser
+        browser.gallery_items = [object() for _ in range(browser.PAGE_SIZE + 4)]
+        browser.page = 1
+        browser._select_all_measurements()
+        self.assertEqual(browser.gallery_selection, set(range(len(browser.gallery_items))))
+        with patch.object(self.module, 'CorrectionDialog') as dialog:
+            browser._correct_measurements()
+        dialog.assert_called_once_with(browser, browser.gallery_items)
+
+    def test_correction_dialog_builds_and_moves_selected_artifacts_without_device_notes(self):
+        self.make_measurement(self.a)
+        self.make_measurement(self.b)
+        data.write_notes(self.browser.data_root, self.a, 'Bad', 'physical device note')
+        selected = [item for item in self.browser.measurements if item.identity == self.a]
+        fake_tk = Mock()
+        fake_tk.StringVar.side_effect = lambda *args, **kwargs: TextValue(kwargs.get('value', ''))
+        with patch.object(self.module, 'tk', fake_tk), patch.object(self.module, 'ttk', Mock()):
+            dialog = self.module.CorrectionDialog(self.browser, selected)
+        dialog.variables['Chip'].set('Corrected')
+        dialog._preview()
+        self.assertEqual({item.source for item in dialog.plan}, set(selected[0].data_files + selected[0].plot_files))
+        self.browser.refresh = Mock()
+        dialog._apply()
+        self.assertEqual(data.read_notes(self.browser.data_root, self.a), ('Bad', 'physical device note'))
+        self.assertEqual({item.identity for item in data.scan_chip(self.browser.data_root, 'C')[1]}, {self.b})
+        self.assertEqual({item.identity for item in data.scan_chip(self.browser.data_root, 'Corrected')[1]},
+                         {data.Identity('Corrected', 'S', 'Sub', 'A')})
+
     def test_correction_is_gated_while_running_and_passes_exact_scope_when_idle(self):
         browser = self.browser
         browser.is_running.return_value = True
         with patch.object(self.module, 'CorrectionDialog') as dialog, patch.object(self.module.messagebox, 'showinfo'):
-            browser._correct(folders=[self.a.parts])
+            browser._correct(measurements=['selected measurement'])
             dialog.assert_not_called()
             browser.is_running.return_value = False
-            browser._correct(folders=[self.a.parts])
-        dialog.assert_called_once_with(browser, (), [self.a.parts])
+            browser._correct(measurements=['selected measurement'])
+        dialog.assert_called_once_with(browser, ['selected measurement'])
 
     def test_close_flushes_notes_before_destroying_window(self):
         browser = self.browser
@@ -253,7 +287,7 @@ class DataBrowserTests(unittest.TestCase):
         self.make_measurement(self.a)
         browser = self.browser
         dialog = self.module.CorrectionDialog.__new__(self.module.CorrectionDialog)
-        dialog.browser, dialog.measurements, dialog.folders = browser, browser.measurements, ()
+        dialog.browser, dialog.measurements = browser, browser.measurements
         dialog.window, dialog.apply_button = Mock(), Mock()
         dialog.preview = TextValue()
         dialog.variables = {key: TextValue('NewChip' if key == 'Chip' else '') for key in data.IDENTITY_KEYS}

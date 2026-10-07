@@ -65,10 +65,11 @@ same device name, the label says **Mixed**, and hovering shows each site's statu
 
 ## Measurement gallery
 
-The right-hand gallery shows saved plot thumbnails, procedure, timestamp, and
-device path, newest first. A plain click selects a measurement and opens its plot
-in the associated image application. Ctrl+Click (or Command+Click on macOS) toggles
-selection; Shift+Click selects a range. Ctrl+A or Command+A selects the gallery.
+The right-hand gallery uses compact rows, with plot thumbnails beside the procedure,
+timestamp, and device path, newest first. A plain click selects a measurement;
+double-click opens its plot in the associated image application. Ctrl+Click
+(or Command+Click on macOS) toggles selection; Shift+Click selects a range.
+Ctrl+A or Command+A selects the gallery.
 The gallery is paginated to avoid loading every image into memory.
 
 Right-click a measurement for **Open Data**, **Open Plot**, or
@@ -82,10 +83,10 @@ details from a measurement's context menu.
 
 ## Correcting an assignment
 
-Use **Correct Assignment…** for selected gallery measurements. For whole folders,
-use **Correct Selected Device Folders…**, right-click a device or site on the map
-or list, or right-click a chip in the chip picker. Chip, site, subsite, and device
-folder scopes are supported.
+Use **Correct Assignment…** for selected gallery measurements. To correct all data
+for some devices, select those devices on the canvas, click a gallery row, and use
+Ctrl+A (Command+A on macOS) to select all their measurements, including other pages.
+Corrections apply to the selected measurement data and plots.
 
 Enter the correct Chip, Site, Subsite, or Device names. Blank fields retain each
 file's existing directory identity. **Preview Changes** lists the destination of
@@ -98,10 +99,9 @@ preserving timestamps, temperature, procedure names, and combination suffixes.
 Data and plots are kept together. Other CSV metadata and numeric data are preserved.
 Unrecognized filenames are retained, with their destination visible in the preview.
 
-Whole-folder corrections include `notes.txt` and other device-folder contents.
-Correcting individual measurements leaves the notes attached to their original
-device. Existing destinations and collisions within a batch are rejected; files
-are never silently overwritten. Changed source files invalidate the preview.
+Notes and other device-folder contents stay attached to their original device.
+Existing destinations and collisions within a batch are rejected; files are never
+silently overwritten. Changed source files invalidate the preview.
 Corrections stage originals and restore them if an operation fails. If recovery
 itself fails, the error gives the location of the retained originals.
 
