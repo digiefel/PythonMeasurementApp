@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from collections import defaultdict
 import math
 import os
 import subprocess
@@ -15,6 +16,7 @@ from data_management import (
 )
 from ui_sample_view import SampleMap
 from models import has_position
+from sample_map_model import date_text
 
 
 def open_file(path):
@@ -94,6 +96,10 @@ class DataManagementWindow:
         self.notes_frame.pack(fill='x', padx=5, pady=5)
         self.notes_identity_label = ttk.Label(self.notes_frame, text='Select one device to edit notes and status.', wraplength=320)
         self.notes_identity_label.pack(fill='x', padx=5, pady=4)
+        self.notes_member = tk.StringVar()
+        self.notes_member_box = ttk.Combobox(self.notes_frame, textvariable=self.notes_member, state='readonly')
+        self.notes_member_box.bind('<<ComboboxSelected>>', self._choose_notes_member)
+
         controls = ttk.Frame(self.notes_frame)
         controls.pack(fill='x', padx=5, pady=4)
         ttk.Label(controls, text='Status').pack(side='left')
@@ -183,9 +189,16 @@ class DataManagementWindow:
             self.selected_identities.intersection_update(self.all_identities)
             self.missing = missing_geometry(self.layout, self.identities)
             self.annotations = {}
+            history = defaultdict(list)
+            for measurement in self.measurements:
+                history[measurement.identity].append(measurement)
             for identity in self.all_identities:
                 status, notes = read_notes(self.data_root, identity)
-                self.annotations[self._key(identity)] = self._annotation(identity, status, notes)
+                self.annotations[self._key(identity)] = {
+                    **self._annotation(identity, status, notes),
+                    'measurement_count': len(history[identity]),
+                    'last_measurement': max((date_text(item.timestamp) for item in history[identity]), default=''),
+                }
             self._show_view(as_list=not any(has_position(device) for device in self.layout.values()))
             self._selection_changed({self._key(identity) for identity in self.selected_identities}, force=True)
         except (OSError, ValueError, UnicodeError) as exc:
@@ -206,7 +219,7 @@ class DataManagementWindow:
         self.map = self.device_list = None
         drawable = any(has_position(device) for device in self.layout.values())
         self.view_toggle.configure(text='Map View' if as_list else 'List View', state='normal' if drawable else 'disabled')
-        self.explanation.configure(text='Scroll to zoom; right/middle-drag to pan. Hover for device details; zoom in for labels.'
+        self.explanation.configure(text='Scroll to reveal subsites and devices; double-click a region to zoom in. Right/middle-drag to pan.'
                                    if not as_list else 'Select devices to browse their measurements and notes.')
         if as_list:
             self.device_list = ttk.Treeview(self.view_frame, columns=('site', 'subsite', 'device', 'status'), show='headings', selectmode='extended')
@@ -256,7 +269,18 @@ class DataManagementWindow:
         if not force and selected == self.selected_identities and self._notes_identity is not None:
             return
         try:
-            self._load_notes(next(iter(selected)) if len(selected) == 1 else None)
+            positions = [self.layout.get(identity) for identity in selected]
+            merged = (len(selected) > 1 and all(device and has_position(device) for device in positions)
+                      and len({(device.absolute_x, device.absolute_y) for device in positions}) == 1)
+            self._notes_members = {self._key(identity): identity for identity in sorted(selected)} if merged else {}
+            if merged:
+                self.notes_member_box.configure(values=list(self._notes_members))
+                self.notes_member.set(next(iter(self._notes_members)))
+                self.notes_member_box.pack(fill='x', padx=5, pady=(0, 4), before=self.notes)
+            else:
+                self.notes_member_box.pack_forget()
+            self._load_notes(next(iter(self._notes_members.values())) if merged
+                             else next(iter(selected)) if len(selected) == 1 else None)
         except (OSError, ValueError, UnicodeError) as exc:
             messagebox.showerror('Could not read device notes', str(exc), parent=self.window)
             return
@@ -267,6 +291,12 @@ class DataManagementWindow:
         self.gallery_anchor, self.page = None, 0
         self._render_gallery()
         self._warn_mismatches()
+
+    def _choose_notes_member(self, event=None):
+        if self.save_notes():
+            self._load_notes(self._notes_members[self.notes_member.get()])
+        elif self._notes_identity:
+            self.notes_member.set(self._key(self._notes_identity))
 
     def _load_notes(self, identity):
         status, notes = read_notes(self.data_root, identity) if identity else ('', '')
@@ -317,7 +347,7 @@ class DataManagementWindow:
             text = self.notes.get('1.0', 'end-1c')
             write_notes(self.data_root, identity, self.status.get(), text)
             key = self._key(identity)
-            self.annotations[key] = self._annotation(identity, self.status.get(), text)
+            self.annotations.setdefault(key, {}).update(self._annotation(identity, self.status.get(), text))
             if self.map:
                 self.map._draw_devices()
             if self.device_list:
@@ -484,7 +514,21 @@ class DataManagementWindow:
         if not self.save_notes():
             return
         menu = tk.Menu(self.window, tearoff=False)
-        if scope == 'device':
+        if scope == 'devices':
+            folders = [identity.parts for identity in value]
+            menu.add_command(label='Correct Device Folders…', command=lambda: self._correct(folders=folders))
+            subsite_folders = sorted({identity.parts[:3] for identity in value})
+            site_folders = sorted({identity.parts[:2] for identity in value})
+            menu.add_command(label='Correct Subsite Folder(s)…', command=lambda: self._correct(folders=subsite_folders))
+            menu.add_command(label='Correct Site Folder(s)…', command=lambda: self._correct(folders=site_folders))
+            for identity in value:
+                menu.add_command(label=f'Notes / Tag: {identity.subsite}/{identity.device}',
+                                 command=lambda identity=identity: self._select_notes_identity(identity))
+        elif scope == 'subsites':
+            site, subsites = value
+            menu.add_command(label=f'Correct Subsite Folder(s): {", ".join(subsites)}…',
+                             command=lambda: self._correct(folders=[(self.chip, site, name) for name in subsites]))
+        elif scope == 'device':
             folders = [identity.parts for identity in sorted(self.selected_identities)] if value in self.selected_identities else [value.parts]
             menu.add_command(label='Correct Device Folder(s)…', command=lambda: self._correct(folders=folders))
             menu.add_command(label=f'Correct Subsite Folder: {value.subsite}…',
@@ -495,6 +539,12 @@ class DataManagementWindow:
             menu.add_command(label=f'Correct Site Folder: {value}…', command=lambda: self._correct(folders=[(self.chip, value)]))
         menu.add_command(label='Correct Chip Folder…', command=lambda: self._correct(folders=[(self.chip,)]))
         self._popup(menu, event)
+
+    def _select_notes_identity(self, identity):
+        if not self.save_notes():
+            return
+        self.notes_member.set(self._key(identity))
+        self._load_notes(identity)
 
     def _correct_devices(self):
         self._correct(folders=[identity.parts for identity in sorted(self.selected_identities)])

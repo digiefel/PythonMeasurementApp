@@ -205,59 +205,90 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog.on_context = Mock()
         dialog.on_select = Mock()
         dialog._context_start = None
-        dialog._labels_visible = False
-        dialog._label_scale = None
-        dialog._site_items = {}
-        dialog._appearance = {}
+        dialog._locations, dialog._sites, dialog._subsites = self.sample_module.build_geometry(items)
+        dialog._location_by_key = {location.key: location for location in dialog._locations}
+        dialog._region_by_key = {region.key: region for region in dialog._sites + dialog._subsites}
+        dialog._region_items, dialog._location_items, dialog._levels = {}, {}, {}
+        dialog._visible_locations, dialog._visible_regions = {}, []
+        dialog._active_location_keys, dialog._active_region_keys = set(), set()
         dialog._manual_state = None
-        dialog._items_by_name = {item.name: item for item in items}
         return dialog
 
     def test_sample_map_context_click_is_distinct_from_panning(self):
         dialog = self.make_sample_map([SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
-                                                       identity=SimpleNamespace(site='S', subsite='Sub'))])
+                                                       identity=SimpleNamespace(site='S', subsite='Sub', device='A'))])
         dialog._draw_devices()
         x, y = dialog._calculate_transform()(0, 0)
         dialog._on_pan_start(SimpleNamespace(x=x, y=y))
         dialog._on_pan_end(SimpleNamespace(x=x, y=y))
-        self.assertEqual(dialog.on_context.call_args.args[0], 'device')
+        self.assertEqual(dialog.on_context.call_args.args[0], 'devices')
         dialog.on_context.reset_mock()
         dialog._on_pan_start(SimpleNamespace(x=x, y=y))
         dialog._on_pan_drag(SimpleNamespace(x=x + 30, y=y + 20))
         dialog._on_pan_end(SimpleNamespace(x=x + 30, y=y + 20))
         dialog.on_context.assert_not_called()
 
-    def test_dense_sample_overview_keeps_markers_and_creates_labels_only_in_view(self):
+    def test_dense_sample_hides_devices_when_zoomed_out_and_culls_offscreen_locations(self):
         items = [SimpleNamespace(name=f'S/Sub/{x}_{y}', display_name=f'Sub/{x}_{y}', x=x * 10, y=y * 10,
-                                 identity=SimpleNamespace(site='S', subsite='Sub'))
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=f'{x}_{y}'))
                  for x in range(30) for y in range(30)]
         dialog = self.make_sample_map(items)
+        dialog._view = (0.2, 350, 250)
         dialog._draw_devices()
-        self.assertEqual(dialog.canvas.create_oval.call_count, len(items))
-        self.assertTrue(all(label is None for _, label in dialog.device_items.values()))
-        marker_ids = {name: marker for name, (marker, _) in dialog.device_items.items()}
-        dialog.canvas.reset_mock()
-        dialog._zoom_at(350, 250, 2)
         dialog.canvas.create_oval.assert_not_called()
-        dialog.canvas.create_rectangle.assert_not_called()
-        self.assertEqual(marker_ids, {name: marker for name, (marker, _) in dialog.device_items.items()})
-        dialog._zoom_at(350, 250, 10)
-        labelled = [item for item in items if dialog.device_items[item.name][1] is not None]
-        self.assertGreater(len(labelled), 0)
-        self.assertLess(len(labelled), len(items))
-        transform = dialog._calculate_transform()
-        for item in labelled:
-            x, y = transform(item.x, item.y)
-            self.assertTrue(-20 <= x <= dialog.canvas_width + 20)
-            self.assertTrue(-20 <= y <= dialog.canvas_height + 20)
-        dialog._fit_view()
-        self.assertTrue(all(label is None for _, label in dialog.device_items.values()))
-        self.assertEqual(marker_ids, {name: marker for name, (marker, _) in dialog.device_items.items()})
+        self.assertFalse(dialog._visible_locations)
+        selected = {items[0].name}
+        dialog.selected_devices = selected
+        dialog._zoom_at(350, 250, 15)
+        self.assertGreater(len(dialog._visible_locations), 0)
+        self.assertLess(len(dialog._visible_locations), len(items))
+        markers = {key: entry[0] for key, entry in dialog._location_items.items()}
+        dialog.canvas.reset_mock()
+        dialog._draw_devices()
+        dialog.canvas.create_oval.assert_not_called()
+        self.assertEqual(markers, {key: entry[0] for key, entry in dialog._location_items.items()})
+        dialog._zoom_at(350, 250, 1 / 15)
+        self.assertFalse(dialog._visible_locations)
+        self.assertEqual(dialog.selected_devices, selected)
+
+    def test_shared_location_selection_combines_members_and_ctrl_toggles_the_group(self):
+        items = [SimpleNamespace(name=f'S/{sub}/A', x=0, y=0,
+                                 identity=SimpleNamespace(site='S', subsite=sub, device='A'))
+                 for sub in ('FeCap', 'FeCapBD')]
+        dialog = self.make_sample_map(items)
+        dialog._view = (2, 350, 250)
+        dialog.annotations = {items[0].name: {'status': 'Bad', 'measurement_count': 2},
+                              items[1].name: {'status': 'Good', 'measurement_count': 3}}
+        dialog._draw_devices()
+        self.assertEqual(dialog.canvas.create_oval.call_count, 1)
+        self.assertEqual(dialog.canvas.create_arc.call_count, 2)
+        target = dialog._target_at(350, 250)
+        self.assertEqual(target.names, {item.name for item in items})
+        dialog._handle_click(350, 250, False)
+        self.assertEqual(dialog.selected_devices, target.names)
+        dialog._handle_click(350, 250, True)
+        self.assertEqual(dialog.selected_devices, set())
+        counts = [call.kwargs.get('text') for call in dialog.canvas.itemconfigure.call_args_list]
+        self.assertIn('5', counts)
+
+    def test_collapsed_site_click_selects_devices_and_double_click_reveals_them(self):
+        items = [SimpleNamespace(name=f'S/Sub/{x}', x=x, y=0,
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=str(x)))
+                 for x in (0, 1000)]
+        dialog = self.make_sample_map(items)
+        dialog._view = (0.1, 350, 250)
+        dialog._draw_devices()
+        self.assertFalse(dialog._visible_locations)
+        dialog._handle_click(300, 250, False)
+        self.assertEqual(dialog.selected_devices, {item.name for item in items})
+        dialog._on_double_click(SimpleNamespace(x=300, y=250))
+        self.assertTrue(dialog._visible_locations)
+        self.assertEqual(dialog.selected_devices, {item.name for item in items})
 
     def test_sample_site_box_and_padding_scale_together_when_zooming_out(self):
         dialog = self.make_sample_map([
             SimpleNamespace(name=f'S/Sub/{x}', display_name=f'Sub/{x}', x=x, y=x,
-                            identity=SimpleNamespace(site='S', subsite='Sub'))
+                            identity=SimpleNamespace(site='S', subsite='Sub', device='A'))
             for x in (0, 1000)])
         dialog.canvas.create_rectangle.side_effect = range(1, 100)
         dialog._draw_devices()
@@ -267,7 +298,7 @@ class DeviceCanvasTests(unittest.TestCase):
         for i, (old, new) in enumerate(zip(before, after)):
             anchor = 350 if i % 2 == 0 else 250
             self.assertAlmostEqual(new - anchor, (old - anchor) * 0.25)
-        box_id = dialog._site_items['S'][0]
+        box_id = dialog._region_items['site:S'][0]
         drawn = [call.args[1:] for call in dialog.canvas.coords.call_args_list if call.args[0] == box_id]
         self.assertEqual(drawn[-1], after)
         self.assertAlmostEqual(after[0], dialog._calculate_transform()(1000, 0)[0] - 64 * dialog._view[0])
@@ -286,12 +317,13 @@ class DeviceCanvasTests(unittest.TestCase):
 
     def test_sample_pan_moves_site_context_bounds_without_recreating_canvas_items(self):
         dialog = self.make_sample_map([SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
-                                                       identity=SimpleNamespace(site='S', subsite='Sub'))])
+                                                       identity=SimpleNamespace(site='S', subsite='Sub', device='A'))])
         dialog._draw_devices()
         before = dialog.site_bounds['S']
         dialog.canvas.reset_mock()
         dialog._on_pan_start(SimpleNamespace(x=10, y=10))
         dialog._on_pan_drag(SimpleNamespace(x=90, y=70))
+        dialog._on_pan_end(SimpleNamespace(x=90, y=70))
         self.assertEqual(dialog.site_bounds['S'], tuple(value + (80 if i % 2 == 0 else 60)
                                                        for i, value in enumerate(before)))
         dialog.canvas.move.assert_called_once_with('map_content', 80, 60)

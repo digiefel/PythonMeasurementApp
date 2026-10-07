@@ -69,11 +69,13 @@ class DataBrowserTests(unittest.TestCase):
         browser.status = TextValue()
         browser.search = TextValue()
         browser.annotations = {}
+        browser.layout = data.layout_devices(browser.sites, browser.chip)
+        browser.notes_member = TextValue()
         browser.all_identities = [self.a, self.b]
         browser.measurements, browser.gallery_items = [], []
         browser.gallery_selection, browser.cards, browser.photos = set(), {}, []
         browser.page, browser.gallery_anchor = 0, None
-        for name in ('window', 'notes_frame', 'notes_identity_label', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
+        for name in ('window', 'notes_frame', 'notes_identity_label', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
                      'view_frame', 'view_toggle', 'explanation', 'gallery_frame', 'gallery_canvas',
                      'page_label', 'gallery_label'):
             setattr(browser, name, Mock())
@@ -131,6 +133,31 @@ class DataBrowserTests(unittest.TestCase):
             browser._selection_changed({browser._key(self.a), browser._key(self.b)})
         self.assertIsNone(browser._notes_identity)
         browser.status_box.configure.assert_called_with(state='disabled')
+
+    def test_shared_location_combines_histories_and_keeps_individual_notes_editable(self):
+        browser = self.browser
+        second = data.Identity('C', 'S', 'Other', 'Alias')
+        browser.sites[0].subsites.append(Subsite('Other', [Device('Alias', 0, 0)]))
+        self.make_measurement(self.a)
+        self.make_measurement(second, '20261008_120000')
+        data.write_notes(browser.data_root, self.a, 'Bad', 'first notes')
+        data.write_notes(browser.data_root, second, 'Good', 'alias notes')
+        with patch.object(browser, '_show_view'), patch.object(browser, '_render_gallery'), patch.object(browser, '_warn_mismatches'):
+            browser.refresh()
+            browser._selection_changed({browser._key(self.a), browser._key(second)})
+            self.assertEqual({item.identity for item in browser.gallery_items}, {self.a, second})
+            self.assertEqual(len(browser.gallery_items), 2)
+            browser.notes_member.set(browser._key(second))
+            browser._choose_notes_member()
+            self.assertEqual(browser.notes.value, 'alias notes')
+            browser.notes.value = 'edited alias'
+            browser._notes_dirty = True
+            browser.save_notes()
+        self.assertEqual(data.read_notes(browser.data_root, self.a), ('Bad', 'first notes'))
+        self.assertEqual(data.read_notes(browser.data_root, second), ('Good', 'edited alias'))
+        annotation = browser.annotations[browser._key(second)]
+        self.assertEqual(annotation['measurement_count'], 1)
+        self.assertEqual(annotation['last_measurement'], '2026-10-08')
 
     def test_refresh_preserves_single_selection_and_includes_new_measurements(self):
         browser = self.browser

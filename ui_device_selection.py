@@ -377,7 +377,7 @@ class DeviceSelectionDialog:
         window.wm_overrideredirect(True)
         window.geometry(f'+{event.x_root + 12}+{event.y_root + 12}')
         tk.Label(window, text=text, justify='left', wraplength=400,
-                 background='#ffffe0', relief='solid', borderwidth=1, padx=5, pady=5).pack()
+                 background='#ffffe0', foreground='black', relief='solid', borderwidth=1, padx=5, pady=5).pack()
 
     def _hide_annotation(self):
         if self._annotation_window is not None:

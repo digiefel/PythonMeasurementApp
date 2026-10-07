@@ -5,21 +5,34 @@ the selected output directory as its data source; changing chips in the browser 
 the chip or site selected for a measurement run.
 
 The left two-thirds show the whole sample using the loaded `devices.csv`, with a
-searchable chip picker in the top-left. Sites have dashed boundaries. Scroll to
-zoom, right- or middle-drag to pan, and use **Fit View** to restore the overview.
-Click or drag to select devices; Ctrl+Click toggles individual devices. A blue
-outline indicates selection. With no devices selected, the gallery shows the
+searchable chip picker in the top-left. The overview shows filled site boxes.
+Scroll to reveal subsite outlines, then device markers and their details as space
+permits. Double-click a region to zoom to it, right- or middle-drag to pan, and use
+**Fit View** to restore the overview. Hidden and off-screen devices do not receive
+position updates. Click a region to select its devices; click or drag over devices
+to select them. Ctrl+Click toggles selection. A blue outline indicates selection;
+collapsed regions show how many of their devices are selected. With no devices selected, the gallery shows the
 whole chip's measurements.
 
 Devices missing from the layout or lacking absolute coordinates appear in a small
 list below the map. The other devices remain on the canvas. If none have positions,
 the browser uses a list with Site, Subsite, Device, and Status columns. You can also
-choose **List View** at any time. The map overview shows markers and site names;
-zoom in for device labels, or hover over a marker for its details.
+choose **List View** at any time.
+
+Devices at exactly the same coordinates share one marker. Selecting it shows the
+combined measurement gallery. At close zoom the marker shows the total measurement
+count inside, with names, comma-separated subsites, latest measurement date, and a
+small notes indicator alongside it. Zero counts and absent dates are omitted.
+Good/OK/Bad appear as colors; differing assessments use a segmented ring. Nearby
+coordinates remain separate. Subsites sharing device locations share an outline.
+Hovering a marker shows its compact details at smaller zooms.
 
 ## Device notes and status
 
-Select one device to edit its notes and assessment. The optional assessments are
+Select one device to edit its notes and assessment. For a merged marker, choose
+its individual subsite/device from the notes editor's dropdown; the gallery keeps
+showing the combined history. Each member's notes and assessment remain separate.
+The optional assessments are
 **Good** (green), **OK** (yellow), and **Bad** (red); **Clear** removes the assessment.
 These assessments are independent of the tags in `devices.csv`, which this
 feature does not change. An assessment does not exclude a device from measurement.

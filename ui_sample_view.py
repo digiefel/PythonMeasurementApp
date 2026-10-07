@@ -5,18 +5,20 @@ from tkinter import ttk
 
 from ui_device_selection import DeviceSelectionDialog
 from data_management import STATUS_COLORS
+from sample_map_model import build_geometry, location_summary
 
 
 class SampleMap(DeviceSelectionDialog):
     def __init__(self, parent, items, annotations, selected, on_select, on_context):
         self.on_select, self.on_context = on_select, on_context
         self._context_start = None
-        self._labels_visible = False
-        self._label_scale = None
-        self._site_items = {}
-        self._appearance = {}
+        self._locations, self._sites, self._subsites = build_geometry(items)
+        self._location_by_key = {location.key: location for location in self._locations}
+        self._region_by_key = {region.key: region for region in self._sites + self._subsites}
+        self._region_items, self._location_items, self._levels = {}, {}, {}
+        self._visible_locations, self._visible_regions = {}, []
+        self._active_location_keys, self._active_region_keys = set(), set()
         self._manual_state = None
-        self._items_by_name = {item.name: item for item in items}
         super().__init__(parent, items, initially_selected=selected, annotations=annotations)
 
     def _create_dialog(self):
@@ -54,6 +56,9 @@ class SampleMap(DeviceSelectionDialog):
             }
         """)
         self._bind_canvas_events()
+        self.canvas.bind('<Double-Button-1>', self._on_double_click)
+        self.canvas.tag_bind('map_hover', '<Enter>', self._on_device_hover)
+        self.canvas.tag_bind('map_hover', '<Leave>', lambda event: self._hide_annotation())
         self._draw_devices()
         self._fit_job = self.frame.after_idle(self._initial_fit)
         self.frame.bind('<Destroy>', self._on_destroy, add='+')
@@ -68,102 +73,212 @@ class SampleMap(DeviceSelectionDialog):
                 self.frame.after_cancel(self._fit_job)
             self._hide_annotation()
 
+    def _level(self, key, value, threshold):
+        previous = self._levels.get(key, False)
+        active = value >= threshold * (0.85 if previous else 1)
+        self._levels[key] = active
+        return active
+
+    def _bounds(self, region, transform):
+        left, top, right, bottom = region.bounds
+        x0, y0 = transform(left - 64, top - 64)
+        x1, y1 = transform(right + 64, bottom + 64)
+        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+
+    def _in_view(self, bounds):
+        left, top, right, bottom = bounds
+        return right >= -30 and bottom >= -30 and left <= self.canvas_width + 30 and top <= self.canvas_height + 30
+
     def _draw_devices(self):
         self._hide_annotation()
         transform = self._calculate_transform()
         scale = self._view[0]
-        self.point_radius = max(1.2, min(6, 32 * scale))
-        if self._label_scale is None:
-            groups = {}
-            for item in self.devices:
-                groups.setdefault((item.identity.site, item.identity.subsite), []).append((item.x, item.y))
-            gaps = []
-            for points in groups.values():
-                for axis in (0, 1):
-                    values = sorted({point[axis] for point in points})
-                    gaps.extend(b - a for a, b in zip(values, values[1:]) if b > a)
-            label_width = max((len(item.display_name) for item in self.devices), default=0) * 6 + 20
-            self._label_scale = label_width / min(gaps) if gaps else 0
-            # Assessed markers are drawn above unassessed markers at shared positions.
-            self.devices.sort(key=lambda item: bool(self.annotations.get(item.name, {}).get('status')))
-        self._labels_visible = scale >= self._label_scale
-        positions, sites = [], {}
-        for item in self.devices:
-            cx, cy = transform(item.x, item.y)
-            sites.setdefault(item.identity.site, []).append((cx, cy))
-            if item.name not in self.device_items:
-                self.device_items[item.name] = self._draw_device(item, transform)
-            marker, _ = self.device_items[item.name]
-            radius = self.point_radius
-            positions.extend((marker, cx - radius, cy - radius, cx + radius, cy + radius))
-            annotation = self.annotations.get(item.name, {})
-            appearance = (item.name in self.selected_devices, annotation.get('status'), annotation.get('has_notes'))
-            if self._appearance.get(item.name) != appearance:
-                self._update_device_appearance(item.name, appearance[0])
-                self._appearance[item.name] = appearance
-                if appearance[0] or appearance[1]:
-                    self.canvas.tag_raise(marker)
-        labels = self._sync_labels(transform)
-        self.canvas.tk.call('::pma_map_positions', str(self.canvas), tuple(positions), tuple(labels))
-        self._refresh_manual_list()
+        self._visible_regions, self._visible_locations = [], {}
         self.site_bounds = {}
-        padding = 64 * scale  # A fixed margin in sample coordinates, not screen pixels.
-        for site, points in sites.items():
-            xs, ys = zip(*points)
-            left, top, right, bottom = min(xs), min(ys), max(xs), max(ys)
-            self.site_bounds[site] = (left - padding, top - padding, right + padding, bottom + padding)
-            if site not in self._site_items:
-                box = self.canvas.create_rectangle(0, 0, 0, 0, outline='gray75', dash=(3, 3),
-                                                   tags=('map_content', 'site_box', site))
-                label = self.canvas.create_text(0, 0, text=site, anchor='sw', fill='gray30',
-                                                font=('TkDefaultFont', 9, 'bold'), tags=('map_content',))
-                background = self.canvas.create_rectangle(0, 0, 0, 0, fill='white', outline='white',
-                                                           tags=('map_content',))
-                self._site_items[site] = box, label, background
-            box, label, background = self._site_items[site]
-            self.canvas.coords(box, *self.site_bounds[site])
-            self.canvas.tag_lower(box)
-            self.canvas.coords(label, left - padding, top - padding - 3)
-            bounds = self.canvas.bbox(label)
-            if bounds:
-                x0, y0, x1, y1 = bounds
-                self.canvas.coords(background, x0 - 2, y0 - 1, x1 + 2, y1 + 1)
-            self.canvas.tag_raise(background)
-            self.canvas.tag_raise(label)
+        active_regions, active_locations = set(), set()
+        detailed_sites, device_names, label_names = set(), set(), set()
+        spacing_by_name = {}
+        for region in self._sites:
+            bounds = self._bounds(region, transform)
+            self.site_bounds[region.site] = bounds
+            span = max(128, region.bounds[2] - region.bounds[0], region.bounds[3] - region.bounds[1])
+            expanded = self._level(region.key, span * scale, 180)
+            if expanded:
+                detailed_sites.add(region.site)
+            if self._in_view(bounds):
+                self._draw_region(region, bounds, collapsed=not expanded)
+                active_regions.add(region.key)
+        for region in self._subsites:
+            if region.site not in detailed_sites:
+                continue
+            bounds = self._bounds(region, transform)
+            show_devices = self._level(region.key, region.spacing * scale, 24)
+            show_labels = self._level(region.key + ':labels', region.spacing * scale, 150)
+            if self._in_view(bounds):
+                self._draw_region(region, bounds, collapsed=not show_devices)
+                active_regions.add(region.key)
+                if show_devices:
+                    device_names.update(region.names)
+                    for name in region.names:
+                        spacing_by_name[name] = region.spacing * scale
+                    if show_labels:
+                        label_names.update(region.names)
+        positions, texts = [], []
+        for location in self._locations:
+            if not location.names & device_names:
+                continue
+            x, y = transform(location.x, location.y)
+            if not self._in_view((x - 25, y - 25, x + 25, y + 25)):
+                continue
+            radius = min(18, max(3, min(spacing_by_name[name] for name in location.names & device_names) * 0.18))
+            detailed = bool(location.names & label_names)
+            self._draw_location(location, x, y, radius, detailed, positions, texts)
+            self._visible_locations[location.key] = radius
+            active_locations.add(location.key)
+        for key in self._active_region_keys - active_regions:
+            for item in self._region_items[key]:
+                self.canvas.itemconfigure(item, state='hidden')
+        for key in self._active_location_keys - active_locations:
+            self.canvas.itemconfigure(key, state='hidden')
+        self._active_region_keys, self._active_location_keys = active_regions, active_locations
+        self.canvas.tk.call('::pma_map_positions', str(self.canvas), tuple(positions), tuple(texts))
+        self._refresh_manual_list()
 
-    def _label_visible(self, item):
-        x, y = self._calculate_transform()(item.x, item.y)
-        return (-20 <= x <= self.canvas_width + 20 and -20 <= y <= self.canvas_height + 20
-                and (self._labels_visible or (len(self.selected_devices) <= 10 and item.name in self.selected_devices)))
+    def _draw_region(self, region, bounds, collapsed):
+        if region.key not in self._region_items:
+            tags = ('map_content', 'region', region.key, 'map_hover')
+            box = self.canvas.create_rectangle(0, 0, 0, 0, tags=tags)
+            label = self.canvas.create_text(0, 0, anchor='sw', fill='gray25',
+                                            font=('TkDefaultFont', 9, 'bold'), tags=tags)
+            background = self.canvas.create_rectangle(0, 0, 0, 0, fill='white', outline='white', tags=tags)
+            self._region_items[region.key] = box, label, background
+        box, label, background = self._region_items[region.key]
+        count = len(region.names & self.selected_devices)
+        self.canvas.itemconfigure(box, state='normal', fill=('#e7f0ff' if count else '#eef1f5') if collapsed and not region.subsites else '',
+                                  outline='dodgerblue' if count else ('gray50' if collapsed else 'gray80'),
+                                  width=2 if count or collapsed else 1, dash=() if collapsed else (3, 3))
+        self.canvas.coords(box, *bounds)
+        self.canvas.tag_lower(box)
+        self.canvas.itemconfigure(label, state='normal', text=region.label + (f' · {count} selected' if count else ''))
+        self.canvas.coords(label, max(4, bounds[0]), max(14, bounds[1] - 3))
+        label_bounds = self.canvas.bbox(label)
+        if label_bounds:
+            x0, y0, x1, y1 = label_bounds
+            self.canvas.coords(background, x0 - 2, y0 - 1, x1 + 2, y1 + 1)
+        self.canvas.itemconfigure(background, state='normal')
+        self.canvas.tag_raise(background)
+        self.canvas.tag_raise(label)
+        self._visible_regions.append(region)
 
-    def _sync_labels(self, transform):
-        positions = []
-        for item in self.devices:
-            marker, label = self.device_items[item.name]
-            if self._label_visible(item):
-                if label is None:
-                    label = self._create_device_label(item, transform)
-                cx, cy = transform(item.x, item.y)
-                positions.extend((label, cx + self.label_offset, cy - self.label_offset))
-                self.canvas.tag_raise(label)
-            elif label is not None:
-                self.canvas.delete(label)
-                label = None
-            self.device_items[item.name] = marker, label
-        return positions
+    def _draw_location(self, location, x, y, radius, detailed, positions, texts):
+        label_text, count, statuses = location_summary(location, self.annotations)
+        selected = bool(location.names & self.selected_devices)
+        tags = ('map_content', 'location', location.key, 'map_hover')
+        if location.key not in self._location_items:
+            marker = self.canvas.create_oval(0, 0, 0, 0, tags=tags)
+            self._location_items[location.key] = [marker, None, None, []]
+        marker, count_id, label_id, segments = self._location_items[location.key]
+        color = STATUS_COLORS.get(statuses[0], 'gray55') if len(statuses) == 1 else 'gray55'
+        self.canvas.itemconfigure(marker, state='normal', fill=color if len(statuses) == 1 and statuses[0] else 'white',
+                                  outline='dodgerblue' if selected else color,
+                                  width=3 if selected else 2)
+        coords = x - radius, y - radius, x + radius, y + radius
+        positions.extend((marker, *coords))
+        # Conflicting assessments remain visible as a segmented ring.
+        if len(statuses) > 1:
+            while len(segments) < len(statuses):
+                segments.append(self.canvas.create_arc(0, 0, 0, 0, style='arc', tags=tags))
+            for index, segment in enumerate(segments):
+                if index < len(statuses):
+                    inset = min(3, radius / 4) if selected else 0
+                    positions.extend((segment, x - radius + inset, y - radius + inset,
+                                      x + radius - inset, y + radius - inset))
+                    self.canvas.itemconfigure(segment, state='normal', start=index * 360 / len(statuses),
+                                              extent=360 / len(statuses), width=2,
+                                              outline=STATUS_COLORS.get(statuses[index], 'gray55'))
+                else:
+                    self.canvas.itemconfigure(segment, state='hidden')
+        else:
+            for segment in segments:
+                self.canvas.itemconfigure(segment, state='hidden')
+        if count and radius >= 9:
+            if count_id is None:
+                count_id = self.canvas.create_text(0, 0, font=('TkDefaultFont', 8, 'bold'), fill='gray20', tags=tags)
+            self.canvas.itemconfigure(count_id, state='normal', text=str(count),
+                                      fill='white' if len(statuses) == 1 and statuses[0] in ('Good', 'Bad') else 'gray20')
+            texts.extend((count_id, x, y))
+        elif count_id is not None:
+            self.canvas.itemconfigure(count_id, state='hidden')
+        if detailed:
+            if label_id is None:
+                label_id = self.canvas.create_text(0, 0, anchor='w', justify='left', font=('TkDefaultFont', 8),
+                                                   fill='gray20', tags=tags)
+            self.canvas.itemconfigure(label_id, state='normal', text=label_text)
+            texts.extend((label_id, x + radius + 5, y))
+        elif label_id is not None:
+            self.canvas.itemconfigure(label_id, state='hidden')
+        self._location_items[location.key] = [marker, count_id, label_id, segments]
+        self.canvas.tag_raise(location.key)
+
+    def _on_device_hover(self, event):
+        current = self.canvas.find_withtag('current')
+        if not current:
+            return
+        key = self.canvas.gettags(current[0])[2]
+        if key in self._location_by_key:
+            location = self._location_by_key[key]
+            label, count, statuses = location_summary(location, self.annotations)
+            details = label + (f'\n{count} measurements' if count else '')
+            self._show_annotation(event, details)
+        elif key in self._region_by_key:
+            self._show_annotation(event, self._region_by_key[key].label)
 
     def _update_device_appearance(self, name, selected):
-        super()._update_device_appearance(name, selected)
-        if name in self.device_items:
-            marker, label = self.device_items[name]
-            if selected:
-                self.canvas.tag_raise(marker)
-            if label is not None:
-                item = self._items_by_name[name]
-                annotation = self.annotations.get(name, {})
-                self.canvas.itemconfigure(label, text=item.display_name
-                                          + (f" [{annotation['status']}]" if annotation.get('status') else '')
-                                          + (' *' if annotation.get('has_notes') else ''))
+        # Bulk selection redraws once in _update_selection_label.
+        pass
+
+    def _target_at(self, x, y):
+        transform = self._calculate_transform()
+        hits = []
+        for key, radius in self._visible_locations.items():
+            location = self._location_by_key[key]
+            cx, cy = transform(location.x, location.y)
+            distance = (x - cx) ** 2 + (y - cy) ** 2
+            if distance <= (radius + 4) ** 2:
+                hits.append((distance, location))
+        if hits:
+            return min(hits, key=lambda hit: hit[0])[1]
+        regions = [region for region in self._visible_regions
+                   if self._bounds(region, transform)[0] <= x <= self._bounds(region, transform)[2]
+                   and self._bounds(region, transform)[1] <= y <= self._bounds(region, transform)[3]]
+        return min(regions, key=lambda region: (region.bounds[2] - region.bounds[0] + 128)
+                   * (region.bounds[3] - region.bounds[1] + 128), default=None)
+
+    def _handle_click(self, x, y, ctrl_held):
+        target = self._target_at(x, y)
+        if not ctrl_held:
+            self.selected_devices.clear()
+        if target:
+            if ctrl_held and target.names <= self.selected_devices:
+                self.selected_devices.difference_update(target.names)
+            else:
+                self.selected_devices.update(target.names)
+
+    def _on_double_click(self, event):
+        target = self._target_at(event.x, event.y)
+        self._cancel_rectangle()
+        if target is None:
+            return 'break'
+        if target.key in self._region_by_key:
+            left, top, right, bottom = target.bounds
+            scale = min(max(1, self.canvas_width - 120) / (right - left + 128),
+                        max(1, self.canvas_height - 120) / (bottom - top + 128))
+            self._view = (scale, self.canvas_width / 2 + (left + right) * scale / 2,
+                          self.canvas_height / 2 - (top + bottom) * scale / 2)
+            self._draw_devices()
+        else:
+            self._zoom_at(event.x, event.y, 2)
+        return 'break'
 
     def _refresh_manual_list(self):
         if self.manual_list is None:
@@ -189,32 +304,27 @@ class SampleMap(DeviceSelectionDialog):
 
     def _update_selection_label(self):
         super()._update_selection_label()
-        self._sync_labels(self._calculate_transform())
+        self._draw_devices()
         self.on_select(set(self.selected_devices))
 
     def _on_pan_start(self, event):
         self._context_start = event.x, event.y
         return super()._on_pan_start(event)
 
-    def _on_pan_drag(self, event):
-        if self._pan_start is not None:
-            dx, dy = event.x - self._pan_start[0], event.y - self._pan_start[1]
-            self.site_bounds = {site: (left + dx, top + dy, right + dx, bottom + dy)
-                                for site, (left, top, right, bottom) in self.site_bounds.items()}
-        return super()._on_pan_drag(event)
-
     def _on_pan_end(self, event):
         super()._on_pan_end(event)
-        self._sync_labels(self._calculate_transform())
+        self._draw_devices()
         if self._context_start is not None:
             x, y = self._context_start
             if abs(event.x - x) < 5 and abs(event.y - y) < 5:
-                item = self._device_at(event.x, event.y)
-                if item is not None:
-                    self.on_context('device', item.identity, event)
+                target = self._target_at(event.x, event.y)
+                if target is None:
+                    self.on_context('chip', None, event)
+                elif target.key in self._location_by_key:
+                    identities = tuple(item.identity for item in target.members)
+                    self.on_context('devices', identities, event)
                 else:
-                    site = next((name for name, (left, top, right, bottom) in self.site_bounds.items()
-                                 if left <= event.x <= right and top <= event.y <= bottom), None)
-                    self.on_context('site' if site else 'chip', site, event)
+                    self.on_context('subsites' if target.subsites else 'site',
+                                    (target.site, target.subsites) if target.subsites else target.site, event)
         self._context_start = None
         return 'break'
