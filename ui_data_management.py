@@ -14,6 +14,7 @@ from data_management import (
     layout_devices, missing_geometry, read_notes, write_notes, plan_correction, apply_correction,
 )
 from ui_sample_view import SampleMap
+from models import has_position
 
 
 def open_file(path):
@@ -41,7 +42,7 @@ class DataManagementWindow:
         self._notes_identity, self._notes_job = None, None
         self._notes_dirty = self._loading_notes = False
         self._warned = set()
-        self._sash_job = None
+        self._sash_set = False
         self.window = tk.Toplevel(parent)
         self.window.title('Data Management')
         self.window.geometry('1250x800')
@@ -56,12 +57,12 @@ class DataManagementWindow:
         toolbar.pack(fill='x', padx=8, pady=6)
         ttk.Label(toolbar, text=str(self.data_root)).pack(side='left')
         ttk.Button(toolbar, text='Refresh', command=self.refresh).pack(side='right')
-        panes = ttk.Panedwindow(self.window, orient='horizontal')
+        panes = self.panes = ttk.Panedwindow(self.window, orient='horizontal')
         panes.pack(fill='both', expand=True, padx=8, pady=(0, 8))
         left, right = ttk.Frame(panes), ttk.Frame(panes)
         panes.add(left, weight=2)
         panes.add(right, weight=1)
-        self._sash_job = self.window.after_idle(lambda: panes.sashpos(0, int(panes.winfo_width() * 2 / 3)))
+        panes.bind('<Configure>', self._position_panes)
 
         header = ttk.Frame(left)
         header.pack(fill='x')
@@ -84,13 +85,15 @@ class DataManagementWindow:
         self.view_toggle.pack(side='right', padx=4, pady=4)
         self.explanation = ttk.Label(left, wraplength=650)
         self.explanation.pack(fill='x', padx=5, pady=4)
+        self.folder_button = ttk.Button(left, text='Correct Selected Device Folders…', command=self._correct_devices)
+        self.folder_button.pack(side='bottom', anchor='w', padx=4, pady=5)
         self.view_frame = ttk.Frame(left)
         self.view_frame.pack(fill='both', expand=True)
-        self.folder_button = ttk.Button(left, text='Correct Selected Device Folders…', command=self._correct_devices)
-        self.folder_button.pack(anchor='w', padx=4, pady=5)
 
-        self.notes_frame = ttk.LabelFrame(right, text='Select one device to edit its notes and status')
+        self.notes_frame = ttk.LabelFrame(right, text='Device Notes')
         self.notes_frame.pack(fill='x', padx=5, pady=5)
+        self.notes_identity_label = ttk.Label(self.notes_frame, text='Select one device to edit notes and status.', wraplength=320)
+        self.notes_identity_label.pack(fill='x', padx=5, pady=4)
         controls = ttk.Frame(self.notes_frame)
         controls.pack(fill='x', padx=5, pady=4)
         ttk.Label(controls, text='Status').pack(side='left')
@@ -102,7 +105,7 @@ class DataManagementWindow:
         self.clear_status_button.pack(side='left')
         self.save_label = ttk.Label(controls)
         self.save_label.pack(side='right')
-        self.notes = tk.Text(self.notes_frame, height=6, wrap='word', undo=True, state='disabled')
+        self.notes = tk.Text(self.notes_frame, width=1, height=6, wrap='word', undo=True, state='disabled')
         self.notes.pack(fill='x', padx=5, pady=(0, 5))
         self.notes.bind('<<Modified>>', self._notes_changed)
         self.notes.bind('<FocusOut>', lambda event: self.save_notes())
@@ -133,6 +136,11 @@ class DataManagementWindow:
         self.gallery_canvas.bind('<Control-a>', self._select_all_measurements)
         if sys.platform == 'darwin':
             self.gallery_canvas.bind('<Command-a>', self._select_all_measurements)
+
+    def _position_panes(self, event):
+        if not self._sash_set and event.width > 1:
+            self._sash_set = True
+            self.panes.sashpos(0, event.width * 2 // 3)
 
     def _refresh_chips(self):
         self.chips = chips_in(self.data_root)
@@ -178,7 +186,7 @@ class DataManagementWindow:
             for identity in self.all_identities:
                 status, notes = read_notes(self.data_root, identity)
                 self.annotations[self._key(identity)] = self._annotation(identity, status, notes)
-            self._show_view(as_list=bool(self.missing))
+            self._show_view(as_list=not any(has_position(device) for device in self.layout.values()))
             self._selection_changed({self._key(identity) for identity in self.selected_identities}, force=True)
         except (OSError, ValueError, UnicodeError) as exc:
             messagebox.showerror('Data Management', str(exc), parent=self.window)
@@ -196,13 +204,10 @@ class DataManagementWindow:
         for child in self.view_frame.winfo_children():
             child.destroy()
         self.map = self.device_list = None
-        self.view_toggle.configure(text='Map View' if as_list else 'List View', state='disabled' if self.missing else 'normal')
-        if self.missing:
-            examples = ', '.join(self._key(identity) for identity in self.missing[:4])
-            more = f' (+{len(self.missing) - 4} more)' if len(self.missing) > 4 else ''
-            self.explanation.configure(text=f'List view: devices.csv has missing entries or coordinates for {examples}{more}.')
-        else:
-            self.explanation.configure(text='Scroll to zoom; right/middle-drag to pan. Click or drag to select; Ctrl+Click toggles. Right-click for folder actions.')
+        drawable = any(has_position(device) for device in self.layout.values())
+        self.view_toggle.configure(text='Map View' if as_list else 'List View', state='normal' if drawable else 'disabled')
+        self.explanation.configure(text='Scroll to zoom; right/middle-drag to pan. Hover for device details; zoom in for labels.'
+                                   if not as_list else 'Select devices to browse their measurements and notes.')
         if as_list:
             self.device_list = ttk.Treeview(self.view_frame, columns=('site', 'subsite', 'device', 'status'), show='headings', selectmode='extended')
             for column in ('site', 'subsite', 'device', 'status'):
@@ -223,9 +228,12 @@ class DataManagementWindow:
             self.device_list.bind('<Button-3>', self._list_menu)
             self.device_list.bind('<Button-2>', self._list_menu)
         else:
-            items = [SimpleNamespace(name=self._key(identity), display_name=f'{identity.subsite}/{identity.device}',
-                                     identity=identity, x=device.absolute_x, y=device.absolute_y)
-                     for identity, device in self.layout.items()]
+            items = []
+            for identity in self.all_identities:
+                device = self.layout.get(identity)
+                x, y = (device.absolute_x, device.absolute_y) if device and has_position(device) else (None, None)
+                items.append(SimpleNamespace(name=self._key(identity), display_name=f'{identity.subsite}/{identity.device}',
+                                             identity=identity, x=x, y=y))
             self.map = SampleMap(self.view_frame, items, self.annotations,
                                  {self._key(identity) for identity in self.selected_identities},
                                  self._selection_changed, self._map_menu)
@@ -264,7 +272,7 @@ class DataManagementWindow:
         status, notes = read_notes(self.data_root, identity) if identity else ('', '')
         self._loading_notes = True
         self._notes_identity = identity
-        self.notes_frame.configure(text=identity.label if identity else 'Select one device to edit its notes and status')
+        self.notes_identity_label.configure(text=identity.label if identity else 'Select one device to edit notes and status.')
         self.notes.configure(state='normal')
         self.notes.delete('1.0', 'end')
         self.notes.insert('1.0', notes)
@@ -356,12 +364,12 @@ class DataManagementWindow:
                     self.photos.append(image)
                 except tk.TclError:
                     pass
-            picture = tk.Label(card, image=image, text='' if image else 'No readable plot', background='white')
+            picture = tk.Label(card, image=image, text='' if image else 'No readable plot', background='white', foreground='black')
             picture.pack(fill='x', pady=3)
             title = item.metadata.get('Procedure', item.name)
             caption = tk.Label(card, text=f'{title}\n{item.timestamp}\n{item.identity.site}/{item.identity.subsite}/{item.identity.device}'
                                + ('\n⚠ Folder / header mismatch' if item.warnings else ''),
-                               justify='left', wraplength=310, background='white')
+                               justify='left', wraplength=310, background='white', foreground='black')
             caption.pack(fill='x', padx=4, pady=3)
             for widget in (card, picture, caption):
                 widget.bind('<Button-1>', lambda event, i=index: self._gallery_click(i, event))
@@ -508,8 +516,6 @@ class DataManagementWindow:
     def close(self):
         if not self.save_notes():
             return False
-        if self._sash_job:
-            self.window.after_cancel(self._sash_job)
         self.window.destroy()
         return True
 

@@ -164,6 +164,8 @@ class DeviceSelectionDialog:
             self.canvas.bind(f"<ButtonRelease-{button}>", self._on_pan_end)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind("<Destroy>", lambda event: self._hide_annotation(), add="+")
+        self.canvas.tag_bind('device_hover', '<Enter>', self._on_device_hover)
+        self.canvas.tag_bind('device_hover', '<Leave>', lambda event: self._hide_annotation())
     
     def _plot_points(self):
         return [(device.x, device.y) for device in self.devices]
@@ -259,9 +261,11 @@ class DeviceSelectionDialog:
             self._calculate_transform()
             scale, offset_x, offset_y = self._view
             x, y = self._pan_start
-            self._view = scale, offset_x + event.x - x, offset_y + event.y - y
+            dx, dy = event.x - x, event.y - y
+            self._view = scale, offset_x + dx, offset_y + dy
             self._pan_start = event.x, event.y
-            self._draw_devices()
+            self._hide_annotation()
+            self.canvas.move('map_content', dx, dy)
         return "break"
 
     def _on_pan_end(self, event):
@@ -313,17 +317,17 @@ class DeviceSelectionDialog:
             # Draw X shape with two crossing lines
             self.canvas.create_line(
                 px - x_size, py - x_size, px + x_size, py + x_size,
-                fill="red", width=4, tags="prober"
+                fill="red", width=4, tags=("map_content", "prober")
             )
             self.canvas.create_line(
                 px - x_size, py + x_size, px + x_size, py - x_size,
-                fill="red", width=4, tags="prober"
+                fill="red", width=4, tags=("map_content", "prober")
             )
             # Label centered below the X
             self.canvas.create_text(
                 px, py + x_size + 6,
                 text="Prober", anchor="n", font=("TkDefaultFont", 8, "bold"),
-                fill="red", tags="prober_label"
+                fill="red", tags=("map_content", "prober_label")
             )
     
     def _draw_device(self, device, transform):
@@ -337,20 +341,35 @@ class DeviceSelectionDialog:
             cx + self.point_radius, cy + self.point_radius,
             fill=color if status else ("dodgerblue" if selected else "black"),
             outline="blue" if selected else color, width=3 if selected else 2,
-            tags=("device", device.name),
+            tags=("map_content", "device", device.name, "device_hover"),
         )
+        text_id = self._create_device_label(device, transform) if self._label_visible(device) else None
+        return oval_id, text_id
+
+    def _label_visible(self, device):
+        return True
+
+    def _create_device_label(self, device, transform):
+        cx, cy = transform(device.x, device.y)
+        selected = device.name in self.selected_devices
+        annotation = self.annotations.get(device.name, {})
+        status = annotation.get('status', '')
         text_id = self.canvas.create_text(
             cx + self.label_offset, cy - self.label_offset,
             text=getattr(device, 'display_name', device.name) + (f' [{status}]' if status else '')
                  + (' *' if annotation.get('has_notes') else ''),
             anchor="sw", font=("TkDefaultFont", 8),
-            fill="darkblue" if selected else "black", tags=("device_label", device.name),
+            fill="darkblue" if selected else "black", tags=("map_content", "device_label", device.name, "device_hover"),
         )
-        if annotation.get('details'):
-            for item in (oval_id, text_id):
-                self.canvas.tag_bind(item, '<Enter>', lambda event, text=annotation['details']: self._show_annotation(event, text))
-                self.canvas.tag_bind(item, '<Leave>', lambda event: self._hide_annotation())
-        return oval_id, text_id
+        return text_id
+
+    def _on_device_hover(self, event):
+        current = self.canvas.find_withtag('current')
+        if current:
+            name = self.canvas.gettags(current[0])[2]
+            details = self.annotations.get(name, {}).get('details')
+            if details:
+                self._show_annotation(event, details)
 
     def _show_annotation(self, event, text):
         self._hide_annotation()
@@ -381,7 +400,8 @@ class DeviceSelectionDialog:
         text_color = "darkblue" if selected else "black"
         
         self.canvas.itemconfig(oval_id, fill=fill_color, outline=outline_color, width=3 if selected else 2)
-        self.canvas.itemconfig(text_id, fill=text_color)
+        if text_id is not None:
+            self.canvas.itemconfig(text_id, fill=text_color)
     
     def _update_selection_label(self):
         """Update the selection count label."""
@@ -452,16 +472,15 @@ class DeviceSelectionDialog:
         self.drag_start = None
         self._update_selection_label()
     
-    def _handle_click(self, x, y, ctrl_held):
-        """Handle a click at (x, y)."""
-        # Find device under cursor
+    def _device_at(self, x, y):
         transform = self._calculate_transform()
-        clicked_device = None
-        
-        for device in self.devices:
-            if self._contains_point(device, transform, x, y):
-                clicked_device = device
-                break
+        candidates = [device for device in reversed(self.devices) if self._contains_point(device, transform, x, y)]
+        return min(candidates, key=lambda device: (transform(device.x, device.y)[0] - x) ** 2
+                   + (transform(device.x, device.y)[1] - y) ** 2, default=None)
+
+    def _handle_click(self, x, y, ctrl_held):
+        """Select the nearest marker, with the topmost marker winning shared positions."""
+        clicked_device = self._device_at(x, y)
         
         if clicked_device:
             if ctrl_held:

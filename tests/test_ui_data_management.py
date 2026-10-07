@@ -61,7 +61,7 @@ class DataBrowserTests(unittest.TestCase):
         self.b = data.Identity('C', 'S', 'Sub', 'B')
         browser._notes_identity, browser._notes_job = None, None
         browser._notes_dirty = browser._loading_notes = False
-        browser._sash_job = None
+        browser._sash_set = False
         browser._warned = set()
         browser.selected_identities = set()
         browser.map = browser.device_list = None
@@ -73,7 +73,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.measurements, browser.gallery_items = [], []
         browser.gallery_selection, browser.cards, browser.photos = set(), {}, []
         browser.page, browser.gallery_anchor = 0, None
-        for name in ('window', 'notes_frame', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
+        for name in ('window', 'notes_frame', 'notes_identity_label', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
                      'view_frame', 'view_toggle', 'explanation', 'gallery_frame', 'gallery_canvas',
                      'page_label', 'gallery_label'):
             setattr(browser, name, Mock())
@@ -144,15 +144,23 @@ class DataBrowserTests(unittest.TestCase):
         self.assertEqual(len(browser.gallery_items), 2)
         self.assertEqual(browser._notes_identity, self.a)
 
-    def test_refresh_uses_list_fallback_for_unknown_or_unpositioned_devices(self):
+    def test_unknown_device_does_not_replace_a_drawable_map(self):
         browser = self.browser
         missing = data.Identity('C', 'Unknown', 'Sub', 'D')
         self.make_measurement(missing)
         with patch.object(browser, '_show_view') as view, patch.object(browser, '_render_gallery'), patch.object(browser, '_warn_mismatches'):
             browser.refresh()
-        view.assert_called_once_with(as_list=True)
+        view.assert_called_once_with(as_list=False)
         self.assertIn(missing, browser.all_identities)
         self.assertIn(missing, browser.missing)
+
+    def test_unpositioned_layout_device_does_not_replace_a_drawable_map(self):
+        browser = self.browser
+        browser.sites[0].subsites[0].devices[0].absolute_x = None
+        with patch.object(browser, '_show_view') as view, patch.object(browser, '_render_gallery'), patch.object(browser, '_warn_mismatches'):
+            browser.refresh()
+        view.assert_called_once_with(as_list=False)
+        self.assertEqual(browser.missing, [self.a])
 
     def test_failed_autosave_prevents_switch_and_preserves_unsaved_text(self):
         browser = self.browser
@@ -265,6 +273,7 @@ class DataBrowserTests(unittest.TestCase):
         fake_tk = Mock()
         fake_tk.StringVar.side_effect = lambda *args, **kwargs: TextValue(kwargs.get('value', ''))
         fake_tk.Text.return_value.edit_modified.return_value = False
+        fake_tk.Canvas.return_value.bbox.return_value = (0, 0, 20, 12)
         fake_tk.TclError = type('TclError', (Exception,), {})
         fake_ttk = Mock()
         fake_ttk.Frame.side_effect = lambda *args, **kwargs: Mock(winfo_children=Mock(return_value=[]))
@@ -277,6 +286,13 @@ class DataBrowserTests(unittest.TestCase):
             self.assertEqual(len(browser.map.devices), 2)
             self.assertEqual(browser.map.devices[1].identity, self.b)
             browser.sites[0].subsites[0].devices[0].absolute_x = None
+            browser.refresh()
+            self.assertIsNotNone(browser.map)
+            self.assertIsNone(browser.device_list)
+            self.assertEqual([item.identity for item in browser.map.unpositioned_devices], [self.a])
+            self.assertIsNotNone(browser.map.manual_list)
+            self.assertEqual([item.identity for item in browser.map.devices], [self.b])
+            browser.sites[0].subsites[0].devices[1].absolute_y = None
             browser.refresh()
             self.assertIsNone(browser.map)
             self.assertIsNotNone(browser.device_list)

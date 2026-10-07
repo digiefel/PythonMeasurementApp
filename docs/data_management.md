@@ -11,10 +11,11 @@ Click or drag to select devices; Ctrl+Click toggles individual devices. A blue
 outline indicates selection. With no devices selected, the gallery shows the
 whole chip's measurements.
 
-If any device is missing from the layout or lacks absolute coordinates, the map
-is replaced by a list with Site, Subsite, Device, and Status columns. This includes
-devices found in saved data that are absent from `devices.csv`. You can also choose
-**List View** when all coordinates are available.
+Devices missing from the layout or lacking absolute coordinates appear in a small
+list below the map. The other devices remain on the canvas. If none have positions,
+the browser uses a list with Site, Subsite, Device, and Status columns. You can also
+choose **List View** at any time. The map overview shows markers and site names;
+zoom in for device labels, or hover over a marker for its details.
 
 ## Device notes and status
 

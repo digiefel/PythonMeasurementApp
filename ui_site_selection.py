@@ -67,16 +67,19 @@ class SiteSelectionDialog(DeviceSelectionDialog):
             *self._canvas_bounds(item.bounds, transform),
             fill="lightblue" if selected else "gray95",
             outline="blue" if selected else "gray40", width=2,
+            tags=('map_content',),
         )
         if item.selected_bounds is not None:
             self.canvas.create_rectangle(
                 *self._canvas_bounds(item.selected_bounds, transform, padding=1),
                 outline="forestgreen", width=2, dash=(4, 3),
+                tags=('map_content',),
             )
         x, y = transform(item.x, item.y)
         text_id = self.canvas.create_text(
             x, y, text=item.name, font=("TkDefaultFont", 9, "bold"),
             fill="darkblue" if selected else "black",
+            tags=('map_content',),
         )
         return rect_id, text_id
 

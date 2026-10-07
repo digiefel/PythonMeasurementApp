@@ -34,6 +34,7 @@ class DeviceCanvasTests(unittest.TestCase):
         self.dialog.annotations = {}
         self.dialog._annotation_window = None
         self.dialog.canvas = Mock()
+        self.dialog.canvas.bbox.return_value = (0, 0, 20, 12)
         self.dialog.selection_label = Mock()
 
     def navigate(self):
@@ -70,6 +71,9 @@ class DeviceCanvasTests(unittest.TestCase):
         self.assertEqual(dialog.selected_devices, {'B'})
         self.assertIsNone(dialog._pan_start)
         dialog.canvas.configure.assert_called_with(cursor='')
+        dialog.canvas.move.assert_called_once_with('map_content', 80, 60)
+        dialog.canvas.create_oval.assert_not_called()
+        dialog.canvas.delete.assert_not_called()
 
     def test_click_and_ctrl_click_hit_device_after_navigation(self):
         self.navigate()
@@ -193,14 +197,25 @@ class DeviceCanvasTests(unittest.TestCase):
             dialog._draw_devices()
             self.assertEqual(dialog.canvas.create_oval.call_args_list[-2].kwargs['fill'], color)
 
-    def test_sample_map_context_click_is_distinct_from_panning(self):
+    def make_sample_map(self, items):
         dialog = self.dialog
         dialog.__class__ = self.sample_module.SampleMap
-        dialog.devices = [SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
-                                           identity=SimpleNamespace(site='S'))]
+        dialog.devices = items
         dialog.selected_devices = set()
         dialog.on_context = Mock()
+        dialog.on_select = Mock()
         dialog._context_start = None
+        dialog._labels_visible = False
+        dialog._label_scale = None
+        dialog._site_items = {}
+        dialog._appearance = {}
+        dialog._manual_state = None
+        dialog._items_by_name = {item.name: item for item in items}
+        return dialog
+
+    def test_sample_map_context_click_is_distinct_from_panning(self):
+        dialog = self.make_sample_map([SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
+                                                       identity=SimpleNamespace(site='S', subsite='Sub'))])
         dialog._draw_devices()
         x, y = dialog._calculate_transform()(0, 0)
         dialog._on_pan_start(SimpleNamespace(x=x, y=y))
@@ -211,6 +226,49 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._on_pan_drag(SimpleNamespace(x=x + 30, y=y + 20))
         dialog._on_pan_end(SimpleNamespace(x=x + 30, y=y + 20))
         dialog.on_context.assert_not_called()
+
+    def test_dense_sample_overview_keeps_markers_and_creates_labels_only_in_view(self):
+        items = [SimpleNamespace(name=f'S/Sub/{x}_{y}', display_name=f'Sub/{x}_{y}', x=x * 10, y=y * 10,
+                                 identity=SimpleNamespace(site='S', subsite='Sub'))
+                 for x in range(30) for y in range(30)]
+        dialog = self.make_sample_map(items)
+        dialog._draw_devices()
+        self.assertEqual(dialog.canvas.create_oval.call_count, len(items))
+        self.assertTrue(all(label is None for _, label in dialog.device_items.values()))
+        marker_ids = {name: marker for name, (marker, _) in dialog.device_items.items()}
+        dialog.canvas.reset_mock()
+        dialog._zoom_at(350, 250, 2)
+        dialog.canvas.create_oval.assert_not_called()
+        dialog.canvas.create_rectangle.assert_not_called()
+        self.assertEqual(marker_ids, {name: marker for name, (marker, _) in dialog.device_items.items()})
+        dialog._zoom_at(350, 250, 10)
+        labelled = [item for item in items if dialog.device_items[item.name][1] is not None]
+        self.assertGreater(len(labelled), 0)
+        self.assertLess(len(labelled), len(items))
+        transform = dialog._calculate_transform()
+        for item in labelled:
+            x, y = transform(item.x, item.y)
+            self.assertTrue(-20 <= x <= dialog.canvas_width + 20)
+            self.assertTrue(-20 <= y <= dialog.canvas_height + 20)
+        dialog._fit_view()
+        self.assertTrue(all(label is None for _, label in dialog.device_items.values()))
+        self.assertEqual(marker_ids, {name: marker for name, (marker, _) in dialog.device_items.items()})
+
+    def test_sample_pan_moves_site_context_bounds_without_recreating_canvas_items(self):
+        dialog = self.make_sample_map([SimpleNamespace(name='S/Sub/A', display_name='Sub/A', x=0, y=0,
+                                                       identity=SimpleNamespace(site='S', subsite='Sub'))])
+        dialog._draw_devices()
+        before = dialog.site_bounds['S']
+        dialog.canvas.reset_mock()
+        dialog._on_pan_start(SimpleNamespace(x=10, y=10))
+        dialog._on_pan_drag(SimpleNamespace(x=90, y=70))
+        self.assertEqual(dialog.site_bounds['S'], tuple(value + (80 if i % 2 == 0 else 60)
+                                                       for i, value in enumerate(before)))
+        dialog.canvas.move.assert_called_once_with('map_content', 80, 60)
+        dialog.canvas.create_oval.assert_not_called()
+        dialog.canvas.create_text.assert_not_called()
+        dialog.canvas.create_rectangle.assert_not_called()
+        dialog.canvas.delete.assert_not_called()
 
 
 if __name__ == '__main__':
