@@ -85,7 +85,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.measurements, browser.gallery_items = [], []
         browser.gallery_selection, browser.cards, browser.photos = set(), {}, []
         browser.page, browser.gallery_anchor = 0, None
-        for name in ('window', 'notes_frame', 'notes_identity_label', 'gallery_header', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
+        for name in ('window', 'notes_frame', 'notes_identity_label', 'gallery_header', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list', 'chip_button', 'chip_picker',
                      'view_frame', 'view_toggle', 'gallery_frame', 'gallery_canvas',
                      'page_label', 'gallery_label', 'filter_button', 'find_count'):
             setattr(browser, name, Mock())
@@ -118,6 +118,22 @@ class DataBrowserTests(unittest.TestCase):
         self.assertEqual(browser._notes_identity, self.b)
         self.assertEqual(browser.selected_identities, {self.b})
         browser.window.after_cancel.assert_called_once()
+
+    def test_chip_picker_saves_notes_and_clears_device_scope_before_switching(self):
+        browser = self.browser
+        self.make_measurement(self.a)
+        browser._load_notes(self.a)
+        browser.notes.value = 'Keep this note when changing chip.'
+        browser._notes_dirty = True
+        browser.selected_identities = {self.a}
+        browser.visible_chips = ['C', 'Other chip']
+        browser.chip_list.curselection.return_value = (1,)
+        with patch.object(browser, 'refresh') as refresh:
+            browser._choose_chip()
+        self.assertEqual(data.read_notes(browser.data_root, self.a)[1], browser.notes.value)
+        self.assertEqual(browser.chip, 'Other chip')
+        self.assertEqual(browser.selected_identities, set())
+        refresh.assert_called_once()
 
     def test_status_autosaves_and_clears_without_modifying_notes(self):
         browser = self.browser

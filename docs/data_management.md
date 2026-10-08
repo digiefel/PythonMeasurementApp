@@ -5,7 +5,9 @@ the selected output directory as its data source; changing chips in the browser 
 the chip or site selected for a measurement run. The window opens maximized.
 
 The left two-thirds show the whole sample using the loaded `devices.csv`, with a
-searchable chip picker in the top-left. Measured sites have tinted boxes and their
+chip button in the top-left that opens a small searchable picker. Chip, name search,
+and the Map/List toggle share one compact row above the viewer.
+Measured sites have tinted boxes and their
 total measurement count inside. Small green/yellow/red badges count devices assessed
 Good/OK/Bad, including assessments made before measuring. Unmeasured regions stay
 neutral and have no measurement count.

@@ -95,16 +95,27 @@ class DataManagementWindow:
 
         header = ttk.Frame(left)
         header.pack(fill='x')
-        picker = ttk.LabelFrame(header, text='Chip')
-        picker.pack(side='left', anchor='nw', padx=4, pady=4)
+        ttk.Label(header, text='Chip').pack(side='left', padx=(4, 4))
+        self.chip_button = ttk.Button(header, text=self.chip or 'Select…', command=self._show_chip_picker)
+        self.chip_button.pack(side='left', pady=2)
+        picker = self.chip_picker = tk.Toplevel(self.window)
+        picker.withdraw()
+        picker.transient(self.window)
+        picker.overrideredirect(True)
         self.search = tk.StringVar()
-        ttk.Entry(picker, textvariable=self.search, width=24).pack(fill='x', padx=4, pady=4)
-        self.chip_list = tk.Listbox(picker, height=2, width=24, exportselection=False)
+        self.chip_search = ttk.Entry(picker, textvariable=self.search, width=24)
+        self.chip_search.pack(fill='x', padx=4, pady=4)
+        self.chip_search.bind('<Return>', self._choose_chip)
+        self.chip_list = tk.Listbox(picker, height=6, width=24, exportselection=False)
         self.chip_list.pack(fill='x', padx=4, pady=(0, 4))
         self.search.trace_add('write', lambda *_: self._filter_chips())
         self.chip_list.bind('<<ListboxSelect>>', self._choose_chip)
+        self.chip_list.bind('<Return>', self._choose_chip)
+        picker.bind('<Escape>', lambda event: picker.withdraw())
+        picker.bind('<FocusOut>', lambda event: picker.after_idle(self._dismiss_chip_picker))
+        self.window.bind('<ButtonPress>', lambda event: picker.withdraw(), add='+')
         finder = ttk.Frame(header)
-        finder.pack(side='left', padx=8, anchor='nw', pady=8)
+        finder.pack(side='left', padx=8, pady=2)
         ttk.Label(finder, text='Find').pack(side='left', padx=(0, 4))
         self.device_search = tk.StringVar()
         name_entry = ttk.Entry(finder, textvariable=self.device_search, width=26)
@@ -116,7 +127,7 @@ class DataManagementWindow:
         self.device_search.trace_add('write', self._schedule_find)
         name_entry.bind('<Return>', lambda event: self._find_devices())
         self.view_toggle = ttk.Button(header, text='List View', command=self._toggle_view)
-        self.view_toggle.pack(side='right', padx=4, pady=4)
+        self.view_toggle.pack(side='right', padx=4, pady=2)
         self.view_frame = ttk.Frame(left)
         self.view_frame.pack(fill='both', expand=True)
 
@@ -271,6 +282,18 @@ class DataManagementWindow:
         self.chips.sort(key=str.casefold)
         self._filter_chips()
 
+    def _show_chip_picker(self):
+        self.search.set('')
+        self.chip_picker.geometry(f'+{self.chip_button.winfo_rootx()}+{self.chip_button.winfo_rooty() + self.chip_button.winfo_height()}')
+        self.chip_picker.deiconify()
+        self.chip_picker.lift()
+        self.chip_search.focus_set()
+
+    def _dismiss_chip_picker(self):
+        focus = self.chip_picker.focus_get()
+        if focus is None or focus.winfo_toplevel() != self.chip_picker:
+            self.chip_picker.withdraw()
+
     def _filter_chips(self):
         self.visible_chips = [chip for chip in self.chips if self.search.get().casefold() in chip.casefold()]
         self.chip_list.delete(0, 'end')
@@ -278,6 +301,9 @@ class DataManagementWindow:
             self.chip_list.insert('end', chip)
             if chip == self.chip:
                 self.chip_list.selection_set(index)
+        if len(self.visible_chips) == 1:
+            self.chip_list.selection_set(0)
+        self.chip_button.configure(text=self.chip or 'Select…')
 
     def _choose_chip(self, event=None):
         selected = self.chip_list.curselection()
@@ -286,6 +312,7 @@ class DataManagementWindow:
                 self._filter_chips()
                 return
             chip = self.visible_chips[selected[0]]
+            self.chip_picker.withdraw()
             if chip != self.chip:
                 self.chip = chip
                 self.selected_identities.clear()
