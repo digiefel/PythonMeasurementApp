@@ -291,7 +291,8 @@ class DeviceCanvasTests(unittest.TestCase):
         self.assertNotEqual(appearance(site[0])['fill'], '#eef1f5')
         self.assertEqual(appearance(site[1])['text'], '5')
         self.assertEqual(appearance(site[1])['state'], 'normal')
-        self.assertEqual({appearance(site[i])['fill'] for i in (2, 4)}, {'forestgreen', 'firebrick'})
+        self.assertEqual({appearance(site[i])['fill'] for i in (4, 6)}, {'forestgreen', 'firebrick'})
+        self.assertEqual(appearance(site[2])['text'], 'S')
         self.assertFalse(dialog._visible_locations)
 
         dialog._view = (0.35, 350, 250)
@@ -305,22 +306,27 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._view = (0.5, 350, 250)
         dialog.selected_devices = {items[0].name}
         dialog._draw_devices()
-        marker, count, _ = dialog._location_items[dialog._locations[0].key]
+        marker, count, label, _ = dialog._location_items[dialog._locations[0].key]
+        self.assertIsNone(label)
         self.assertEqual(appearance(marker)['fill'], 'firebrick')
         self.assertEqual(appearance(marker)['outline'], 'dodgerblue')
         self.assertEqual(appearance(count)['state'], 'normal')
         self.assertEqual(appearance(count)['text'], '2')
         self.assertEqual(appearance(subsite[1])['state'], 'hidden')
-        dialog._view = (2, 350, 250)
+        dialog._view = (4, 350, 250)
         dialog._draw_devices()
-        visible_texts = [call.kwargs['text'] for call in dialog.canvas.itemconfigure.call_args_list
-                         if call.kwargs.get('state') == 'normal' and 'text' in call.kwargs]
-        self.assertTrue(all(text.isdigit() for text in visible_texts))
+        label = dialog._location_items[dialog._locations[0].key][2]
+        self.assertEqual(appearance(label)['state'], 'normal')
+        self.assertEqual(appearance(label)['text'], '0\nSub')
+        dialog._view = (0.5, 350, 250)
+        dialog._draw_devices()
+        self.assertEqual(appearance(label)['state'], 'hidden')
+        self.assertEqual(appearance(count)['state'], 'normal')
 
         dialog.annotations[items[1].name]['status'] = 'OK'
         dialog._view = (0.1, 350, 250)
         dialog._draw_devices()
-        self.assertEqual({appearance(site[i])['fill'] for i in (2, 4)}, {'gold', 'firebrick'})
+        self.assertEqual({appearance(site[i])['fill'] for i in (4, 6)}, {'gold', 'firebrick'})
 
     def test_unmeasured_region_and_device_have_no_count_or_measured_fill(self):
         items = [SimpleNamespace(name=f'S/Sub/{x}', x=x, y=0,
@@ -348,11 +354,11 @@ class DeviceCanvasTests(unittest.TestCase):
                                        identity=SimpleNamespace(site='S', subsite='Sub', device='D'))
                 dialog = self.make_sample_map([item])
                 dialog.annotations = {item.name: {'measurement_count': count, 'status': status}}
-                dialog._draw_location(dialog._locations[0], 350, 250, 10, [], [])
+                dialog._draw_location(dialog._locations[0], 350, 250, 10, False, [], [])
                 marker = dialog.canvas.itemconfigure.call_args_list[0].kwargs
                 self.assertEqual(marker['fill'], fill)
                 self.assertEqual(marker['outline'], outline)
-                _, count_id, _ = dialog._location_items[dialog._locations[0].key]
+                _, count_id, _, _ = dialog._location_items[dialog._locations[0].key]
                 if count:
                     numbers = [call.kwargs for call in dialog.canvas.itemconfigure.call_args_list if 'text' in call.kwargs]
                     self.assertEqual(numbers[-1]['text'], str(count))
@@ -360,7 +366,7 @@ class DeviceCanvasTests(unittest.TestCase):
                 else:
                     self.assertIsNone(count_id)
 
-    def test_hover_shows_identity_measurements_date_status_and_notes_without_canvas_labels(self):
+    def test_hover_shows_identity_measurements_date_status_and_notes(self):
         item = SimpleNamespace(name='S/Sub/D', x=0, y=0,
                                identity=SimpleNamespace(site='S', subsite='Sub', device='D'))
         dialog = self.make_sample_map([item])

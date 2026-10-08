@@ -81,14 +81,6 @@ class DataManagementWindow:
         self.chip_list.pack(fill='x', padx=4, pady=(0, 4))
         self.search.trace_add('write', lambda *_: self._filter_chips())
         self.chip_list.bind('<<ListboxSelect>>', self._choose_chip)
-        legend = ttk.Frame(header)
-        legend.pack(side='left', padx=8, anchor='nw', pady=4)
-        for status, color in STATUS_COLORS.items():
-            tk.Label(legend, text=f'● {status}', foreground=color).grid(row=0, column=list(STATUS_COLORS).index(status), padx=(0, 6))
-        attach_tooltip(legend, 'Filled devices have measurements; the number is their measurement count.\n'
-                       'Empty circles have no measurements. Color shows the device assessment.\n'
-                       'Tinted regions contain measurements; colored badges count assessed devices.\n'
-                       'Blue outlines show your selection.')
         self.view_toggle = ttk.Button(header, text='List View', command=self._toggle_view)
         self.view_toggle.pack(side='right', padx=4, pady=4)
         self.view_frame = ttk.Frame(left)
@@ -96,7 +88,7 @@ class DataManagementWindow:
 
         self.notes_frame = ttk.LabelFrame(right, text='Device Notes')
         self.notes_frame.pack(fill='x', padx=5, pady=5)
-        self.notes_identity_label = ttk.Label(self.notes_frame, text='Select one device to edit notes and status.', wraplength=320)
+        self.notes_identity_label = ttk.Label(self.notes_frame, wraplength=320)
         self.notes_identity_label.pack(fill='x', padx=5, pady=4)
         self.notes_member = tk.StringVar()
         self.notes_member_box = ttk.Combobox(self.notes_frame, textvariable=self.notes_member, state='readonly')
@@ -109,6 +101,7 @@ class DataManagementWindow:
         self.status_box = ttk.Combobox(controls, textvariable=self.status, values=STATUSES, width=10, state='disabled')
         self.status_box.pack(side='left', padx=6)
         self.status_box.bind('<<ComboboxSelected>>', self._status_changed)
+        attach_tooltip(self.status_box, 'Good: green. OK: yellow. Bad: red.\nStatus and notes save automatically.')
         self.clear_status_button = ttk.Button(controls, text='Clear', command=self._clear_status, state='disabled')
         self.clear_status_button.pack(side='left')
         self.save_label = ttk.Label(controls)
@@ -118,7 +111,6 @@ class DataManagementWindow:
         self.notes.bind('<<Modified>>', self._notes_changed)
         self.notes.bind('<FocusOut>', lambda event: self.save_notes())
 
-        self.notes_hint = ttk.Label(right, text='Select a device to edit notes and tag.', wraplength=340)
         gallery_header = self.gallery_header = ttk.Frame(right)
         gallery_header.pack(fill='x', padx=5, pady=3)
         self.gallery_label = ttk.Label(gallery_header, text='Measurements', justify='left')
@@ -312,13 +304,11 @@ class DataManagementWindow:
         status, notes = read_notes(self.data_root, identity) if identity else ('', '')
         self._loading_notes = True
         if identity:
-            self.notes_hint.pack_forget()
             self.notes_frame.pack(fill='x', padx=5, pady=4, before=self.gallery_header)
         else:
             self.notes_frame.pack_forget()
-            self.notes_hint.pack(fill='x', padx=5, pady=5, before=self.gallery_header)
         self._notes_identity = identity
-        self.notes_identity_label.configure(text=identity.label if identity else 'Select one device to edit notes and status.')
+        self.notes_identity_label.configure(text=identity.label if identity else '')
         self.notes.configure(state='normal')
         self.notes.delete('1.0', 'end')
         self.notes.insert('1.0', notes)
@@ -328,7 +318,7 @@ class DataManagementWindow:
         self.status.set(status)
         self.status_box.configure(state='readonly' if identity else 'disabled')
         self.clear_status_button.configure(state='normal' if identity else 'disabled')
-        self.save_label.configure(text='Saved automatically' if identity else '')
+        self.save_label.configure(text='')
         self._notes_dirty = self._loading_notes = False
 
     def _notes_changed(self, event=None):
@@ -369,7 +359,7 @@ class DataManagementWindow:
             if self.device_list:
                 self.device_list.item(key, values=(*identity.parts[1:], self.status.get()), tags=(self.status.get(),))
             self._notes_dirty = False
-            self.save_label.configure(text='Saved automatically')
+            self.save_label.configure(text='')
             return True
         except (OSError, ValueError, UnicodeError) as exc:
             self.save_label.configure(text='Not saved')

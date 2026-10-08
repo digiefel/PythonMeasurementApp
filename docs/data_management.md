@@ -19,9 +19,11 @@ selected, the gallery shows the whole chip's measurements.
 Subsites show the same measurement and assessment totals as they come into view.
 Device colors and counts appear as soon as their markers become visible. Region
 totals include separate histories at shared coordinates and data from unpositioned
-devices within that site or subsite. Names, dates, notes, and selection details
-appear in hover tooltips, keeping the canvas free of floating labels. Hover the
-info icon for navigation help and the color key for the meaning of the indicators.
+devices within that site or subsite. Site and subsite names label their regions.
+At close zoom, compact device labels show names, subsites, latest measurement date,
+and a notes indicator. Counts and colors appear at wider zooms, before those labels.
+Hover tooltips provide fuller details, notes, and selection totals. Hover the
+info icon for navigation help and the meaning of the indicators.
 Hidden and off-screen devices do not receive position updates.
 
 Devices missing from the layout or lacking absolute coordinates appear in a small
