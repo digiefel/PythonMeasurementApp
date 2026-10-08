@@ -149,6 +149,26 @@ class DataBrowserTests(unittest.TestCase):
         browser._clear_status()
         self.assertEqual(data.read_notes(browser.data_root, self.a), ('', 'test note'))
 
+    def test_saved_status_does_not_block_refresh_or_close_after_a_redraw_error(self):
+        browser = self.browser
+        self.make_measurement(self.a)
+        browser.selected_identities = {self.a}
+        browser._load_notes(self.a)
+        browser.status.value = 'Bad'
+        browser.map = Mock()
+        browser.map._draw_devices.side_effect = UnboundLocalError('tags')
+        with patch.object(self.module, 'write_notes', wraps=data.write_notes) as writes, \
+                patch.object(browser, '_show_view'):
+            with self.assertRaises(UnboundLocalError):
+                browser._status_changed()
+            self.assertEqual(data.read_notes(browser.data_root, self.a), ('Bad', ''))
+            self.assertFalse(browser._notes_dirty)
+            browser.refresh()
+            self.assertEqual(browser.annotations[browser._key(self.a)]['status'], 'Bad')
+            self.assertTrue(browser.close())
+            writes.assert_called_once()
+        browser.window.destroy.assert_called_once()
+
     def test_no_selection_shows_chip_gallery_and_multiple_devices_have_no_note_editor(self):
         browser = self.browser
         self.make_measurement(self.a)

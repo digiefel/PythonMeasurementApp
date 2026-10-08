@@ -489,19 +489,19 @@ class DataManagementWindow:
         try:
             text = self.notes.get('1.0', 'end-1c')
             write_notes(self.data_root, identity, self.status.get(), text)
-            key = self._key(identity)
-            self.annotations.setdefault(key, {}).update(self._annotation(identity, self.status.get(), text))
-            if self.map:
-                self.map._draw_devices()
-            if self.device_list:
-                self.device_list.item(key, values=(*identity.parts[1:], self.status.get()), tags=(self.status.get(),))
-            self._notes_dirty = False
-            self.save_label.configure(text='')
-            return True
         except (OSError, ValueError, UnicodeError) as exc:
             self.save_label.configure(text='Not saved')
             messagebox.showerror('Could not save device notes', str(exc), parent=self.window)
             return False
+        self._notes_dirty = False
+        self.save_label.configure(text='')
+        key = self._key(identity)
+        self.annotations.setdefault(key, {}).update(self._annotation(identity, self.status.get(), text))
+        if self.map:
+            self.map._draw_devices()
+        if self.device_list:
+            self.device_list.item(key, values=(*identity.parts[1:], self.status.get()), tags=(self.status.get(),))
+        return True
 
     def _warn_mismatches(self):
         messages = []

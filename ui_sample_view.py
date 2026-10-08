@@ -161,8 +161,8 @@ class SampleMap(DeviceSelectionDialog):
         self._refresh_manual_list()
 
     def _draw_region(self, region, bounds, collapsed):
+        tags = ('map_content', 'region', region.key, 'map_hover')
         if region.key not in self._region_items:
-            tags = ('map_content', 'region', region.key, 'map_hover')
             box = self.canvas.create_rectangle(0, 0, 0, 0, tags=tags)
             total = self.canvas.create_text(0, 0, font=('TkDefaultFont', 13, 'bold'), fill='#235467', tags=tags)
             label = self.canvas.create_text(0, 0, anchor='sw', font=('TkDefaultFont', 9, 'bold'), fill='gray25', tags=tags)

@@ -244,6 +244,37 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._on_pan_end(SimpleNamespace(x=x + 30, y=y + 20))
         dialog.on_context.assert_not_called()
 
+    def test_existing_regions_show_new_status_badges_after_device_assessments_change(self):
+        items = [SimpleNamespace(name=f'S/Sub/{index}', x=index * 100, y=0,
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=str(index)))
+                 for index in range(3)]
+        dialog = self.make_sample_map(items)
+        ids = itertools.count(1)
+        for method in ('create_rectangle', 'create_text'):
+            getattr(dialog.canvas, method).side_effect = lambda *args, **kwargs: next(ids)
+        regions = dialog._sites + dialog._subsites
+        for region in regions:
+            dialog._draw_region(region, (0, 0, 300, 100), collapsed=True)
+        for item, status, color in zip(items, ('Bad', 'Good', 'OK'), ('firebrick', 'forestgreen', 'gold')):
+            dialog.annotations[item.name] = {'status': status}
+            dialog.canvas.itemconfigure.reset_mock()
+            assessed = {value['status'] for value in dialog.annotations.values()}
+            order = [value for value in ('Good', 'OK', 'Bad') if value in assessed]
+            for region in regions:
+                dialog._draw_region(region, (0, 0, 300, 100), collapsed=True)
+                start = 4 + 2 * order.index(status)
+                badge, count = dialog._region_items[region.key][start:start + 2]
+                dialog.canvas.itemconfigure.assert_any_call(badge, fill=color)
+                dialog.canvas.itemconfigure.assert_any_call(count, text='1', fill='gray20' if status == 'OK' else 'white')
+        for region in regions:
+            dialog._draw_region(region, (0, 0, 300, 100), collapsed=True)
+        dialog.canvas.create_rectangle.reset_mock()
+        dialog.canvas.create_text.reset_mock()
+        for region in regions:
+            dialog._draw_region(region, (0, 0, 300, 100), collapsed=True)
+        dialog.canvas.create_rectangle.assert_not_called()
+        dialog.canvas.create_text.assert_not_called()
+
     def test_dense_sample_hides_devices_when_zoomed_out_and_culls_offscreen_locations(self):
         items = [SimpleNamespace(name=f'S/Sub/{x}_{y}', display_name=f'Sub/{x}_{y}', x=x * 10, y=y * 10,
                                  identity=SimpleNamespace(site='S', subsite='Sub', device=f'{x}_{y}'))
