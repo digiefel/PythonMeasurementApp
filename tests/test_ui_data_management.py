@@ -77,7 +77,8 @@ class DataBrowserTests(unittest.TestCase):
         browser._gallery_sources, browser._pictures = {}, {}
         browser.query = MeasurementQuery()
         browser.device_search = TextValue()
-        browser._captions = {}
+        browser._gallery_font = ('TkDefaultFont', 8)
+        browser._gallery_line_height = 16
         browser.annotations = {}
         browser.layout = data.layout_devices(browser.sites, browser.chip)
         browser.notes_member = TextValue()
@@ -316,6 +317,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.gallery_items = browser.measurements
         for item in browser.gallery_items:
             self.module.Image.new('RGB', (600, 240), 'white').save(item.plot_files[0])
+        browser.gallery_items[1].plot_files[0].write_bytes(b'Not a readable image')
         self.module.Image.new('RGB', (600, 900), 'white').save(browser.gallery_items[-1].plot_files[0])
         browser._gallery_width = 620
         browser.gallery_selection = {2}
@@ -325,13 +327,21 @@ class DataBrowserTests(unittest.TestCase):
                 patch.object(self.module.Image, 'open', wraps=self.module.Image.open) as opened:
             browser._render_gallery()
             self.assertEqual(browser._gallery_columns, 3)
-            self.assertEqual(photos.call_args.args[0].width, 620 // 3 - 6)
-            self.assertGreater(photos.call_args.args[0].height, 190)
+            side = 620 // 3 - 2
+            for card in browser.cards.values():
+                card.configure.assert_any_call(width=side, height=side)
+            self.assertNotIn(1, browser._gallery_sources)
+            self.assertEqual(photos.call_args_list[0].args[0].width, side - 6)
+            self.assertEqual(photos.call_args.args[0].height, side - 6 - 32)
             self.assertAlmostEqual(photos.call_args.args[0].width / photos.call_args.args[0].height, 2 / 3, delta=0.01)
             browser._resize_gallery(SimpleNamespace(width=930))
             browser._resize_thumbnails()
             self.assertEqual(browser._gallery_columns, 5)
-            self.assertEqual(photos.call_args.args[0].width, 930 // 5 - 6)
+            side = 930 // 5 - 2
+            for card in browser.cards.values():
+                card.configure.assert_any_call(width=side, height=side)
+            self.assertEqual(photos.call_args_list[-5].args[0].width, side - 6)
+            self.assertEqual(photos.call_args.args[0].height, side - 6 - 32)
             self.assertEqual(opened.call_count, len(browser.gallery_items))
         self.assertEqual(browser.gallery_selection, {2})
 
@@ -430,6 +440,7 @@ class DataBrowserTests(unittest.TestCase):
         fake_ttk.Frame.side_effect = lambda *args, **kwargs: Mock(winfo_children=Mock(return_value=[]))
         sample_globals = self.module.SampleMap._create_dialog.__globals__
         with patch.object(self.module, 'tk', fake_tk), patch.object(self.module, 'ttk', fake_ttk), \
+                patch.object(self.module.tkfont, 'Font', return_value=Mock(metrics=Mock(return_value=16))), \
                 patch.dict(sample_globals, {'tk': fake_tk, 'ttk': fake_ttk}):
             browser = self.module.DataManagementWindow(Mock(), self.browser.data_root, self.browser.sites, chip='C')
             self.assertIsNotNone(browser.map)

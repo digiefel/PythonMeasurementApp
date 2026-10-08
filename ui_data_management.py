@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 from PIL import Image, ImageTk
 
 from data_management import (
@@ -59,8 +59,10 @@ class DataManagementWindow:
         self._gallery_resize_job = None
         self._thumbnail_size = None
         self._gallery_sources, self._pictures = {}, {}
-        self._captions = {}
         self.window = tk.Toplevel(parent)
+        self._gallery_font = tkfont.Font(root=self.window, font='TkDefaultFont')
+        self._gallery_font.configure(size=8)
+        self._gallery_line_height = self._gallery_font.metrics('linespace')
         self.window.title('Data Management')
         self.window.geometry('1250x800')
         self.window.minsize(900, 600)
@@ -204,23 +206,22 @@ class DataManagementWindow:
             self.gallery_frame.columnconfigure(column, weight=1 if column < columns else 0,
                                                uniform='gallery' if column < columns else '')
         self._gallery_columns = columns
-        width = max(1, self._gallery_width // columns - 6)
+        side = max(1, self._gallery_width // columns - 2)
         for order, (index, card) in enumerate(self.cards.items()):
-            card.grid(row=order // columns, column=order % columns,
-                      sticky='nw' if index in self._gallery_sources else '', padx=1, pady=1)
-            for label in self._captions[index]:
-                label.configure(wraplength=width)
+            card.configure(width=side, height=side)
+            card.grid(row=order // columns, column=order % columns, sticky='nw', padx=1, pady=1)
 
     def _resize_thumbnails(self):
         self._gallery_resize_job = None
-        width = max(1, self._gallery_width // self._gallery_columns - 6)
-        if width == self._thumbnail_size:
+        side = self._gallery_width // self._gallery_columns - 2
+        size = max(1, side - 6), max(1, side - 6 - 2 * self._gallery_line_height)
+        if size == self._thumbnail_size:
             return
-        self._thumbnail_size = width
+        self._thumbnail_size = size
         self.photos = []
         for index, source in self._gallery_sources.items():
-            height = max(1, round(source.height * width / source.width))
-            thumbnail = source.resize((width, height), Image.Resampling.LANCZOS)
+            thumbnail = source.copy()
+            thumbnail.thumbnail(size, Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(thumbnail, master=self.window)
             self.photos.append(photo)
             self._pictures[index].configure(image=photo)
@@ -519,7 +520,7 @@ class DataManagementWindow:
             self._gallery_resize_job = None
         for child in self.gallery_frame.winfo_children():
             child.destroy()
-        self.cards, self.photos, self._captions = {}, [], {}
+        self.cards, self.photos = {}, []
         self._gallery_sources, self._pictures = {}, {}
         self._thumbnail_size = None
         pages = max(1, math.ceil(len(self.gallery_items) / self.PAGE_SIZE))
@@ -529,7 +530,8 @@ class DataManagementWindow:
         first = self.page * self.PAGE_SIZE
         for index in range(first, min(len(self.gallery_items), first + self.PAGE_SIZE)):
             item = self.gallery_items[index]
-            card = tk.Frame(self.gallery_frame, background='white', highlightthickness=1, highlightbackground='gray85')
+            card = tk.Frame(self.gallery_frame, background='white', highlightthickness=2, highlightbackground='gray85')
+            card.pack_propagate(False)
             self.cards[index] = card
             source = None
             if item.plot_files:
@@ -553,30 +555,24 @@ class DataManagementWindow:
             if display_date and len(timestamp) >= 16:
                 display_date += ' ' + timestamp[11:16]
             title_label = tk.Label(card, text=title + (' ⚠' if item.warnings else ''),
-                                   anchor='w', justify='left', wraplength=220,
-                                   font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
+                                   anchor='w', justify='left', width=1,
+                                   font=self._gallery_font, background='white', foreground='gray30', borderwidth=0, padx=0, pady=0)
             title_label.pack(fill='x', padx=1)
-            picture_parent = card
-            if source is None:
-                picture_parent = tk.Frame(card, width=48, height=48, background='white')
-                picture_parent.pack(anchor='center')
-                picture_parent.pack_propagate(False)
-            picture = self._pictures[index] = tk.Label(picture_parent, text='' if source else 'No plot',
-                               background='white', foreground='gray45', borderwidth=0, padx=0, pady=0)
-            if source is None:
-                picture.pack(fill='both', expand=True)
-            else:
-                picture.pack(fill='x', padx=1)
             caption = tk.Frame(card, background='white')
-            caption.pack(fill='x', padx=1)
+            caption.pack(side='bottom', fill='x', padx=1, pady=1)
             date_label = tk.Label(caption, text=display_date, anchor='w',
-                                 font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
-            date_label.pack(side='left')
+                                 font=self._gallery_font, background='white', foreground='gray30', borderwidth=0, padx=0, pady=0)
+            date_label.pack(side='left', padx=(0, 6))
             device_label = tk.Label(caption, text=item.identity.device, anchor='e', width=1,
-                                   font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
+                                   font=self._gallery_font, background='white', foreground='gray30', borderwidth=0, padx=0, pady=0)
             device_label.pack(side='right', fill='x', expand=True)
+            picture_parent = tk.Frame(card, background='white')
+            picture_parent.pack(fill='both', expand=True, padx=1)
+            picture_parent.pack_propagate(False)
+            picture = self._pictures[index] = tk.Label(picture_parent, text='' if source else 'No plot',
+                               background='white', foreground='gray45', anchor='center', borderwidth=0, padx=0, pady=0)
+            picture.pack(fill='both', expand=True)
             labels = [title_label, date_label, device_label]
-            self._captions[index] = [title_label]
             detail = '\n'.join(filter(None, (title, timestamp, item.identity.label, *item.warnings)))
             for widget in (card, picture, caption, *labels):
                 attach_tooltip(widget, detail)
@@ -642,7 +638,7 @@ class DataManagementWindow:
     def _paint_gallery_selection(self):
         for index, card in self.cards.items():
             card.configure(highlightbackground='dodgerblue' if index in self.gallery_selection else 'gray85',
-                           highlightthickness=2 if index in self.gallery_selection else 1)
+                           highlightthickness=2)
         self.gallery_label.configure(text=f'{len(self.gallery_items)} measurements · {len(self.gallery_selection)} selected')
 
     def _change_page(self, step):
