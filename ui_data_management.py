@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
 
 from data_management import (
     IDENTITY_KEYS, STATUSES, STATUS_COLORS, chips_in, scan_chip,
@@ -20,6 +21,8 @@ from ui_sample_view import SampleMap
 from models import has_position
 from sample_map_model import date_text
 from tooltip_helper import attach_tooltip
+from measurement_query import MeasurementQuery, find_devices
+from ui_measurement_filter import MeasurementFilterDialog
 
 
 def open_file(path):
@@ -46,9 +49,15 @@ class DataManagementWindow:
         self.map = self.device_list = None
         self._notes_identity, self._notes_job = None, None
         self._notes_dirty = self._loading_notes = False
+        self.query = MeasurementQuery()
+        self._find_job = None
         self._warned = set()
         self._sash_set = False
         self._gallery_width = 360
+        self._gallery_columns = 1
+        self._gallery_resize_job = None
+        self._thumbnail_size = None
+        self._gallery_sources, self._pictures = {}, {}
         self._captions = {}
         self.window = tk.Toplevel(parent)
         self.window.title('Data Management')
@@ -58,6 +67,18 @@ class DataManagementWindow:
         self._build()
         self._refresh_chips()
         self.refresh()
+        self.window.after(100, self._maximize)
+
+    def _maximize(self):
+        try:
+            self.window.state('zoomed')
+        except tk.TclError:
+            self.window.attributes('-zoomed', True)
+        self.window.after_idle(self._fit_initial_map)
+
+    def _fit_initial_map(self):
+        if self.map and not self.device_search.get().strip():
+            self.map._fit_view()
 
     def _build(self):
         toolbar = ttk.Frame(self.window)
@@ -81,6 +102,18 @@ class DataManagementWindow:
         self.chip_list.pack(fill='x', padx=4, pady=(0, 4))
         self.search.trace_add('write', lambda *_: self._filter_chips())
         self.chip_list.bind('<<ListboxSelect>>', self._choose_chip)
+        finder = ttk.Frame(header)
+        finder.pack(side='left', padx=8, anchor='nw', pady=8)
+        ttk.Label(finder, text='Find').pack(side='left', padx=(0, 4))
+        self.device_search = tk.StringVar()
+        name_entry = ttk.Entry(finder, textvariable=self.device_search, width=26)
+        name_entry.pack(side='left')
+        self.find_count = ttk.Label(finder)
+        self.find_count.pack(side='left', padx=4)
+        attach_tooltip(name_entry, 'Find a site, subsite, or device by name. Exact names match first.\n'
+                       'Search moves the map and highlights matches without changing your selection.')
+        self.device_search.trace_add('write', self._schedule_find)
+        name_entry.bind('<Return>', lambda event: self._find_devices())
         self.view_toggle = ttk.Button(header, text='List View', command=self._toggle_view)
         self.view_toggle.pack(side='right', padx=4, pady=4)
         self.view_frame = ttk.Frame(left)
@@ -119,8 +152,11 @@ class DataManagementWindow:
         self.page_label = ttk.Label(gallery_header)
         self.page_label.pack(side='right', padx=4)
         ttk.Button(gallery_header, text='‹', width=2, command=lambda: self._change_page(-1)).pack(side='right')
-        ttk.Button(right, text='Correct Assignment…', command=self._correct_measurements).pack(
-            side='bottom', anchor='e', padx=5, pady=5)
+        gallery_actions = ttk.Frame(right)
+        gallery_actions.pack(side='bottom', fill='x', padx=5, pady=5)
+        self.filter_button = ttk.Button(gallery_actions, text='Find / Filter…', command=self._open_filter)
+        self.filter_button.pack(side='left')
+        ttk.Button(gallery_actions, text='Correct Assignment…', command=self._correct_measurements).pack(side='right')
         self.gallery_canvas = tk.Canvas(right, highlightthickness=0, background='#f4f5f7')
         scroll = ttk.Scrollbar(right, orient='vertical', command=self.gallery_canvas.yview)
         scroll.pack(side='right', fill='y')
@@ -134,8 +170,10 @@ class DataManagementWindow:
         self.gallery_canvas.bind('<Button-4>', self._scroll_gallery)
         self.gallery_canvas.bind('<Button-5>', self._scroll_gallery)
         self.gallery_canvas.bind('<Control-a>', self._select_all_measurements)
+        self.window.bind('<Control-f>', lambda event: self._open_filter())
         if sys.platform == 'darwin':
             self.gallery_canvas.bind('<Command-a>', self._select_all_measurements)
+            self.window.bind('<Command-f>', lambda event: self._open_filter())
 
     def _resize_gallery(self, event):
         if event.width <= 1:
@@ -143,14 +181,88 @@ class DataManagementWindow:
         self._gallery_width = event.width
         self.gallery_canvas.itemconfigure(self.gallery_window, width=event.width)
         self.gallery_label.configure(wraplength=max(80, event.width - 150))
-        for labels in self._captions.values():
-            for label in labels:
-                label.configure(wraplength=max(100, event.width - 150))
+        self._layout_gallery()
+        if self._gallery_resize_job:
+            self.window.after_cancel(self._gallery_resize_job)
+        self._gallery_resize_job = self.window.after(120, self._resize_thumbnails)
+
+    def _layout_gallery(self):
+        columns = max(1, self._gallery_width // 220)
+        for column in range(max(columns, self._gallery_columns)):
+            self.gallery_frame.columnconfigure(column, weight=1 if column < columns else 0,
+                                               uniform='gallery' if column < columns else '')
+        self._gallery_columns = columns
+        width = max(80, self._gallery_width // columns - 12)
+        for order, (index, card) in enumerate(self.cards.items()):
+            card.grid(row=order // columns, column=order % columns, sticky='nsew', padx=2, pady=2)
+            for label in self._captions[index]:
+                label.configure(wraplength=width)
+
+    def _resize_thumbnails(self):
+        self._gallery_resize_job = None
+        width = max(80, (self._gallery_width // self._gallery_columns - 12) // 16 * 16)
+        size = width, 190
+        if size == self._thumbnail_size:
+            return
+        self._thumbnail_size = size
+        self.photos = []
+        for index, source in self._gallery_sources.items():
+            thumbnail = source.copy()
+            thumbnail.thumbnail(size, Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(thumbnail, master=self.window)
+            self.photos.append(photo)
+            self._pictures[index].configure(image=photo)
 
     def _position_panes(self, event):
         if not self._sash_set and event.width > 1:
             self._sash_set = True
             self.panes.sashpos(0, event.width * 2 // 3)
+
+    def _schedule_find(self, *_):
+        if self._find_job:
+            self.window.after_cancel(self._find_job)
+        self._find_job = self.window.after(200, self._find_devices)
+
+    def _find_devices(self):
+        if self._find_job:
+            self.window.after_cancel(self._find_job)
+            self._find_job = None
+        text = self.device_search.get().strip()
+        matches = find_devices(self.all_identities, text)
+        keys = {self._key(identity) for identity in matches}
+        self.find_count.configure(text=str(len(matches)) if text else '')
+        if self.map:
+            self.map.focus_matches(keys)
+        if self.device_list:
+            self.device_list.tag_configure('found', background='#fff0c2')
+            for identity in self.all_identities:
+                key = self._key(identity)
+                status = self.annotations[key]['status']
+                self.device_list.item(key, tags=(status, 'found') if identity in matches else (status,))
+            if matches:
+                self.device_list.see(self._key(sorted(matches)[0]))
+
+    def _open_filter(self):
+        if self.save_notes():
+            MeasurementFilterDialog(self.window, self.query, self.measurements, self._apply_query)
+        return 'break'
+
+    def _apply_query(self, query):
+        if not self.save_notes():
+            return False
+        self.query = query
+        self._filter_gallery()
+        return True
+
+    def _filter_gallery(self):
+        self.gallery_items = [item for item in self.measurements
+                              if (not self.selected_identities or item.identity in self.selected_identities)
+                              and (not self.query.active or self.query.matches(item, self.annotations.get(self._key(item.identity), {})))]
+        self.gallery_selection.clear()
+        self.gallery_anchor, self.page = None, 0
+        self.filter_button.configure(text='Find / Filter ●' if self.query.active else 'Find / Filter…')
+        self._render_gallery()
+        self._warn_mismatches()
 
     def _refresh_chips(self):
         self.chips = chips_in(self.data_root)
@@ -252,6 +364,7 @@ class DataManagementWindow:
             self.map = SampleMap(self.view_frame, items, self.annotations,
                                  {self._key(identity) for identity in self.selected_identities},
                                  self._selection_changed, self._map_menu)
+        self.view_frame.after_idle(self._find_devices)
 
     def _toggle_view(self):
         if self.save_notes():
@@ -287,12 +400,7 @@ class DataManagementWindow:
             messagebox.showerror('Could not read device notes', str(exc), parent=self.window)
             return
         self.selected_identities = selected
-        self.gallery_items = [item for item in self.measurements
-                              if not self.selected_identities or item.identity in self.selected_identities]
-        self.gallery_selection.clear()
-        self.gallery_anchor, self.page = None, 0
-        self._render_gallery()
-        self._warn_mismatches()
+        self._filter_gallery()
 
     def _choose_notes_member(self, event=None):
         if self.save_notes():
@@ -378,9 +486,14 @@ class DataManagementWindow:
             WarningPopup(self.window, messages)
 
     def _render_gallery(self):
+        if self._gallery_resize_job:
+            self.window.after_cancel(self._gallery_resize_job)
+            self._gallery_resize_job = None
         for child in self.gallery_frame.winfo_children():
             child.destroy()
         self.cards, self.photos, self._captions = {}, [], {}
+        self._gallery_sources, self._pictures = {}, {}
+        self._thumbnail_size = None
         pages = max(1, math.ceil(len(self.gallery_items) / self.PAGE_SIZE))
         self.page = min(self.page, pages - 1)
         self.page_label.configure(text=f'{self.page + 1} / {pages}')
@@ -389,25 +502,15 @@ class DataManagementWindow:
         for index in range(first, min(len(self.gallery_items), first + self.PAGE_SIZE)):
             item = self.gallery_items[index]
             card = tk.Frame(self.gallery_frame, background='white', highlightthickness=1, highlightbackground='gray85')
-            card.pack(fill='x', padx=2, pady=2)
             self.cards[index] = card
-            image = None
+            source = None
             if item.plot_files:
                 try:
-                    image = tk.PhotoImage(master=self.window, file=str(item.plot_files[0]))
-                    factor = max(1, math.ceil(max(image.width() / 128, image.height() / 84)))
-                    image = image.subsample(factor, factor)
-                    self.photos.append(image)
-                except tk.TclError:
+                    with Image.open(item.plot_files[0]) as original:
+                        original.thumbnail((480, 320), Image.Resampling.LANCZOS)
+                        source = self._gallery_sources[index] = original.copy()
+                except (OSError, ValueError):
                     pass
-            thumbnail = tk.Frame(card, width=132, height=max(48, image.height() if image else 48), background='white')
-            thumbnail.pack(side='left', padx=(3, 5), pady=3)
-            thumbnail.pack_propagate(False)
-            picture = tk.Label(thumbnail, image=image, text='' if image else 'No plot',
-                               background='white', foreground='gray45')
-            picture.pack(fill='both', expand=True)
-            caption = tk.Frame(card, background='white')
-            caption.pack(side='left', fill='both', expand=True, padx=(0, 4), pady=3)
             title = item.metadata.get('Procedure', item.name)
             # Standard filenames repeat identity and timestamp; keep their procedure suffix.
             if 'Procedure' not in item.metadata:
@@ -418,21 +521,26 @@ class DataManagementWindow:
                     timestamp = datetime.strptime(timestamp[:15], '%Y%m%d_%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     pass
-            lines = [(title + (' ⚠' if item.warnings else ''), True),
-                     (timestamp, False),
-                     (f'{item.identity.site} · {item.identity.subsite}/{item.identity.device}', False)]
-            labels = []
-            for text, bold in lines:
-                if not text:
-                    continue
-                label = tk.Label(caption, text=text, anchor='w', justify='left',
-                                 wraplength=max(100, self._gallery_width - 150),
-                                 font=('TkDefaultFont', 10, 'bold') if bold else ('TkDefaultFont', 9),
-                                 background='white', foreground='gray20' if bold else 'gray40')
-                label.pack(fill='x', anchor='w')
-                labels.append(label)
-            self._captions[index] = labels
-            for widget in (card, thumbnail, picture, caption, *labels):
+            title_label = tk.Label(card, text=title + (' ⚠' if item.warnings else ''),
+                                   anchor='w', justify='left', wraplength=220,
+                                   font=('TkDefaultFont', 8), background='white', foreground='gray30')
+            title_label.pack(fill='x', padx=3, pady=(1, 0))
+            picture = self._pictures[index] = tk.Label(card, text='' if source else 'No plot',
+                               background='white', foreground='gray45', borderwidth=0, padx=0, pady=0)
+            picture.pack(fill='x', padx=3)
+            caption = tk.Frame(card, background='white')
+            caption.pack(fill='x', padx=3, pady=(0, 1))
+            date_label = tk.Label(caption, text=date_text(item.timestamp), anchor='w',
+                                 font=('TkDefaultFont', 8), background='white', foreground='gray30')
+            date_label.pack(side='left')
+            device_label = tk.Label(caption, text=item.identity.device, anchor='e',
+                                   font=('TkDefaultFont', 8), background='white', foreground='gray30')
+            device_label.pack(side='right')
+            labels = [title_label, date_label, device_label]
+            self._captions[index] = [title_label]
+            detail = '\n'.join(filter(None, (title, timestamp, item.identity.label, *item.warnings)))
+            for widget in (card, picture, caption, *labels):
+                attach_tooltip(widget, detail)
                 widget.bind('<Button-1>', lambda event, i=index: self._gallery_click(i, event))
                 widget.bind('<Double-Button-1>', lambda event, i=index: self._gallery_open(i, event))
                 widget.bind('<Button-3>', lambda event, i=index: self._gallery_menu(i, event))
@@ -441,11 +549,15 @@ class DataManagementWindow:
                 widget.bind('<Button-4>', self._scroll_gallery)
                 widget.bind('<Button-5>', self._scroll_gallery)
                 widget.bind('<Control-a>', self._select_all_measurements)
+                widget.bind('<Control-f>', lambda event: self._open_filter())
                 if sys.platform == 'darwin':
                     widget.bind('<Command-Button-1>', lambda event, i=index: self._gallery_click(i, event, additive=True))
                     widget.bind('<Command-a>', self._select_all_measurements)
+                    widget.bind('<Command-f>', lambda event: self._open_filter())
         if not self.gallery_items:
-            ttk.Label(self.gallery_frame, text='No saved measurements for this selection.').pack(padx=10, pady=20)
+            ttk.Label(self.gallery_frame, text='No saved measurements for this selection.').grid(padx=10, pady=20)
+        self._layout_gallery()
+        self._resize_thumbnails()
         self.gallery_canvas.yview_moveto(0)
         self._paint_gallery_selection()
 
@@ -574,6 +686,12 @@ class DataManagementWindow:
     def close(self):
         if not self.save_notes():
             return False
+        if self._gallery_resize_job:
+            self.window.after_cancel(self._gallery_resize_job)
+            self._gallery_resize_job = None
+        if self._find_job:
+            self.window.after_cancel(self._find_job)
+            self._find_job = None
         self.window.destroy()
         return True
 

@@ -1,5 +1,6 @@
 pyvisa
 matplotlib
+Pillow
 sentio-prober-control
 dearpygui
 scipy

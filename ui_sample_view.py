@@ -14,6 +14,7 @@ class SampleMap(DeviceSelectionDialog):
         self.on_select, self.on_context = on_select, on_context
         self._context_start = None
         self._hover_job = None
+        self.search_matches = set()
         self._locations, self._sites, self._subsites = build_geometry(items)
         self._location_by_key = {location.key: location for location in self._locations}
         self._region_by_key = {region.key: region for region in self._sites + self._subsites}
@@ -170,9 +171,10 @@ class SampleMap(DeviceSelectionDialog):
         items = self._region_items[region.key]
         box, total, label, background = items[:4]
         selected_count = len(region.names & self.selected_devices)
+        found = bool(region.names & getattr(self, 'search_matches', set()))
         count, statuses = measurement_summary(region.members, self.annotations)
         self.canvas.itemconfigure(box, state='normal', fill=('#d9edf4' if count else '#eef1f5') if collapsed else '',
-                                  outline='dodgerblue' if selected_count else ('#397e96' if count else ('gray50' if collapsed else 'gray80')),
+                                  outline='dodgerblue' if selected_count else '#d98c00' if found else ('#397e96' if count else ('gray50' if collapsed else 'gray80')),
                                   width=2 if selected_count or collapsed else 1, dash=() if collapsed else (3, 3))
         self.canvas.coords(box, *bounds)
         self.canvas.tag_lower(box)
@@ -218,6 +220,7 @@ class SampleMap(DeviceSelectionDialog):
         statuses = tuple(dict.fromkeys(self.annotations.get(item.name, {}).get('status', '')
                                        for item in location.members))
         selected = bool(location.names & self.selected_devices)
+        found = bool(location.names & getattr(self, 'search_matches', set()))
         tags = ('map_content', 'location', location.key, 'map_hover')
         if location.key not in self._location_items:
             marker = self.canvas.create_oval(0, 0, 0, 0, tags=tags)
@@ -225,7 +228,7 @@ class SampleMap(DeviceSelectionDialog):
         marker, count_id, label_id, segments = self._location_items[location.key]
         color = STATUS_COLORS.get(statuses[0], 'black') if len(statuses) == 1 else 'black'
         self.canvas.itemconfigure(marker, state='normal', fill=color if count else 'white',
-                                  outline='dodgerblue' if selected else color,
+                                  outline='dodgerblue' if selected else '#d98c00' if found else color,
                                   width=3 if selected else 2)
         coords = x - radius, y - radius, x + radius, y + radius
         positions.extend((marker, *coords))
@@ -235,7 +238,7 @@ class SampleMap(DeviceSelectionDialog):
                 segments.append(self.canvas.create_arc(0, 0, 0, 0, style='arc', tags=tags))
             for index, segment in enumerate(segments):
                 if index < len(statuses):
-                    inset = min(3, radius / 4) if selected else 0
+                    inset = min(3, radius / 4) if selected or found else 0
                     positions.extend((segment, x - radius + inset, y - radius + inset,
                                       x + radius - inset, y + radius - inset))
                     segment_color = STATUS_COLORS.get(statuses[index], 'black')
@@ -314,6 +317,25 @@ class SampleMap(DeviceSelectionDialog):
         self._hide_annotation()
         return super()._on_mouse_down(event)
 
+    def focus_matches(self, names):
+        self.search_matches = set(names)
+        points = [(item.x, item.y) for item in self.devices if item.name in names]
+        if points:
+            xs, ys = zip(*points)
+            span_x = max(320, max(xs) - min(xs) + 128)
+            span_y = max(320, max(ys) - min(ys) + 128)
+            scale = min(max(1, self.canvas_width - 120) / span_x,
+                        max(1, self.canvas_height - 120) / span_y)
+            self._cancel_rectangle()
+            self._view = (scale, self.canvas_width / 2 + (min(xs) + max(xs)) * scale / 2,
+                          self.canvas_height / 2 - (min(ys) + max(ys)) * scale / 2)
+        self._draw_devices()
+        if self.manual_list is not None:
+            for index, item in enumerate(self.unpositioned_devices):
+                if item.name in names:
+                    self.manual_list.see(index)
+                    break
+
     def _update_device_appearance(self, name, selected):
         # Bulk selection redraws once in _update_selection_label.
         pass
@@ -366,6 +388,7 @@ class SampleMap(DeviceSelectionDialog):
             return
         state = tuple((item.name, self.annotations.get(item.name, {}).get('status', ''),
                        self.annotations.get(item.name, {}).get('measurement_count', 0),
+                       item.name in getattr(self, 'search_matches', set()),
                        item.name in self.selected_devices) for item in self.unpositioned_devices)
         if state == self._manual_state:
             return
@@ -379,6 +402,8 @@ class SampleMap(DeviceSelectionDialog):
                                     + item.name + (f' [{status}]' if status else ''))
             if status:
                 self.manual_list.itemconfigure(index, foreground=STATUS_COLORS.get(status, 'gray'))
+            self.manual_list.itemconfigure(index, background='#fff0c2' if item.name in getattr(self, 'search_matches', set())
+                                           else self.manual_list.cget('background'))
             if item.name in self.selected_devices:
                 self.manual_list.selection_set(index)
 

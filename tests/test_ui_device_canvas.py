@@ -441,6 +441,21 @@ class DeviceCanvasTests(unittest.TestCase):
         self.assertEqual(dialog.selected_devices, set())
         self.assertFalse(dialog.on_context.called)
 
+    def test_name_find_centers_and_highlights_device_without_changing_selection(self):
+        items = [SimpleNamespace(name=f'S/Sub/{name}', x=x, y=0,
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=name))
+                 for name, x in (('A', 0), ('B', 1000))]
+        dialog = self.make_sample_map(items)
+        dialog.selected_devices = {items[1].name}
+        dialog.focus_matches({items[0].name})
+        self.assertEqual(dialog._calculate_transform()(0, 0), (350, 250))
+        self.assertEqual(dialog.selected_devices, {items[1].name})
+        dialog.on_select.assert_not_called()
+        self.assertTrue(any(call.kwargs.get('outline') == '#d98c00'
+                            for call in dialog.canvas.itemconfigure.call_args_list))
+        dialog.focus_matches(set())
+        self.assertEqual(dialog.search_matches, set())
+
     def test_sample_site_box_and_padding_scale_together_when_zooming_out(self):
         dialog = self.make_sample_map([
             SimpleNamespace(name=f'S/Sub/{x}', display_name=f'Sub/{x}', x=x, y=x,

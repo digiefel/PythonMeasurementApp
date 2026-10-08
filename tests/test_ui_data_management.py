@@ -7,8 +7,10 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from PIL import Image, ImageTk
 
 import data_management as data
+from measurement_query import Condition, MeasurementQuery
 from models import Device, Site, Subsite
 from tests.test_ui_connections import load_ui
 
@@ -69,6 +71,12 @@ class DataBrowserTests(unittest.TestCase):
         browser.status = TextValue()
         browser.search = TextValue()
         browser._gallery_width = 360
+        browser._gallery_columns = 1
+        browser._gallery_resize_job = browser._find_job = None
+        browser._thumbnail_size = None
+        browser._gallery_sources, browser._pictures = {}, {}
+        browser.query = MeasurementQuery()
+        browser.device_search = TextValue()
         browser._captions = {}
         browser.annotations = {}
         browser.layout = data.layout_devices(browser.sites, browser.chip)
@@ -77,10 +85,12 @@ class DataBrowserTests(unittest.TestCase):
         browser.measurements, browser.gallery_items = [], []
         browser.gallery_selection, browser.cards, browser.photos = set(), {}, []
         browser.page, browser.gallery_anchor = 0, None
-        for name in ('window', 'notes_frame', 'notes_identity_label', 'notes_hint', 'gallery_header', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
-                     'view_frame', 'view_toggle', 'explanation', 'gallery_frame', 'gallery_canvas',
-                     'page_label', 'gallery_label'):
+        for name in ('window', 'notes_frame', 'notes_identity_label', 'gallery_header', 'notes_member_box', 'save_label', 'status_box', 'clear_status_button', 'chip_list',
+                     'view_frame', 'view_toggle', 'gallery_frame', 'gallery_canvas',
+                     'page_label', 'gallery_label', 'filter_button', 'find_count'):
             setattr(browser, name, Mock())
+        browser.gallery_frame.winfo_children.return_value = []
+        browser.gallery_window = 1
 
     def make_measurement(self, identity, timestamp='20261006_120000', wrong_header=False):
         directory = identity.directory(self.browser.data_root)
@@ -244,6 +254,67 @@ class DataBrowserTests(unittest.TestCase):
         with patch.object(self.module, 'CorrectionDialog') as dialog:
             browser._correct_measurements()
         dialog.assert_called_once_with(browser, browser.gallery_items)
+
+    def test_query_filters_gallery_within_device_scope_and_clear_restores_it(self):
+        self.make_measurement(self.a, '20261006_120000')
+        self.make_measurement(self.a, '20261008_120000')
+        self.make_measurement(self.b, '20261008_130000')
+        browser = self.browser
+        browser.selected_identities = {self.a}
+        with patch.object(browser, '_render_gallery'), patch.object(browser, '_warn_mismatches'):
+            self.assertTrue(browser._apply_query(MeasurementQuery(conditions=(Condition('Date', 'on or after', '2026-10-08'),))))
+            self.assertEqual([(item.identity, item.timestamp) for item in browser.gallery_items], [(self.a, '20261008_120000')])
+            browser._apply_query(MeasurementQuery())
+            self.assertEqual(len(browser.gallery_items), 2)
+        self.assertEqual(browser.selected_identities, {self.a})
+
+    def test_filter_dialog_builds_and_applies_date_range_with_conditions(self):
+        self.make_measurement(self.a)
+        module = importlib.import_module('ui_measurement_filter')
+        fake_tk = Mock()
+        fake_tk.StringVar.side_effect = lambda *args, **kwargs: TextValue(kwargs.get('value', ''))
+        apply = Mock(return_value=True)
+        query = MeasurementQuery(conditions=(Condition('Procedure', 'contains', 'IV'),),
+                                 from_date='2026-10-01', to_date='2026-10-08')
+        with patch.object(module, 'tk', fake_tk), patch.object(module, 'ttk', Mock()):
+            dialog = module.MeasurementFilterDialog(Mock(), query, self.browser.measurements, apply)
+            dialog._submit()
+        apply.assert_called_once_with(query)
+        dialog.window.destroy.assert_called_once()
+
+    def test_name_search_centers_matches_without_changing_device_or_gallery_selection(self):
+        browser = self.browser
+        browser.map = Mock()
+        browser.selected_identities = {self.b}
+        browser.gallery_selection = {2}
+        browser.device_search.set('A')
+        browser._find_devices()
+        browser.map.focus_matches.assert_called_once_with({browser._key(self.a)})
+        self.assertEqual(browser.selected_identities, {self.b})
+        self.assertEqual(browser.gallery_selection, {2})
+
+    def test_grid_resize_preserves_selection_and_reuses_loaded_larger_plot_previews(self):
+        for second in range(6):
+            self.make_measurement(self.a, f'20261008_12000{second}')
+        browser = self.browser
+        browser.gallery_items = browser.measurements
+        for item in browser.gallery_items:
+            self.module.Image.new('RGB', (600, 240), 'white').save(item.plot_files[0])
+        browser._gallery_width = 620
+        browser.gallery_selection = {2}
+        fake_tk = Mock()
+        with patch.object(self.module, 'tk', fake_tk), \
+                patch.object(self.module.ImageTk, 'PhotoImage') as photos, \
+                patch.object(self.module.Image, 'open', wraps=self.module.Image.open) as opened:
+            browser._render_gallery()
+            self.assertEqual(browser._gallery_columns, 2)
+            self.assertGreaterEqual(photos.call_args.args[0].width, 200)
+            self.assertLessEqual(photos.call_args.args[0].height, 190)
+            browser._resize_gallery(SimpleNamespace(width=930))
+            browser._resize_thumbnails()
+            self.assertEqual(browser._gallery_columns, 4)
+            self.assertEqual(opened.call_count, len(browser.gallery_items))
+        self.assertEqual(browser.gallery_selection, {2})
 
     def test_correction_dialog_builds_and_moves_selected_artifacts_without_device_notes(self):
         self.make_measurement(self.a)
