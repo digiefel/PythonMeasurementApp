@@ -300,6 +300,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.gallery_items = browser.measurements
         for item in browser.gallery_items:
             self.module.Image.new('RGB', (600, 240), 'white').save(item.plot_files[0])
+        self.module.Image.new('RGB', (600, 900), 'white').save(browser.gallery_items[-1].plot_files[0])
         browser._gallery_width = 620
         browser.gallery_selection = {2}
         fake_tk = Mock()
@@ -307,12 +308,14 @@ class DataBrowserTests(unittest.TestCase):
                 patch.object(self.module.ImageTk, 'PhotoImage') as photos, \
                 patch.object(self.module.Image, 'open', wraps=self.module.Image.open) as opened:
             browser._render_gallery()
-            self.assertEqual(browser._gallery_columns, 2)
-            self.assertGreaterEqual(photos.call_args.args[0].width, 200)
-            self.assertLessEqual(photos.call_args.args[0].height, 190)
+            self.assertEqual(browser._gallery_columns, 3)
+            self.assertEqual(photos.call_args.args[0].width, 620 // 3 - 6)
+            self.assertGreater(photos.call_args.args[0].height, 190)
+            self.assertAlmostEqual(photos.call_args.args[0].width / photos.call_args.args[0].height, 2 / 3, delta=0.01)
             browser._resize_gallery(SimpleNamespace(width=930))
             browser._resize_thumbnails()
-            self.assertEqual(browser._gallery_columns, 4)
+            self.assertEqual(browser._gallery_columns, 5)
+            self.assertEqual(photos.call_args.args[0].width, 930 // 5 - 6)
             self.assertEqual(opened.call_count, len(browser.gallery_items))
         self.assertEqual(browser.gallery_selection, {2})
 

@@ -38,6 +38,7 @@ def open_file(path):
 
 class DataManagementWindow:
     PAGE_SIZE = 30
+    MIN_CARD_WIDTH = 180
 
     def __init__(self, parent, data_root, sites, chip='', is_running=lambda: False):
         self.data_root, self.sites = Path(data_root).absolute(), sites
@@ -187,28 +188,27 @@ class DataManagementWindow:
         self._gallery_resize_job = self.window.after(120, self._resize_thumbnails)
 
     def _layout_gallery(self):
-        columns = max(1, self._gallery_width // 220)
+        columns = max(1, self._gallery_width // self.MIN_CARD_WIDTH)
         for column in range(max(columns, self._gallery_columns)):
             self.gallery_frame.columnconfigure(column, weight=1 if column < columns else 0,
                                                uniform='gallery' if column < columns else '')
         self._gallery_columns = columns
-        width = max(80, self._gallery_width // columns - 12)
+        width = max(1, self._gallery_width // columns - 6)
         for order, (index, card) in enumerate(self.cards.items()):
-            card.grid(row=order // columns, column=order % columns, sticky='nsew', padx=2, pady=2)
+            card.grid(row=order // columns, column=order % columns, sticky='nw', padx=1, pady=1)
             for label in self._captions[index]:
                 label.configure(wraplength=width)
 
     def _resize_thumbnails(self):
         self._gallery_resize_job = None
-        width = max(80, (self._gallery_width // self._gallery_columns - 12) // 16 * 16)
-        size = width, 190
-        if size == self._thumbnail_size:
+        width = max(1, self._gallery_width // self._gallery_columns - 6)
+        if width == self._thumbnail_size:
             return
-        self._thumbnail_size = size
+        self._thumbnail_size = width
         self.photos = []
         for index, source in self._gallery_sources.items():
-            thumbnail = source.copy()
-            thumbnail.thumbnail(size, Image.Resampling.LANCZOS)
+            height = max(1, round(source.height * width / source.width))
+            thumbnail = source.resize((width, height), Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(thumbnail, master=self.window)
             self.photos.append(photo)
             self._pictures[index].configure(image=photo)
@@ -521,21 +521,24 @@ class DataManagementWindow:
                     timestamp = datetime.strptime(timestamp[:15], '%Y%m%d_%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     pass
+            display_date = date_text(item.timestamp)
+            if display_date and len(timestamp) >= 16:
+                display_date += ' ' + timestamp[11:16]
             title_label = tk.Label(card, text=title + (' ⚠' if item.warnings else ''),
                                    anchor='w', justify='left', wraplength=220,
-                                   font=('TkDefaultFont', 8), background='white', foreground='gray30')
-            title_label.pack(fill='x', padx=3, pady=(1, 0))
+                                   font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
+            title_label.pack(fill='x', padx=1)
             picture = self._pictures[index] = tk.Label(card, text='' if source else 'No plot',
                                background='white', foreground='gray45', borderwidth=0, padx=0, pady=0)
-            picture.pack(fill='x', padx=3)
+            picture.pack(fill='x', padx=1)
             caption = tk.Frame(card, background='white')
-            caption.pack(fill='x', padx=3, pady=(0, 1))
-            date_label = tk.Label(caption, text=date_text(item.timestamp), anchor='w',
-                                 font=('TkDefaultFont', 8), background='white', foreground='gray30')
+            caption.pack(fill='x', padx=1)
+            date_label = tk.Label(caption, text=display_date, anchor='w',
+                                 font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
             date_label.pack(side='left')
-            device_label = tk.Label(caption, text=item.identity.device, anchor='e',
-                                   font=('TkDefaultFont', 8), background='white', foreground='gray30')
-            device_label.pack(side='right')
+            device_label = tk.Label(caption, text=item.identity.device, anchor='e', width=1,
+                                   font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
+            device_label.pack(side='right', fill='x', expand=True)
             labels = [title_label, date_label, device_label]
             self._captions[index] = [title_label]
             detail = '\n'.join(filter(None, (title, timestamp, item.identity.label, *item.warnings)))

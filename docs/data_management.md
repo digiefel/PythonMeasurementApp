@@ -84,8 +84,8 @@ same device name, the label says **Mixed**, and hovering shows each site's statu
 
 The right-hand gallery uses a grid that adjusts to the available width, newest first.
 Each card shows the procedure above a large plot preview, followed by one line with
-the date on the left and device on the right. Hover for the full timestamp and
-device path. A plain click selects a measurement;
+the date and 24-hour time (`YYYY-MM-DD HH:mm`) on the left and device on the right.
+Hover for the full timestamp and device path. A plain click selects a measurement;
 double-click opens its plot in the associated image application. Ctrl+Click
 (or Command+Click on macOS) toggles selection; Shift+Click selects a range.
 Ctrl+A or Command+A selects the gallery.
