@@ -208,13 +208,13 @@ class DataManagementWindow:
         self._gallery_columns = columns
         side = max(1, self._gallery_width // columns - 2)
         for order, (index, card) in enumerate(self.cards.items()):
-            card.configure(width=side, height=side)
+            card.configure(width=side, height=side + 2 * self._gallery_line_height)
             card.grid(row=order // columns, column=order % columns, sticky='nw', padx=1, pady=1)
 
     def _resize_thumbnails(self):
         self._gallery_resize_job = None
         side = self._gallery_width // self._gallery_columns - 2
-        size = max(1, side - 6), max(1, side - 6 - 2 * self._gallery_line_height)
+        size = (max(1, side - 6),) * 2
         if size == self._thumbnail_size:
             return
         self._thumbnail_size = size

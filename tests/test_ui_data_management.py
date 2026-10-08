@@ -317,6 +317,7 @@ class DataBrowserTests(unittest.TestCase):
         browser.gallery_items = browser.measurements
         for item in browser.gallery_items:
             self.module.Image.new('RGB', (600, 240), 'white').save(item.plot_files[0])
+        self.module.Image.new('RGB', (960, 960), 'white').save(browser.gallery_items[0].plot_files[0])
         browser.gallery_items[1].plot_files[0].write_bytes(b'Not a readable image')
         self.module.Image.new('RGB', (600, 900), 'white').save(browser.gallery_items[-1].plot_files[0])
         browser._gallery_width = 620
@@ -329,19 +330,19 @@ class DataBrowserTests(unittest.TestCase):
             self.assertEqual(browser._gallery_columns, 3)
             side = 620 // 3 - 2
             for card in browser.cards.values():
-                card.configure.assert_any_call(width=side, height=side)
+                card.configure.assert_any_call(width=side, height=side + 32)
             self.assertNotIn(1, browser._gallery_sources)
-            self.assertEqual(photos.call_args_list[0].args[0].width, side - 6)
-            self.assertEqual(photos.call_args.args[0].height, side - 6 - 32)
+            self.assertEqual(photos.call_args_list[0].args[0].size, (side - 6, side - 6))
+            self.assertEqual(photos.call_args.args[0].height, side - 6)
             self.assertAlmostEqual(photos.call_args.args[0].width / photos.call_args.args[0].height, 2 / 3, delta=0.01)
             browser._resize_gallery(SimpleNamespace(width=930))
             browser._resize_thumbnails()
             self.assertEqual(browser._gallery_columns, 5)
             side = 930 // 5 - 2
             for card in browser.cards.values():
-                card.configure.assert_any_call(width=side, height=side)
-            self.assertEqual(photos.call_args_list[-5].args[0].width, side - 6)
-            self.assertEqual(photos.call_args.args[0].height, side - 6 - 32)
+                card.configure.assert_any_call(width=side, height=side + 32)
+            self.assertEqual(photos.call_args_list[-5].args[0].size, (side - 6, side - 6))
+            self.assertEqual(photos.call_args.args[0].height, side - 6)
             self.assertEqual(opened.call_count, len(browser.gallery_items))
         self.assertEqual(browser.gallery_selection, {2})
 

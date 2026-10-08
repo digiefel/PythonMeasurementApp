@@ -92,8 +92,10 @@ double-click opens its plot in the associated image application. Ctrl+Click
 (or Command+Click on macOS) toggles selection; Shift+Click selects a range.
 Ctrl+A or Command+A selects the gallery.
 The gallery is paginated to avoid loading every image into memory.
-Cards are equal-sized squares determined by the gallery width. Images are centered
-and fitted without changing their aspect ratio; missing or unreadable plots show
+Cards have equal-sized square image areas determined by the gallery width, with
+the procedure and footer outside that square. Standard square plots fill the image
+area; other aspect ratios are centered and fitted without distortion. Missing or
+unreadable plots show
 **No plot** in the same space. Long procedure or device names are clipped within
 their allotted space and remain available in the tooltip.
 
