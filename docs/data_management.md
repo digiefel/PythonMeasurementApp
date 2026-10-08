@@ -5,15 +5,24 @@ the selected output directory as its data source; changing chips in the browser 
 the chip or site selected for a measurement run.
 
 The left two-thirds show the whole sample using the loaded `devices.csv`, with a
-searchable chip picker in the top-left. The overview shows filled site boxes.
-Scroll to reveal subsite outlines, then device markers and their details as space
-permits. Double-click a region to zoom to it, right- or middle-drag to pan, and use
-**Fit View** to restore the overview. Click the canvas to use arrow keys for panning;
-hold Shift for larger steps. Hidden and off-screen devices do not receive
-position updates. Click a region to select its devices; click or drag over devices
-to select them. Ctrl+Click toggles selection. A blue outline indicates selection;
-collapsed regions show how many of their devices are selected. With no devices selected, the gallery shows the
-whole chip's measurements.
+searchable chip picker in the top-left. Measured sites have tinted boxes and their
+total measurement count inside. Small green/yellow/red badges count devices assessed
+Good/OK/Bad, including assessments made before measuring. Unmeasured regions stay
+neutral and have no measurement count.
+Scroll to reveal subsite outlines, then device markers. Double-click a region to
+zoom to it, right- or middle-drag to pan, and use **Fit View** to restore the overview.
+Click the canvas to use arrow keys for panning; hold Shift for larger steps.
+Click a region to select its devices; click or drag over devices to select them.
+Ctrl+Click toggles selection. A blue outline indicates selection. With no devices
+selected, the gallery shows the whole chip's measurements.
+
+Subsites show the same measurement and assessment totals as they come into view.
+Device colors and counts appear as soon as their markers become visible. Region
+totals include separate histories at shared coordinates and data from unpositioned
+devices within that site or subsite. Names, dates, notes, and selection details
+appear in hover tooltips, keeping the canvas free of floating labels. Hover the
+info icon for navigation help and the color key for the meaning of the indicators.
+Hidden and off-screen devices do not receive position updates.
 
 Devices missing from the layout or lacking absolute coordinates appear in a small
 list below the map. The other devices remain on the canvas. If none have positions,
@@ -21,12 +30,14 @@ the browser uses a list with Site, Subsite, Device, and Status columns. You can 
 choose **List View** at any time.
 
 Devices at exactly the same coordinates share one marker. Selecting it shows the
-combined measurement gallery. At close zoom the marker shows the total measurement
-count inside, with names, comma-separated subsites, latest measurement date, and a
-small notes indicator alongside it. Zero counts and absent dates are omitted.
-Good/OK/Bad appear as colors; differing assessments use a segmented ring. Nearby
-coordinates remain separate. Subsites sharing device locations share an outline.
-Hovering a marker shows its compact details at smaller zooms.
+combined measurement gallery. Unmeasured devices are empty circles; measured
+devices are filled, with their count inside. Untagged devices use black and white
+numbers. Tagged devices use their assessment color, with white numbers on green
+or red and black numbers on yellow. Shared markers with differing assessments use
+colored rings when unmeasured and filled sectors when measured. Zero measurement
+counts are omitted. Nearby coordinates remain separate. Subsites sharing device
+locations share an outline. Hover a marker for device names, comma-separated
+subsites, latest measurement date, assessments, and saved notes.
 
 ## Device notes and status
 

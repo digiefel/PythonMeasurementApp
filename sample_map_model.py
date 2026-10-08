@@ -37,7 +37,7 @@ class Region:
 
 
 def _region(key, site, subsites, members):
-    points = {(item.x, item.y) for item in members}
+    points = {(item.x, item.y) for item in members if item.x is not None and item.y is not None}
     xs, ys = zip(*points)
     gaps = []
     for axis in (0, 1):
@@ -51,20 +51,24 @@ def build_geometry(items):
     """Merge exact coordinates; combine subsite outlines that share locations."""
     by_position, by_site = defaultdict(list), defaultdict(list)
     for item in items:
+        by_site[item.identity.site].append(item)
         if item.x is not None and item.y is not None:
             by_position[item.x, item.y].append(item)
-            by_site[item.identity.site].append(item)
     locations = [Location(f'location:{index}', tuple(members), x, y)
                  for index, ((x, y), members) in enumerate(by_position.items())]
     sites, subsites = [], []
     for site, members in by_site.items():
+        if not any(item.x is not None and item.y is not None for item in members):
+            continue
         sites.append(_region(f'site:{site}', site, (), members))
         groups = []
         by_subsite = defaultdict(list)
         for item in members:
             by_subsite[item.identity.subsite].append(item)
         for name, devices in by_subsite.items():
-            points = {(item.x, item.y) for item in devices}
+            points = {(item.x, item.y) for item in devices if item.x is not None and item.y is not None}
+            if not points:
+                continue
             connected = [group for group in groups if group[2] & points]
             names, joined = [name], list(devices)
             for group in connected:
@@ -76,6 +80,18 @@ def build_geometry(items):
         for index, (names, devices, _) in enumerate(groups):
             subsites.append(_region(f'subsite:{site}:{index}', site, sorted(names), devices))
     return locations, sites, subsites
+
+
+def measurement_summary(members, annotations):
+    """Total measurements and device assessments, retaining separate alias histories."""
+    count, statuses = 0, defaultdict(int)
+    for item in members:
+        value = annotations.get(item.name, {})
+        count += value.get('measurement_count', 0)
+        status = value.get('status', '')
+        if status in ('Good', 'OK', 'Bad'):
+            statuses[status] += 1
+    return count, dict(statuses)
 
 
 def date_text(timestamp):

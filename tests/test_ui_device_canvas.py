@@ -1,6 +1,7 @@
 """Exercise viewport navigation and selection using the production canvas logic."""
 
 import importlib
+import itertools
 import sys
 from types import SimpleNamespace
 import unittest
@@ -265,6 +266,124 @@ class DeviceCanvasTests(unittest.TestCase):
         dialog._zoom_at(350, 250, 1 / 15)
         self.assertFalse(dialog._visible_locations)
         self.assertEqual(dialog.selected_devices, selected)
+
+    def test_measurements_and_assessments_are_visible_at_each_hierarchy_level_before_names(self):
+        items = [SimpleNamespace(name=f'S/Sub/{x}', x=x, y=0,
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=str(x)))
+                 for x in range(0, 601, 50)]
+        dialog = self.make_sample_map(items)
+        ids = itertools.count(1)
+        for method in ('create_rectangle', 'create_text', 'create_oval', 'create_arc'):
+            getattr(dialog.canvas, method).side_effect = lambda *args, **kwargs: next(ids)
+        dialog.annotations = {items[0].name: {'measurement_count': 2, 'status': 'Bad'},
+                              items[1].name: {'measurement_count': 3, 'status': 'Good'}}
+
+        def appearance(canvas_id):
+            result = {}
+            for call in dialog.canvas.itemconfigure.call_args_list:
+                if call.args[0] == canvas_id:
+                    result.update(call.kwargs)
+            return result
+
+        dialog._view = (0.1, 350, 250)
+        dialog._draw_devices()
+        site = dialog._region_items['site:S']
+        self.assertNotEqual(appearance(site[0])['fill'], '#eef1f5')
+        self.assertEqual(appearance(site[1])['text'], '5')
+        self.assertEqual(appearance(site[1])['state'], 'normal')
+        self.assertEqual({appearance(site[i])['fill'] for i in (2, 4)}, {'forestgreen', 'firebrick'})
+        self.assertFalse(dialog._visible_locations)
+
+        dialog._view = (0.35, 350, 250)
+        dialog._draw_devices()
+        subsite = dialog._region_items['subsite:S:0']
+        self.assertEqual(appearance(subsite[1])['state'], 'normal')
+        self.assertEqual(appearance(subsite[1])['text'], '5')
+        self.assertNotEqual(appearance(subsite[0])['fill'], '#eef1f5')
+        self.assertFalse(dialog._visible_locations)
+
+        dialog._view = (0.5, 350, 250)
+        dialog.selected_devices = {items[0].name}
+        dialog._draw_devices()
+        marker, count, _ = dialog._location_items[dialog._locations[0].key]
+        self.assertEqual(appearance(marker)['fill'], 'firebrick')
+        self.assertEqual(appearance(marker)['outline'], 'dodgerblue')
+        self.assertEqual(appearance(count)['state'], 'normal')
+        self.assertEqual(appearance(count)['text'], '2')
+        self.assertEqual(appearance(subsite[1])['state'], 'hidden')
+        dialog._view = (2, 350, 250)
+        dialog._draw_devices()
+        visible_texts = [call.kwargs['text'] for call in dialog.canvas.itemconfigure.call_args_list
+                         if call.kwargs.get('state') == 'normal' and 'text' in call.kwargs]
+        self.assertTrue(all(text.isdigit() for text in visible_texts))
+
+        dialog.annotations[items[1].name]['status'] = 'OK'
+        dialog._view = (0.1, 350, 250)
+        dialog._draw_devices()
+        self.assertEqual({appearance(site[i])['fill'] for i in (2, 4)}, {'gold', 'firebrick'})
+
+    def test_unmeasured_region_and_device_have_no_count_or_measured_fill(self):
+        items = [SimpleNamespace(name=f'S/Sub/{x}', x=x, y=0,
+                                 identity=SimpleNamespace(site='S', subsite='Sub', device=str(x)))
+                 for x in range(0, 601, 50)]
+        dialog = self.make_sample_map(items)
+        dialog._view = (0.1, 350, 250)
+        dialog._draw_devices()
+        self.assertTrue(any(call.kwargs.get('fill') == '#eef1f5'
+                            for call in dialog.canvas.itemconfigure.call_args_list))
+        dialog._view = (0.5, 350, 250)
+        dialog._draw_devices()
+        self.assertTrue(all(entry[1] is None for entry in dialog._location_items.values()))
+
+    def test_device_fill_is_measurement_presence_outline_is_assessment_and_counts_contrast(self):
+        for count, status, fill, outline, number_color in (
+            (0, '', 'white', 'black', None), (4, '', 'black', 'black', 'white'),
+            (0, 'Bad', 'white', 'firebrick', None), (3, 'Bad', 'firebrick', 'firebrick', 'white'),
+            (0, 'OK', 'white', 'gold', None), (2, 'OK', 'gold', 'gold', 'black'),
+            (0, 'Good', 'white', 'forestgreen', None), (1, 'Good', 'forestgreen', 'forestgreen', 'white'),
+        ):
+            with self.subTest(count=count, status=status):
+                self.setUp()
+                item = SimpleNamespace(name='S/Sub/D', x=0, y=0,
+                                       identity=SimpleNamespace(site='S', subsite='Sub', device='D'))
+                dialog = self.make_sample_map([item])
+                dialog.annotations = {item.name: {'measurement_count': count, 'status': status}}
+                dialog._draw_location(dialog._locations[0], 350, 250, 10, [], [])
+                marker = dialog.canvas.itemconfigure.call_args_list[0].kwargs
+                self.assertEqual(marker['fill'], fill)
+                self.assertEqual(marker['outline'], outline)
+                _, count_id, _ = dialog._location_items[dialog._locations[0].key]
+                if count:
+                    numbers = [call.kwargs for call in dialog.canvas.itemconfigure.call_args_list if 'text' in call.kwargs]
+                    self.assertEqual(numbers[-1]['text'], str(count))
+                    self.assertEqual(numbers[-1]['fill'], number_color)
+                else:
+                    self.assertIsNone(count_id)
+
+    def test_hover_shows_identity_measurements_date_status_and_notes_without_canvas_labels(self):
+        item = SimpleNamespace(name='S/Sub/D', x=0, y=0,
+                               identity=SimpleNamespace(site='S', subsite='Sub', device='D'))
+        dialog = self.make_sample_map([item])
+        dialog.annotations = {item.name: {'measurement_count': 3, 'last_measurement': '20261008_120000',
+                                         'status': 'Bad', 'has_notes': True, 'notes': 'Leaky after fatigue.'}}
+        dialog._draw_devices()
+        dialog.canvas.find_withtag.return_value = (123,)
+        dialog.canvas.gettags.return_value = ('map_content', 'location', dialog._locations[0].key, 'map_hover')
+        with patch.object(dialog, '_show_annotation') as shown:
+            dialog._on_device_hover(SimpleNamespace())
+            shown.assert_not_called()
+            delay, callback = dialog.canvas.after.call_args.args
+            self.assertGreater(delay, 0)
+            callback()
+        text = shown.call_args.args[1]
+        for detail in ('Site S', 'D', 'Sub', '3 measurements', '2026-10-08', 'Bad', 'Leaky after fatigue.'):
+            self.assertIn(detail, text)
+        dialog.canvas.gettags.return_value = ('map_content', 'region', 'site:S', 'map_hover')
+        with patch.object(dialog, '_show_annotation') as shown:
+            dialog._on_device_hover(SimpleNamespace())
+            dialog.canvas.after.call_args.args[1]()
+        self.assertIn('3 measurements', shown.call_args.args[1])
+        self.assertIn('Bad: 1 device', shown.call_args.args[1])
 
     def test_shared_location_selection_combines_members_and_ctrl_toggles_the_group(self):
         items = [SimpleNamespace(name=f'S/{sub}/A', x=0, y=0,

@@ -19,6 +19,7 @@ from data_management import (
 from ui_sample_view import SampleMap
 from models import has_position
 from sample_map_model import date_text
+from tooltip_helper import attach_tooltip
 
 
 def open_file(path):
@@ -84,11 +85,12 @@ class DataManagementWindow:
         legend.pack(side='left', padx=8, anchor='nw', pady=4)
         for status, color in STATUS_COLORS.items():
             tk.Label(legend, text=f'● {status}', foreground=color).grid(row=0, column=list(STATUS_COLORS).index(status), padx=(0, 6))
-        ttk.Label(legend, text='Blue outline: selected').grid(row=1, column=0, columnspan=3, sticky='w', pady=(3, 0))
+        attach_tooltip(legend, 'Filled devices have measurements; the number is their measurement count.\n'
+                       'Empty circles have no measurements. Color shows the device assessment.\n'
+                       'Tinted regions contain measurements; colored badges count assessed devices.\n'
+                       'Blue outlines show your selection.')
         self.view_toggle = ttk.Button(header, text='List View', command=self._toggle_view)
         self.view_toggle.pack(side='right', padx=4, pady=4)
-        self.explanation = ttk.Label(left, wraplength=650)
-        self.explanation.pack(fill='x', padx=5, pady=4)
         self.view_frame = ttk.Frame(left)
         self.view_frame.pack(fill='both', expand=True)
 
@@ -220,7 +222,7 @@ class DataManagementWindow:
 
     @staticmethod
     def _annotation(identity, status, notes):
-        return {'status': status, 'has_notes': bool(notes),
+        return {'status': status, 'has_notes': bool(notes), 'notes': notes,
                 'details': identity.label + (f'\nStatus: {status}' if status else '') + (f'\n\n{notes}' if notes else '')}
 
     def _show_view(self, as_list=False):
@@ -229,8 +231,6 @@ class DataManagementWindow:
         self.map = self.device_list = None
         drawable = any(has_position(device) for device in self.layout.values())
         self.view_toggle.configure(text='Map View' if as_list else 'List View', state='normal' if drawable else 'disabled')
-        self.explanation.configure(text='Scroll to reveal subsites and devices; double-click a region to zoom in. Arrows or right/middle-drag to pan.'
-                                   if not as_list else 'Select devices to browse their measurements and notes.')
         if as_list:
             self.device_list = ttk.Treeview(self.view_frame, columns=('site', 'subsite', 'device', 'status'), show='headings', selectmode='extended')
             for column in ('site', 'subsite', 'device', 'status'):

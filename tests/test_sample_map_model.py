@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from data_management import Identity
-from sample_map_model import build_geometry, date_text, location_summary
+from sample_map_model import build_geometry, date_text, location_summary, measurement_summary
 
 
 def item(subsite, name, x, y):
@@ -27,6 +27,26 @@ class SampleMapModelTests(unittest.TestCase):
         locations, _, _ = build_geometry([item('A', 'D', 0, 0), item('B', 'D', 0.01, 0), item('B', 'Unknown', None, None)])
         self.assertEqual(len(locations), 2)
         self.assertEqual(sum(len(location.members) for location in locations), 2)
+
+    def test_region_totals_include_alias_histories_and_devices_without_positions(self):
+        a, alias = item('FeCap', 'A1', 0, 0), item('FeCapBD', 'A1A2', 0, 0)
+        missing, other = item('FeCap', 'Missing', None, None), item('Unknown', 'D', None, None)
+        _, sites, subsites = build_geometry([a, alias, missing, other])
+        annotations = {a.name: {'measurement_count': 2, 'status': 'Good'},
+                       alias.name: {'measurement_count': 3, 'status': 'Bad'},
+                       missing.name: {'measurement_count': 5, 'status': 'OK'},
+                       other.name: {'measurement_count': 7}}
+        self.assertEqual(measurement_summary(sites[0].members, annotations),
+                         (17, {'Good': 1, 'Bad': 1, 'OK': 1}))
+        self.assertEqual(measurement_summary(subsites[0].members, annotations),
+                         (10, {'Good': 1, 'OK': 1, 'Bad': 1}))
+        self.assertEqual(len(subsites), 1)
+        self.assertEqual(sites[0].bounds, (0, 0, 0, 0))
+
+    def test_assessment_totals_do_not_imply_measurements(self):
+        a = item('A', 'D', 0, 0)
+        self.assertEqual(measurement_summary([a], {a.name: {'status': 'Bad'}}), (0, {'Bad': 1}))
+        self.assertEqual(measurement_summary([a], {}), (0, {}))
 
     def test_shared_summary_combines_measurements_dates_types_notes_and_status(self):
         a, b = item('FeCap', 'A1', 0, 0), item('FeCapBD', 'A1A2', 0, 0)

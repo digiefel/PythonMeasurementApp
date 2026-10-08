@@ -5,13 +5,15 @@ from tkinter import ttk
 
 from ui_device_selection import DeviceSelectionDialog
 from data_management import STATUS_COLORS
-from sample_map_model import build_geometry, location_summary
+from sample_map_model import build_geometry, location_summary, measurement_summary
+from tooltip_helper import attach_tooltip
 
 
 class SampleMap(DeviceSelectionDialog):
     def __init__(self, parent, items, annotations, selected, on_select, on_context):
         self.on_select, self.on_context = on_select, on_context
         self._context_start = None
+        self._hover_job = None
         self._locations, self._sites, self._subsites = build_geometry(items)
         self._location_by_key = {location.key: location for location in self._locations}
         self._region_by_key = {region.key: region for region in self._sites + self._subsites}
@@ -26,12 +28,22 @@ class SampleMap(DeviceSelectionDialog):
         self.frame.pack(fill='both', expand=True)
         controls = ttk.Frame(self.frame)
         controls.pack(fill='x', padx=5, pady=5)
-        for label, action in (
-            ('Fit View', self._fit_view), ('Select All', self._select_all), ('Clear', self._clear_selection),
-            ('−', lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1 / 1.2)),
-            ('+', lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1.2)),
+        for label, action, tip in (
+            ('Fit View', self._fit_view, 'Show the whole sample.'),
+            ('Select All', self._select_all, 'Select every device in this sample.'),
+            ('Clear', self._clear_selection, 'Clear the device selection.'),
+            ('−', lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1 / 1.2), 'Zoom out.'),
+            ('+', lambda: self._zoom_at(self.canvas_width / 2, self.canvas_height / 2, 1.2), 'Zoom in.'),
         ):
-            ttk.Button(controls, text=label, command=action).pack(side='left', padx=2)
+            button = ttk.Button(controls, text=label, command=action)
+            button.pack(side='left', padx=2)
+            attach_tooltip(button, tip)
+        help_hint = ttk.Label(controls, text='ⓘ')
+        help_hint.pack(side='left', padx=8)
+        attach_tooltip(help_hint, 'Scroll to zoom; double-click a region to zoom into it.\n'
+                       'Right/middle-drag or arrow keys pan; Shift moves faster.\n'
+                       'Click or drag to select devices; Ctrl+click toggles selection.\n'
+                       'Hover a region or device for its name, history, and notes.')
         self.selection_label = ttk.Label(controls, text=f'Selected: {len(self.selected_devices)}')
         self.selection_label.pack(side='right')
         if self.unpositioned_devices:
@@ -97,7 +109,7 @@ class SampleMap(DeviceSelectionDialog):
         self._visible_regions, self._visible_locations = [], {}
         self.site_bounds = {}
         active_regions, active_locations = set(), set()
-        detailed_sites, device_names, label_names = set(), set(), set()
+        detailed_sites, device_names = set(), set()
         spacing_by_name = {}
         for region in self._sites:
             bounds = self._bounds(region, transform)
@@ -114,7 +126,6 @@ class SampleMap(DeviceSelectionDialog):
                 continue
             bounds = self._bounds(region, transform)
             show_devices = self._level(region.key, region.spacing * scale, 24)
-            show_labels = self._level(region.key + ':labels', region.spacing * scale, 150)
             if self._in_view(bounds):
                 self._draw_region(region, bounds, collapsed=not show_devices)
                 active_regions.add(region.key)
@@ -122,8 +133,6 @@ class SampleMap(DeviceSelectionDialog):
                     device_names.update(region.names)
                     for name in region.names:
                         spacing_by_name[name] = region.spacing * scale
-                    if show_labels:
-                        label_names.update(region.names)
         positions, texts = [], []
         for location in self._locations:
             if not location.names & device_names:
@@ -131,9 +140,8 @@ class SampleMap(DeviceSelectionDialog):
             x, y = transform(location.x, location.y)
             if not self._in_view((x - 25, y - 25, x + 25, y + 25)):
                 continue
-            radius = min(18, max(3, min(spacing_by_name[name] for name in location.names & device_names) * 0.18))
-            detailed = bool(location.names & label_names)
-            self._draw_location(location, x, y, radius, detailed, positions, texts)
+            radius = min(18, max(10, min(spacing_by_name[name] for name in location.names & device_names) * 0.25))
+            self._draw_location(location, x, y, radius, positions, texts)
             self._visible_locations[location.key] = radius
             active_locations.add(location.key)
         for key in self._active_region_keys - active_regions:
@@ -149,43 +157,62 @@ class SampleMap(DeviceSelectionDialog):
         if region.key not in self._region_items:
             tags = ('map_content', 'region', region.key, 'map_hover')
             box = self.canvas.create_rectangle(0, 0, 0, 0, tags=tags)
-            label = self.canvas.create_text(0, 0, anchor='sw', fill='gray25',
-                                            font=('TkDefaultFont', 9, 'bold'), tags=tags)
-            background = self.canvas.create_rectangle(0, 0, 0, 0, fill='white', outline='white', tags=tags)
-            self._region_items[region.key] = box, label, background
-        box, label, background = self._region_items[region.key]
-        count = len(region.names & self.selected_devices)
-        self.canvas.itemconfigure(box, state='normal', fill=('#e7f0ff' if count else '#eef1f5') if collapsed and not region.subsites else '',
-                                  outline='dodgerblue' if count else ('gray50' if collapsed else 'gray80'),
-                                  width=2 if count or collapsed else 1, dash=() if collapsed else (3, 3))
+            total = self.canvas.create_text(0, 0, font=('TkDefaultFont', 13, 'bold'), fill='#235467', tags=tags)
+            self._region_items[region.key] = [box, total]
+        items = self._region_items[region.key]
+        box, total = items[:2]
+        selected_count = len(region.names & self.selected_devices)
+        count, statuses = measurement_summary(region.members, self.annotations)
+        self.canvas.itemconfigure(box, state='normal', fill=('#d9edf4' if count else '#eef1f5') if collapsed else '',
+                                  outline='dodgerblue' if selected_count else ('#397e96' if count else ('gray50' if collapsed else 'gray80')),
+                                  width=2 if selected_count or collapsed else 1, dash=() if collapsed else (3, 3))
         self.canvas.coords(box, *bounds)
         self.canvas.tag_lower(box)
-        self.canvas.itemconfigure(label, state='normal', text=region.label + (f' · {count} selected' if count else ''))
-        self.canvas.coords(label, max(4, bounds[0]), max(14, bounds[1] - 3))
-        label_bounds = self.canvas.bbox(label)
-        if label_bounds:
-            x0, y0, x1, y1 = label_bounds
-            self.canvas.coords(background, x0 - 2, y0 - 1, x1 + 2, y1 + 1)
-        self.canvas.itemconfigure(background, state='normal')
-        self.canvas.tag_raise(background)
-        self.canvas.tag_raise(label)
+        cx, cy = (bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2
+        self.canvas.itemconfigure(total, state='normal' if collapsed and count else 'hidden', text=str(count))
+        self.canvas.coords(total, cx, cy - (8 if statuses else 0))
+        self.canvas.tag_raise(total)
+        # Small, equal-sized assessment badges stay legible even if only one device is tagged.
+        assessments = [(status, statuses[status]) for status in STATUS_COLORS if status in statuses]
+        while len(items) < 2 + len(assessments) * 2:
+            items.append(self.canvas.create_rectangle(0, 0, 0, 0, width=0, tags=tags))
+            items.append(self.canvas.create_text(0, 0, font=('TkDefaultFont', 8, 'bold'), tags=tags))
+        widths = [max(20, len(str(number)) * 7 + 8) for _, number in assessments]
+        x = cx - (sum(widths) + max(0, len(widths) - 1) * 3) / 2
+        for index in range((len(items) - 2) // 2):
+            badge, text = items[2 + index * 2:4 + index * 2]
+            visible = collapsed and index < len(assessments)
+            for item in (badge, text):
+                self.canvas.itemconfigure(item, state='normal' if visible else 'hidden')
+            if visible:
+                status, number = assessments[index]
+                width = widths[index]
+                self.canvas.itemconfigure(badge, fill=STATUS_COLORS[status])
+                self.canvas.coords(badge, x, cy + 4, x + width, cy + 19)
+                self.canvas.itemconfigure(text, text=str(number), fill='gray20' if status == 'OK' else 'white')
+                self.canvas.coords(text, x + width / 2, cy + 11)
+                self.canvas.tag_raise(badge)
+                self.canvas.tag_raise(text)
+                x += width + 3
         self._visible_regions.append(region)
 
-    def _draw_location(self, location, x, y, radius, detailed, positions, texts):
-        label_text, count, statuses = location_summary(location, self.annotations)
+    def _draw_location(self, location, x, y, radius, positions, texts):
+        count, _ = measurement_summary(location.members, self.annotations)
+        statuses = tuple(dict.fromkeys(self.annotations.get(item.name, {}).get('status', '')
+                                       for item in location.members))
         selected = bool(location.names & self.selected_devices)
         tags = ('map_content', 'location', location.key, 'map_hover')
         if location.key not in self._location_items:
             marker = self.canvas.create_oval(0, 0, 0, 0, tags=tags)
-            self._location_items[location.key] = [marker, None, None, []]
-        marker, count_id, label_id, segments = self._location_items[location.key]
-        color = STATUS_COLORS.get(statuses[0], 'gray55') if len(statuses) == 1 else 'gray55'
-        self.canvas.itemconfigure(marker, state='normal', fill=color if len(statuses) == 1 and statuses[0] else 'white',
+            self._location_items[location.key] = [marker, None, []]
+        marker, count_id, segments = self._location_items[location.key]
+        color = STATUS_COLORS.get(statuses[0], 'black') if len(statuses) == 1 else 'black'
+        self.canvas.itemconfigure(marker, state='normal', fill=color if count else 'white',
                                   outline='dodgerblue' if selected else color,
                                   width=3 if selected else 2)
         coords = x - radius, y - radius, x + radius, y + radius
         positions.extend((marker, *coords))
-        # Conflicting assessments remain visible as a segmented ring.
+        # Shared locations retain every assessment: rings before measurement, filled sectors after.
         if len(statuses) > 1:
             while len(segments) < len(statuses):
                 segments.append(self.canvas.create_arc(0, 0, 0, 0, style='arc', tags=tags))
@@ -194,32 +221,29 @@ class SampleMap(DeviceSelectionDialog):
                     inset = min(3, radius / 4) if selected else 0
                     positions.extend((segment, x - radius + inset, y - radius + inset,
                                       x + radius - inset, y + radius - inset))
+                    segment_color = STATUS_COLORS.get(statuses[index], 'black')
                     self.canvas.itemconfigure(segment, state='normal', start=index * 360 / len(statuses),
                                               extent=360 / len(statuses), width=2,
-                                              outline=STATUS_COLORS.get(statuses[index], 'gray55'))
+                                              style='pieslice' if count else 'arc',
+                                              fill=segment_color if count else '', outline=segment_color)
                 else:
                     self.canvas.itemconfigure(segment, state='hidden')
         else:
             for segment in segments:
                 self.canvas.itemconfigure(segment, state='hidden')
-        if count and radius >= 9:
+        if count:
             if count_id is None:
                 count_id = self.canvas.create_text(0, 0, font=('TkDefaultFont', 8, 'bold'), fill='gray20', tags=tags)
             self.canvas.itemconfigure(count_id, state='normal', text=str(count),
-                                      fill='white' if len(statuses) == 1 and statuses[0] in ('Good', 'Bad') else 'gray20')
+                                      font=('TkDefaultFont', max(6, 9 - max(0, len(str(count)) - 2)), 'bold'),
+                                      fill='black' if 'OK' in statuses else 'white')
             texts.extend((count_id, x, y))
         elif count_id is not None:
             self.canvas.itemconfigure(count_id, state='hidden')
-        if detailed:
-            if label_id is None:
-                label_id = self.canvas.create_text(0, 0, anchor='w', justify='left', font=('TkDefaultFont', 8),
-                                                   fill='gray20', tags=tags)
-            self.canvas.itemconfigure(label_id, state='normal', text=label_text)
-            texts.extend((label_id, x + radius + 5, y))
-        elif label_id is not None:
-            self.canvas.itemconfigure(label_id, state='hidden')
-        self._location_items[location.key] = [marker, count_id, label_id, segments]
+        self._location_items[location.key] = [marker, count_id, segments]
         self.canvas.tag_raise(location.key)
+        if count_id is not None:
+            self.canvas.tag_raise(count_id)
 
     def _on_device_hover(self, event):
         current = self.canvas.find_withtag('current')
@@ -229,10 +253,41 @@ class SampleMap(DeviceSelectionDialog):
         if key in self._location_by_key:
             location = self._location_by_key[key]
             label, count, statuses = location_summary(location, self.annotations)
-            details = label + (f'\n{count} measurements' if count else '')
-            self._show_annotation(event, details)
+            details = f'Site {location.members[0].identity.site}\n{label.replace("  ▤", "")}' + (f'\n{count} measurements' if count else '')
+            if any(statuses):
+                details += '\nStatus: ' + ', '.join(status or 'Untagged' for status in statuses)
+            for item in location.members:
+                notes = self.annotations.get(item.name, {}).get('notes', '')
+                if notes:
+                    details += f'\n\n{item.identity.subsite}/{item.identity.device}:\n{notes}'
         elif key in self._region_by_key:
-            self._show_annotation(event, self._region_by_key[key].label)
+            region = self._region_by_key[key]
+            count, statuses = measurement_summary(region.members, self.annotations)
+            details = f'Site {region.site}' + (f' / {region.label}' if region.subsites else '')
+            details += f'\n{len(region.members)} devices' + (f'\n{count} measurements' if count else '')
+            details += ''.join(f'\n{status}: {number} device' + ('s' if number != 1 else '')
+                               for status, number in statuses.items())
+            selected = len(region.names & self.selected_devices)
+            if selected:
+                details += f'\n{selected} selected'
+        else:
+            return
+        self._hide_annotation()
+
+        def show():
+            self._hover_job = None
+            self._show_annotation(event, details)
+        self._hover_job = self.canvas.after(350, show)
+
+    def _hide_annotation(self):
+        if getattr(self, '_hover_job', None) is not None:
+            self.canvas.after_cancel(self._hover_job)
+            self._hover_job = None
+        super()._hide_annotation()
+
+    def _on_mouse_down(self, event):
+        self._hide_annotation()
+        return super()._on_mouse_down(event)
 
     def _update_device_appearance(self, name, selected):
         # Bulk selection redraws once in _update_selection_label.
@@ -285,6 +340,7 @@ class SampleMap(DeviceSelectionDialog):
         if self.manual_list is None:
             return
         state = tuple((item.name, self.annotations.get(item.name, {}).get('status', ''),
+                       self.annotations.get(item.name, {}).get('measurement_count', 0),
                        item.name in self.selected_devices) for item in self.unpositioned_devices)
         if state == self._manual_state:
             return
@@ -293,7 +349,9 @@ class SampleMap(DeviceSelectionDialog):
         for index, item in enumerate(self.unpositioned_devices):
             annotation = self.annotations.get(item.name, {})
             status = annotation.get('status', '')
-            self.manual_list.insert(tk.END, item.name + (f' [{status}]' if status else ''))
+            count = annotation.get('measurement_count', 0)
+            self.manual_list.insert(tk.END, (f'{count} measurements · ' if count else '')
+                                    + item.name + (f' [{status}]' if status else ''))
             if status:
                 self.manual_list.itemconfigure(index, foreground=STATUS_COLORS.get(status, 'gray'))
             if item.name in self.selected_devices:
@@ -314,6 +372,7 @@ class SampleMap(DeviceSelectionDialog):
         return result
 
     def _on_pan_start(self, event):
+        self._hide_annotation()
         self._context_start = event.x, event.y
         return super()._on_pan_start(event)
 
