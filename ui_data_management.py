@@ -206,7 +206,8 @@ class DataManagementWindow:
         self._gallery_columns = columns
         width = max(1, self._gallery_width // columns - 6)
         for order, (index, card) in enumerate(self.cards.items()):
-            card.grid(row=order // columns, column=order % columns, sticky='nw', padx=1, pady=1)
+            card.grid(row=order // columns, column=order % columns,
+                      sticky='nw' if index in self._gallery_sources else '', padx=1, pady=1)
             for label in self._captions[index]:
                 label.configure(wraplength=width)
 
@@ -555,9 +556,17 @@ class DataManagementWindow:
                                    anchor='w', justify='left', wraplength=220,
                                    font=('TkDefaultFont', 8), background='white', foreground='gray30', padx=0, pady=0)
             title_label.pack(fill='x', padx=1)
-            picture = self._pictures[index] = tk.Label(card, text='' if source else 'No plot',
+            picture_parent = card
+            if source is None:
+                picture_parent = tk.Frame(card, width=48, height=48, background='white')
+                picture_parent.pack(anchor='center')
+                picture_parent.pack_propagate(False)
+            picture = self._pictures[index] = tk.Label(picture_parent, text='' if source else 'No plot',
                                background='white', foreground='gray45', borderwidth=0, padx=0, pady=0)
-            picture.pack(fill='x', padx=1)
+            if source is None:
+                picture.pack(fill='both', expand=True)
+            else:
+                picture.pack(fill='x', padx=1)
             caption = tk.Frame(card, background='white')
             caption.pack(fill='x', padx=1)
             date_label = tk.Label(caption, text=display_date, anchor='w',
