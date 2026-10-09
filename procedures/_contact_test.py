@@ -24,7 +24,7 @@ from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 OUTPUT_DIRECTORY = Path('C:/Users/EMN Lab/Desktop/ContactTestLog')
 SUMMARY_ORDER = ('12', '13', '14', '1G', '23', '24', '2G', '34', '3G', '4G')
 VOLTAGE_START, VOLTAGE_STOP, POINTS = -.01, .01, 20
-CURRENT_COMPLIANCE = .01  # 10 mA; flags exclude compliance-limited points from fits.
+CURRENT_COMPLIANCE = .1  # 100 mA; flags exclude compliance-limited points from fits.
 CURRENT_RANGE = 1e-7  # Limited autorange: never below 100 nA.
 
 
