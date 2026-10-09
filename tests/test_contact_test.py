@@ -132,7 +132,10 @@ class ContactTestTests(unittest.TestCase):
             self.assertEqual(xs, [-10., 10.])
             self.assertAlmostEqual(ys[0], value)
             self.assertEqual(len(self.runner.plot.sources[f'{key}_rv'][0]), 20)
-        self.assertEqual(len(self.runner.plot.definitions), 11)
+            current_x, current_y = self.runner.plot.sources[f'{key}_iv']
+            self.assertEqual(len(current_x), 20)
+            self.assertAlmostEqual(current_y[0], -.01 / value + 2e-9)
+        self.assertEqual(len(self.runner.plot.definitions), 10)
         with procedure.path.open() as stream:
             rows = list(csv.reader(stream))
         self.assertEqual(len(rows), 2)
@@ -214,17 +217,35 @@ class ContactTestTests(unittest.TestCase):
         self.assertEqual(instrument.calls[-1][0], 'read_data')
 
     def test_display_format_and_undefined_fit(self):
-        for value, expected in ((10450., '10450'), (132000., '1.3e5'), (99999., '99999'),
-                                (100000., '1.0e5'), (math.nan, 'unavailable'), (None, '—')):
+        for value, expected in ((10450., '10450.0'), (132000., '132000.0'), (99999., '99999.0'),
+                                (100000., '100000.0'), (1.26, '1.3'), (math.nan, 'nan'), (None, '—')):
             self.assertEqual(format_resistance(value), expected)
         self.assertTrue(math.isnan(fitted_resistance([(-.01, 0., 0), (.001, 0., 0), (.01, 0., 0)])))
 
-    def test_plot_layout_supports_ten_small_panels(self):
-        from plotting.viewer import PlotViewer
+    def test_plot_layout_has_ten_equal_panels(self):
         plots = self.procedure().plot_definitions()
-        spec = PlotViewer._split_span_layout_spec(None, plots, 5, 3)
-        self.assertEqual(spec['row_count'], 5)
-        self.assertEqual(len(spec['stack_plots']), 10)
+        self.assertEqual([plot.id for plot in plots], list(SUMMARY_ORDER))
+        self.assertEqual({(plot.row, plot.col) for plot in plots},
+                         {(index // 3, index % 3) for index in range(10)})
+        self.assertTrue(all(plot.rowspan == plot.colspan == 1 for plot in plots))
+
+    def test_dual_axes_use_current_lines_and_resistance_markers_without_legend(self):
+        from plotting import Curve, HLine
+        for plot in self.procedure().plot_definitions():
+            self.assertEqual(plot.title, '')
+            self.assertEqual(plot.ylabels, ('I (A)', 'R (Ω)'))
+            colors = {}
+            for element in plot.elements:
+                self.assertFalse(element.show_in_legend)
+                key = element.source.split('_')[0]
+                colors.setdefault(key, element.color)
+                self.assertEqual(element.color, colors[key])
+                if isinstance(element, HLine):
+                    self.assertEqual(element.yaxis, 1)
+                elif isinstance(element, Curve) and element.source.endswith('_iv'):
+                    self.assertEqual((element.yaxis, element.mode, element.marker), (0, 'line', None))
+                else:
+                    self.assertEqual((element.yaxis, element.mode), (1, 'scatter'))
 
     def test_not_discoverable_as_persisted_procedure(self):
         from procedures import load_procedures

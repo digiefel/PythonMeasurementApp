@@ -644,6 +644,7 @@ class PlotViewer:
 
         plot_tag = dpg.add_plot(
             label=plot_def.title or None,
+            no_title=not bool(plot_def.title),
             width=-1,
             height=-1,
             parent=parent or 0,
@@ -653,7 +654,8 @@ class PlotViewer:
             crosshairs=True,
         )
         self._plot_tags[plot_def.id] = plot_tag
-        dpg.add_plot_legend(parent=plot_tag)
+        if any(element.show_in_legend for element in plot_def.elements):
+            dpg.add_plot_legend(parent=plot_tag)
 
         x_axis = dpg.add_plot_axis(
             dpg.mvXAxis,

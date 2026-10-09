@@ -42,13 +42,7 @@ def pair_sequence(selected, ground):
 def format_resistance(value):
     if value is None:
         return '—'
-    if not math.isfinite(value):
-        return 'unavailable'
-    rounded = round(value)
-    if abs(rounded) < 100000:
-        return str(rounded)
-    mantissa, exponent = f'{value:.1e}'.split('e')
-    return f'{mantissa}e{int(exponent)}'
+    return f'{value:.1f}'
 
 
 def filename_part(value):
@@ -92,31 +86,20 @@ class ContactTest(MeasurementProcedure):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         self.path = OUTPUT_DIRECTORY / f'ContactTest_{timestamp}_{self.operator}_{self.chip}.csv'
 
-    @property
-    def selected_pairs(self):
-        return {f'{a}{b}' for a, b in self.first + self.second}
-
     def plot_definitions(self):
-        plots, overlays = [], []
+        plots = []
         for index, key in enumerate(SUMMARY_ORDER):
             color = f'C{index}'
-            elements = [Curve(f'{key}_rv', mode='line_scatter', marker='o', marker_size=3,
-                              color=color, legend_label=f'R{key}'),
-                        Curve(f'{key}_flagged', mode='scatter', marker='x', color='C3',
-                              legend_label='Instrument flag'),
-                        HLine(source=f'{key}_fit', color=color,
-                              legend_label_template='Fit: {value:.5g} Ω')]
-            title = f'R{key}' + ('' if key in self.selected_pairs else ' (skipped)')
-            plots.append(PlotDef(key, row=index // 2, col=1 + index % 2, title=title,
-                                 xlabel='Programmed V (mV)', ylabels=('R (Ω)',), elements=elements))
-            if key in self.selected_pairs:
-                overlays.extend([Curve(f'{key}_rv', mode='line_scatter', marker='o', marker_size=3,
-                                       color=color, legend_label=f'R{key}'),
-                                 Curve(f'{key}_flagged', mode='scatter', marker='x', color=color,
-                                       show_in_legend=False),
-                                 HLine(source=f'{key}_fit', color=color, line_style='dash', show_in_legend=False)])
-        return [PlotDef('all', row=0, col=0, rowspan=5, title='ContactTest — all selected pairs',
-                        xlabel='Programmed voltage (mV)', ylabels=('Resistance (Ω)',), elements=overlays), *plots]
+            elements = [Curve(f'{key}_iv', mode='line', color=color, yaxis=0, show_in_legend=False),
+                        Curve(f'{key}_rv', mode='scatter', marker='o', marker_size=3,
+                              color=color, yaxis=1, show_in_legend=False),
+                        Curve(f'{key}_flagged', mode='scatter', marker='x', color=color,
+                              yaxis=1, show_in_legend=False),
+                        HLine(source=f'{key}_fit', color=color, line_style='dash',
+                              yaxis=1, show_in_legend=False)]
+            plots.append(PlotDef(key, row=index // 3, col=index % 3,
+                                 xlabel=f'{key} · V (mV)', ylabels=('I (A)', 'R (Ω)'), elements=elements))
+        return plots
 
     def measure(self, device=None):
         if not self.path.is_absolute():
@@ -127,8 +110,7 @@ class ContactTest(MeasurementProcedure):
         b1500 = self.b1500
         self.check_stop(b1500)
         if self.runner.plot is not None:
-            self.runner.plot.configure(f'ContactTest — {self.chip}', self.plot_definitions(),
-                                       column_ratios=(2.0, 1.0, 1.0))
+            self.runner.plot.configure(f'ContactTest — {self.chip}', self.plot_definitions())
         b1500.reset()
         b1500.enable_error_detect(True)
         b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
@@ -221,6 +203,9 @@ class ContactTest(MeasurementProcedure):
         plot = self.runner.plot
         if plot is None:
             return
+        current = [(v * 1000, i) for v, i, _ in rows
+                   if math.isfinite(v) and math.isfinite(i) and abs(v) < 1e99 and abs(i) < 1e99]
+        plot.replace_source(f'{key}_iv', [v for v, _ in current], [i for _, i in current])
         for flagged, suffix in ((False, 'rv'), (True, 'flagged')):
             pairs = [(v * 1000, v / i) for v, i, status in rows
                      if bool(status) == flagged and math.isfinite(v) and math.isfinite(i)

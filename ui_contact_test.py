@@ -26,11 +26,6 @@ def ask_options(ui):
         probes[label] = tk.BooleanVar(value=True)
         ttk.Checkbutton(body, text=label if label == 'GND' else f'SMU{label}', variable=probes[label]).grid(
             row=row, column=0, columnspan=2, sticky='w', pady=3)
-    ttk.Label(body, text='20 points, −10 to +10 mV · zero skipped\n10 mA limit · high-speed ADC, one sample\n'
-                        'Parallel readings · Auto ≥100 nA · automatic settling\n'
-                        'The prober will not move. Place the tips before starting.\n'
-                        'These choices apply only to this run.', wraplength=440).grid(
-        row=7, column=0, columnspan=2, sticky='w', pady=12)
     result = None
 
     def submit():
@@ -52,7 +47,7 @@ def ask_options(ui):
         dialog.destroy()
 
     buttons = ttk.Frame(body)
-    buttons.grid(row=8, column=0, columnspan=2, sticky='e')
+    buttons.grid(row=7, column=0, columnspan=2, sticky='e')
     ttk.Button(buttons, text='Cancel', command=dialog.destroy).pack(side='left', padx=5)
     ttk.Button(buttons, text='Start', command=submit).pack(side='left')
     dialog.bind('<Escape>', lambda _: dialog.destroy())
@@ -75,8 +70,6 @@ def confirm_lift(ui):
         dialog.title('ContactTest — lift GNDU')
         dialog.transient(ui.root)
         ttk.Label(dialog, text='please lift the GNDU tip to continue', padding=18).pack()
-        ttk.Label(dialog, text='SMU outputs are off. The next sweeps are between the selected SMU tips.',
-                  wraplength=420, padding=(18, 0, 18, 12)).pack()
 
         def finish(value):
             nonlocal accepted
@@ -123,9 +116,7 @@ def show_results(ui, results, path):
         ttk.Label(body, text=f'R{key}').grid(row=row, column=0, sticky='w', pady=3)
         ttk.Label(body, text=format_resistance(results.get(key)), font=('TkFixedFont', 11)).grid(
             row=row, column=1, sticky='e', padx=(22, 0), pady=3)
-    ttk.Label(body, text='— skipped   ·   unavailable = insufficient valid fit points\n'
-                        f'Saved: {path}', wraplength=510).grid(row=11, column=0, columnspan=2, pady=(12, 8))
-    ttk.Button(body, text='Close', command=dialog.destroy).grid(row=12, column=0, columnspan=2, sticky='e')
+    ttk.Button(body, text='Close', command=dialog.destroy).grid(row=11, column=0, columnspan=2, sticky='e')
     center_popup(dialog, ui.root)
 
 
