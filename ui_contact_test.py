@@ -17,12 +17,16 @@ def ask_options(ui):
     body.pack(fill='both', expand=True)
     ttk.Label(body, text='ContactTest — probe connections', font=('TkDefaultFont', 12, 'bold')).grid(
         row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
-    ttk.Label(body, text='Operator name').grid(row=1, column=0, sticky='w', padx=(0, 10))
+    ttk.Label(body, text='Chip ID').grid(row=1, column=0, sticky='w', padx=(0, 10))
+    chip = tk.StringVar(value=ui.chip_var.get().strip())
+    chip_entry = ttk.Entry(body, textvariable=chip, width=30)
+    chip_entry.grid(row=1, column=1, sticky='ew')
+    ttk.Label(body, text='Operator name').grid(row=2, column=0, sticky='w', padx=(0, 10))
     operator = tk.StringVar(value='')
     entry = ttk.Entry(body, textvariable=operator, width=30)
-    entry.grid(row=1, column=1, sticky='ew')
+    entry.grid(row=2, column=1, sticky='ew')
     probes = {}
-    for row, label in enumerate(('GND', '1', '2', '3', '4'), start=2):
+    for row, label in enumerate(('GND', '1', '2', '3', '4'), start=3):
         probes[label] = tk.BooleanVar(value=True)
         ttk.Checkbutton(body, text=label if label == 'GND' else f'SMU{label}', variable=probes[label]).grid(
             row=row, column=0, columnspan=2, sticky='w', pady=3)
@@ -30,6 +34,11 @@ def ask_options(ui):
 
     def submit():
         nonlocal result
+        chip_id = chip.get().strip()
+        if not chip_id:
+            messagebox.showerror('ContactTest', 'Please enter a Chip ID.', parent=dialog)
+            chip_entry.focus_set()
+            return
         selected = tuple(n for n in range(1, 5) if probes[str(n)].get())
         ground = probes['GND'].get()
         try:
@@ -43,17 +52,17 @@ def ask_options(ui):
             if name is None:
                 return
             name = name.strip()
-        result = name, selected, ground
+        result = chip_id, name, selected, ground
         dialog.destroy()
 
     buttons = ttk.Frame(body)
-    buttons.grid(row=7, column=0, columnspan=2, sticky='e')
+    buttons.grid(row=8, column=0, columnspan=2, sticky='e')
     ttk.Button(buttons, text='Cancel', command=dialog.destroy).pack(side='left', padx=5)
     ttk.Button(buttons, text='Start', command=submit).pack(side='left')
     dialog.bind('<Escape>', lambda _: dialog.destroy())
     center_popup(dialog, ui.root)
     dialog.grab_set()
-    entry.focus_set()
+    chip_entry.focus_set()
     ui.root.wait_window(dialog)
     return result
 
@@ -128,17 +137,13 @@ def start_contact_test(ui):
     if not ui._b1500_available():
         messagebox.showerror('ContactTest', 'Connect the B1500 before starting ContactTest.', parent=ui.root)
         return
-    chip = ui.chip_var.get().strip()
-    if not chip:
-        messagebox.showerror('ContactTest', 'Please enter a chip name.', parent=ui.root)
-        return
     options = ask_options(ui)
     if options is None:
         return
     # A modal dialog runs Tk's event loop: recheck ownership before starting.
     if ui._closing or ui._connection_busy or ui._is_running() or not ui._b1500_available():
         return
-    operator, selected, ground = options
+    chip, operator, selected, ground = options
     address = ui.runner.b1500.address
     ui.runner.stop_event.clear()
     ui.runner.skip_device_event.clear()

@@ -373,7 +373,7 @@ class ContactTestTests(unittest.TestCase):
 
     def test_options_reset_and_blank_name_prompts_without_persisting(self):
         from ui_contact_test import ask_options
-        ui = SimpleNamespace(root=Mock())
+        ui = SimpleNamespace(root=Mock(), chip_var=Mock(get=lambda: 'ChipA'))
         for _ in range(2):
             buttons = {}
 
@@ -386,10 +386,11 @@ class ContactTestTests(unittest.TestCase):
                  patch('ui_contact_test.ttk.Frame'), patch('ui_contact_test.ttk.Label'), \
                  patch('ui_contact_test.ttk.Entry'), patch('ui_contact_test.ttk.Checkbutton'), \
                  patch('ui_contact_test.ttk.Button', side_effect=button), \
-                 patch('ui_contact_test.tk.StringVar', return_value=Mock(get=lambda: '')), \
+                 patch('ui_contact_test.tk.StringVar', side_effect=[Mock(get=lambda: ' EditedChip '), Mock(get=lambda: '')]) as strings, \
                  patch('ui_contact_test.tk.BooleanVar', side_effect=lambda **kw: Mock(get=lambda: kw['value'])) as checks, \
                  patch('ui_contact_test.center_popup'), \
                  patch('ui_contact_test.simpledialog.askstring', return_value=' Operator ') as prompt:
-                self.assertEqual(ask_options(ui), ('Operator', (1, 2, 3, 4), True))
+                self.assertEqual(ask_options(ui), ('EditedChip', 'Operator', (1, 2, 3, 4), True))
+                self.assertEqual(strings.call_args_list[0].kwargs, {'value': 'ChipA'})
                 self.assertEqual(checks.call_count, 5)
                 self.assertEqual(prompt.call_args.args[1], 'please enter your name:')
