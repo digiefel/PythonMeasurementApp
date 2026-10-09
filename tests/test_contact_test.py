@@ -135,7 +135,7 @@ class ContactTestTests(unittest.TestCase):
             current_x, current_y = self.runner.plot.sources[f'{key}_iv']
             self.assertEqual(len(current_x), 20)
             self.assertAlmostEqual(current_y[0], -.01 / value + 2e-9)
-        self.assertEqual(len(self.runner.plot.definitions), 10)
+        self.assertEqual(len(self.runner.plot.definitions), 11)
         with procedure.path.open() as stream:
             rows = list(csv.reader(stream))
         self.assertEqual(len(rows), 2)
@@ -223,11 +223,31 @@ class ContactTestTests(unittest.TestCase):
         self.assertTrue(math.isnan(fitted_resistance([(-.01, 0., 0), (.001, 0., 0), (.01, 0., 0)])))
 
     def test_plot_layout_has_ten_equal_panels(self):
-        plots = self.procedure().plot_definitions()
+        plots = self.procedure().plot_definitions()[:10]
         self.assertEqual([plot.id for plot in plots], list(SUMMARY_ORDER))
         self.assertEqual({(plot.row, plot.col) for plot in plots},
                          {(index // 3, index % 3) for index in range(10)})
         self.assertTrue(all(plot.rowspan == plot.colspan == 1 for plot in plots))
+
+    def test_overlay_fills_remaining_two_cells_and_tracks_selected_pairs(self):
+        from plotting.viewer import PlotViewer
+        plots = self.procedure(selected=(1, 2), ground=False).plot_definitions()
+        overlay = plots[-1]
+        self.assertEqual((overlay.id, overlay.row, overlay.col, overlay.rowspan, overlay.colspan),
+                         ('all', 3, 1, 1, 2))
+        self.assertEqual({element.source for element in overlay.elements},
+                         {'12_iv', '12_rv', '12_flagged', '12_fit'})
+        viewer = PlotViewer.__new__(PlotViewer)
+        viewer._body_anchor_tag = 'anchor'
+        viewer._absolute_layout = dict(kind='grid', cells=[(p.id, p) for p in plots],
+                                       row_ratios=[1] * 4, column_ratios=[1] * 3)
+        with patch('plotting.viewer.dpg.does_item_exist', return_value=True), \
+             patch('plotting.viewer.dpg.get_item_state', return_value={
+                 'pos': (0, 0), 'content_region_avail': (900, 800)}), \
+             patch('plotting.viewer.dpg.configure_item') as configure:
+            viewer._apply_absolute_layouts()
+        configure.assert_any_call('12', pos=[0, 0], width=300, height=200)
+        configure.assert_any_call('all', pos=[300, 600], width=600, height=200)
 
     def test_dual_axes_use_current_lines_and_resistance_markers_without_legend(self):
         from plotting import Curve, HLine

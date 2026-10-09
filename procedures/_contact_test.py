@@ -87,7 +87,8 @@ class ContactTest(MeasurementProcedure):
         self.path = OUTPUT_DIRECTORY / f'ContactTest_{timestamp}_{self.operator}_{self.chip}.csv'
 
     def plot_definitions(self):
-        plots = []
+        plots, overlays = [], []
+        selected = {f'{a}{b}' for a, b in self.first + self.second}
         for index, key in enumerate(SUMMARY_ORDER):
             color = f'C{index}'
             elements = [Curve(f'{key}_iv', mode='line', color=color, yaxis=0, show_in_legend=False),
@@ -99,6 +100,10 @@ class ContactTest(MeasurementProcedure):
                               yaxis=1, show_in_legend=False)]
             plots.append(PlotDef(key, row=index // 3, col=index % 3,
                                  xlabel=f'{key} · V (mV)', ylabels=('I (A)', 'R (Ω)'), elements=elements))
+            if key in selected:
+                overlays.extend(elements)
+        plots.append(PlotDef('all', row=3, col=1, colspan=2, xlabel='All · V (mV)',
+                             ylabels=('I (A)', 'R (Ω)'), elements=overlays))
         return plots
 
     def measure(self, device=None):

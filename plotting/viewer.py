@@ -317,6 +317,19 @@ class PlotViewer:
             self._build_split_span_layout(split_layout, row_ratios=row_ratios, column_ratios=column_ratios)
         elif top_span_layout is not None:
             self._build_top_span_layout(top_span_layout, row_ratios=row_ratios, column_ratios=column_ratios)
+        elif any(p.rowspan > 1 or p.colspan > 1 for p in plots):
+            cells = []
+            for plot_def in plots:
+                container = dpg.add_child_window(
+                    parent=self._window_tag, width=16, height=16, pos=[0, 0],
+                    border=False, no_scrollbar=True, no_scroll_with_mouse=True)
+                self._create_plot(plot_def, parent=container)
+                cells.append((container, plot_def))
+            self._absolute_layout = {
+                'kind': 'grid', 'cells': cells,
+                'row_ratios': self._normalize_ratios(row_ratios, max_row),
+                'column_ratios': self._normalize_ratios(column_ratios, max_col),
+            }
         else:
             plots_by_cell: dict[tuple[int, int], PlotDef] = {(p.row, p.col): p for p in plots}
             subplots_tag = dpg.add_subplots(
@@ -1023,6 +1036,25 @@ class PlotViewer:
             return
 
         kind = self._absolute_layout.get("kind")
+
+        if kind == 'grid':
+            def edges(origin, extent, ratios):
+                total = sum(ratios)
+                result = [origin]
+                accumulated = 0.0
+                for ratio in ratios:
+                    accumulated += ratio
+                    result.append(origin + round(extent * accumulated / total))
+                return result
+
+            xs = edges(body_x, body_w, self._absolute_layout['column_ratios'])
+            ys = edges(body_y, body_h, self._absolute_layout['row_ratios'])
+            for container, plot in self._absolute_layout['cells']:
+                if dpg.does_item_exist(container):
+                    dpg.configure_item(container, pos=[xs[plot.col], ys[plot.row]],
+                                       width=max(1, xs[plot.col + plot.colspan] - xs[plot.col]),
+                                       height=max(1, ys[plot.row + plot.rowspan] - ys[plot.row]))
+            return
 
         if kind == "split_span":
             column_ratios = self._absolute_layout["column_ratios"]
