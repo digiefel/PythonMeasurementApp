@@ -131,7 +131,7 @@ class ContactTestTests(unittest.TestCase):
             xs, ys = self.runner.plot.sources[f'{key}_fit']
             self.assertEqual(xs, [-10., 10.])
             self.assertAlmostEqual(ys[0], value)
-            self.assertEqual(len(self.runner.plot.sources[f'{key}_resistance'][0]), 20)
+            self.assertEqual(self.runner.plot.sources[f'{key}_resistance'], ([SUMMARY_ORDER.index(key)], [value]))
             current_x, current_y = self.runner.plot.sources[f'{key}_iv']
             self.assertEqual(len(current_x), 20)
             self.assertAlmostEqual(current_y[0], 1000 * (-.01 / value + 2e-9))
@@ -198,7 +198,7 @@ class ContactTestTests(unittest.TestCase):
         procedure = self.procedure((1, 2), False)
         procedure.execute(instrument, None)
         self.assertAlmostEqual(procedure.results['12'], Instrument.resistances['12'])
-        self.assertEqual(len(self.runner.plot.sources['12_resistance'][0]), 20)
+        self.assertEqual(self.runner.plot.sources['12_resistance'], ([0], [procedure.results['12']]))
         self.runner.report_status.assert_called()
 
     def test_short_stream_is_not_saved_as_a_completed_fit(self):
@@ -249,7 +249,7 @@ class ContactTestTests(unittest.TestCase):
         configure.assert_any_call('12', pos=[0, 0], width=300, height=200)
         configure.assert_any_call('all', pos=[300, 600], width=600, height=200)
 
-    def test_current_panels_have_compact_fit_labels_and_overlay_only_resistance_lines(self):
+    def test_current_panels_have_compact_fit_labels_and_summary_resistance_bars(self):
         plots = self.procedure().plot_definitions()
         for plot in plots[:10]:
             self.assertEqual(plot.title, '')
@@ -259,9 +259,10 @@ class ContactTestTests(unittest.TestCase):
             self.assertEqual((element.source, element.mode, element.marker), (f'{plot.id}_iv', 'line', None))
             self.assertEqual(element.legend_label_template.format(value=123.4), f'R{plot.id}=123.4Ω')
         self.assertEqual(plots[-1].ylabels, ('R (Ω)',))
+        self.assertEqual(plots[-1].xticks, tuple((f'R{key}', i) for i, key in enumerate(SUMMARY_ORDER)))
         for element in plots[-1].elements:
             self.assertTrue(element.source.endswith('_resistance'))
-            self.assertEqual((element.mode, element.marker, element.show_in_legend), ('line', None, False))
+            self.assertEqual((element.mode, element.marker, element.show_in_legend), ('bar', None, False))
 
     def test_fit_source_updates_current_curve_label(self):
         from plotting import DataSource

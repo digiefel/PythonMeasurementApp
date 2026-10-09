@@ -62,9 +62,9 @@ class ToolbarButton:
 
 @dataclass
 class Curve:
-    """Line, scatter, or line+scatter series bound to a data source."""
+    """Line, scatter, line+scatter, or bar series bound to a data source."""
     source: str
-    mode: str = "line"                  # "line" | "scatter" | "line_scatter"
+    mode: str = "line"                  # "line" | "scatter" | "line_scatter" | "bar"
     color: Any = None                   # None = auto-pick
     marker: str | None = None           # "o", "x", "s", "t", "d", "+"
     line_style: str = "solid"           # "solid" | "dash" | "dot" | "dash_dot"
@@ -146,3 +146,4 @@ class PlotDef:
     ylims: tuple[tuple[float, float] | None, ...] | None = None
     xlink: str = ""
     elements: list = field(default_factory=list)
+    xticks: tuple[tuple[str, float], ...] | None = None

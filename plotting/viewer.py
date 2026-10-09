@@ -681,6 +681,8 @@ class PlotViewer:
             auto_fit=False
         )
         self._xaxis_tags[plot_def.id] = x_axis
+        if plot_def.xticks is not None:
+            dpg.set_axis_ticks(x_axis, plot_def.xticks)
         if plot_def.xlim is not None:
             dpg.set_axis_limits(x_axis, plot_def.xlim[0], plot_def.xlim[1])
             self._axis_release_tags.add(x_axis)
@@ -747,6 +749,12 @@ class PlotViewer:
         color = resolve_color(elem.color)
         label = elem.legend_label if elem.show_in_legend else f"##{elem.source}_line"
         series_ids: list[int | str] = []
+
+        if elem.mode == 'bar':
+            series_id = dpg.add_bar_series([], [], label=label, parent=y_axis, weight=0.7)
+            if color is not None:
+                dpg.bind_item_theme(series_id, _bar_theme(color))
+            series_ids.append(series_id)
 
         if elem.mode in ("line", "line_scatter"):
             series_id = dpg.add_line_series([], [], label=label, parent=y_axis)
@@ -1007,6 +1015,8 @@ class PlotViewer:
                 values.extend(val for val in ds.y if np.isfinite(val) and val > 0)
             else:
                 values.extend(val for val in ds.y if np.isfinite(val))
+                if state.element.mode == 'bar' and ds.y:
+                    values.append(0.0)
         for state in self._hline_states_for_plot(plot_id):
             if state.element.yaxis != yaxis_idx:
                 continue

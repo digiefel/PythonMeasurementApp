@@ -97,9 +97,11 @@ class ContactTest(MeasurementProcedure):
             plots.append(PlotDef(key, row=index // 3, col=index % 3,
                                  xlabel='V (mV)', ylabels=('I (mA)',), elements=elements))
             if key in selected:
-                overlays.append(Curve(f'{key}_resistance', mode='line', color=color, show_in_legend=False))
-        plots.append(PlotDef('all', row=3, col=1, colspan=2, xlabel='All · V (mV)',
-                             ylabels=('R (Ω)',), elements=overlays))
+                overlays.append(Curve(f'{key}_resistance', mode='bar', color=color, show_in_legend=False))
+        plots.append(PlotDef('all', row=3, col=1, colspan=2,
+                             ylabels=('R (Ω)',), elements=overlays,
+                             xlim=(-0.5, len(SUMMARY_ORDER) - 0.5),
+                             xticks=tuple((f'R{key}', index) for index, key in enumerate(SUMMARY_ORDER))))
         return plots
 
     def measure(self, device=None):
@@ -207,12 +209,10 @@ class ContactTest(MeasurementProcedure):
         current = [(v * 1000, i * 1000) for v, i, _ in rows
                    if math.isfinite(v) and math.isfinite(i) and abs(v) < 1e99 and abs(i) < 1e99]
         plot.replace_source(f'{key}_iv', [v for v, _ in current], [i for _, i in current])
-        pairs = [(v * 1000, v / i) for v, i, _ in rows
-                 if math.isfinite(v) and math.isfinite(i)
-                 and abs(v) < 1e99 and 0 < abs(i) < 1e99 and math.isfinite(v / i)]
-        plot.replace_source(f'{key}_resistance', [v for v, _ in pairs], [r for _, r in pairs])
         if resistance is not None:
             plot.replace_source(f'{key}_fit', [-10., 10.], [resistance, resistance])
+            if math.isfinite(resistance):
+                plot.replace_source(f'{key}_resistance', [SUMMARY_ORDER.index(key)], [resistance])
 
     def save_results(self):
         """Atomic checkpoint, no generic output fallback, metadata or raw data."""
