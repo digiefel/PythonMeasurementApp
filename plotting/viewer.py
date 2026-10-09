@@ -459,13 +459,13 @@ class PlotViewer:
         max_row: int,
         max_col: int,
     ) -> dict[str, object] | None:
-        if max_row != 2 or max_col not in (2, 3):
+        if max_row < 2 or max_col not in (2, 3):
             return None
 
         spanning = [
             plot_def
             for plot_def in plots
-            if plot_def.row == 0 and plot_def.rowspan == 2 and plot_def.colspan == 1
+            if plot_def.row == 0 and plot_def.rowspan == max_row and plot_def.colspan == 1
         ]
         if len(spanning) != 1:
             return None
@@ -475,7 +475,7 @@ class PlotViewer:
             return None
         stack_columns = [col for col in range(max_col) if col != spanning_plot.col]
         stack_plots = [plot_def for plot_def in plots if plot_def.id != spanning_plot.id]
-        if len(stack_plots) != 2 * len(stack_columns):
+        if len(stack_plots) != max_row * len(stack_columns):
             return None
         if any(
             plot_def.col not in stack_columns or plot_def.rowspan != 1 or plot_def.colspan != 1
@@ -484,7 +484,7 @@ class PlotViewer:
             return None
 
         ordered_stack = sorted(stack_plots, key=lambda plot_def: (plot_def.row, plot_def.col))
-        if [(p.row, p.col) for p in ordered_stack] != [(row, col) for row in (0, 1) for col in stack_columns]:
+        if [(p.row, p.col) for p in ordered_stack] != [(row, col) for row in range(max_row) for col in stack_columns]:
             return None
 
         return {
@@ -493,6 +493,7 @@ class PlotViewer:
             "spanning_col": spanning_plot.col,
             "stack_columns": stack_columns,
             "column_count": max_col,
+            "row_count": max_row,
         }
 
     def _top_span_layout_spec(
@@ -501,10 +502,10 @@ class PlotViewer:
         max_row: int,
         max_col: int,
     ) -> dict[str, object] | None:
-        if len(plots) != 3 or max_row != 2 or max_col != 2:
+        if max_row != 2 or max_col < 2 or len(plots) != max_col + 1:
             return None
 
-        spanning = [p for p in plots if p.colspan == 2 and p.rowspan == 1]
+        spanning = [p for p in plots if p.col == 0 and p.colspan == max_col and p.rowspan == 1]
         if len(spanning) != 1:
             return None
 
@@ -515,7 +516,7 @@ class PlotViewer:
             return None
 
         ordered_stack = sorted(stack_plots, key=lambda p: p.col)
-        if [p.col for p in ordered_stack] != [0, 1]:
+        if [p.col for p in ordered_stack] != list(range(max_col)):
             return None
 
         return {
@@ -560,12 +561,12 @@ class PlotViewer:
             no_scroll_with_mouse=True,
         )
         stack_tag = dpg.add_subplots(
-            2,
+            int(layout_spec["row_count"]),
             len(stack_columns),
             parent=stack_container,
             width=-1,
             height=-1,
-            row_ratios=self._normalize_ratios(row_ratios, 2),
+            row_ratios=self._normalize_ratios(row_ratios, int(layout_spec["row_count"])),
             column_ratios=[ratios[col] for col in stack_columns],
             no_title=True,
         )
@@ -618,12 +619,12 @@ class PlotViewer:
         )
         stack_tag = dpg.add_subplots(
             1,
-            2,
+            len(stack_plots),
             parent=stack_container,
             width=-1,
             height=-1,
             row_ratios=[1.0],
-            column_ratios=self._normalize_ratios(column_ratios, 2),
+            column_ratios=self._normalize_ratios(column_ratios, len(stack_plots)),
             no_title=True,
         )
         for plot_def in stack_plots:

@@ -368,6 +368,8 @@ class MainUI:
         self.instruments_menu.entryconfigure('Calibrate SMUs…', state=tk.NORMAL if ready else tk.DISABLED)
         self.prober_enable_cb.configure(state=tk.NORMAL if idle else tk.DISABLED)
         self.load_settings_button.configure(state=tk.NORMAL if idle else tk.DISABLED)
+        if getattr(self, 'contact_test_button', None) is not None:
+            self.contact_test_button.configure(state=tk.NORMAL if ready else tk.DISABLED)
         self._set_cv_calibration_buttons_enabled(ready)
         self._apply_prober_availability_ui()
 
@@ -480,7 +482,7 @@ class MainUI:
 
     def _apply_prober_availability_ui(self):
         available = self.prober_available and not self._connection_busy
-        self._set_section_enabled(self.prober_frame, available)
+        self._set_section_enabled(self.prober_frame, available and not getattr(self.runner, 'prober_motion_inhibited', False))
         if self.prober_frame is not None:
             if available:
                 suffix = ""
@@ -637,6 +639,7 @@ class MainUI:
         abort_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         self._finish_btn.grid(row=0, column=1, sticky="ew", padx=2)
         skip_btn.grid(row=0, column=2, sticky="ew", padx=(2, 0))
+        self._skip_button = skip_btn
 
         attach_tooltip(abort_btn, "Immediately abort all measurements and cancel the remaining queue.")
         attach_tooltip(self._finish_btn, lambda: (
@@ -681,6 +684,9 @@ class MainUI:
         )
         self.proc_cb.grid(row=0, column=1, sticky="ew")
         self.proc_cb.bind('<<ComboboxSelected>>', self.on_proc_change)
+        self.contact_test_button = ttk.Button(procedure_header, text='ContactTest…', command=self.start_contact_test)
+        self.contact_test_button.grid(row=0, column=2, padx=(10, 0))
+        attach_tooltip(self.contact_test_button, 'Check probe connections without moving the prober. Choices apply only to this run.')
         attach_tooltip(procedure_label, "Choose the measurement script to run.")
         tk.Frame(self.procedure_settings_frame, background="#3b82f6", height=2).grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
@@ -1795,6 +1801,10 @@ class MainUI:
         self.root.wait_window(dialog)
         return skip_missing
 
+    def start_contact_test(self):
+        from ui_contact_test import start_contact_test
+        start_contact_test(self)
+
     def run(self):
         if self._connection_busy or not self._b1500_available():
             self.log("B1500 unavailable. Click Reconnect before starting a run.")
@@ -1919,7 +1929,9 @@ class MainUI:
     def stop_run(self):
         """Triggered by ABORT button."""
         self.log("Abort pressed; stopping run immediately...")
-        threading.Thread(target=self.runner.safe_stop, daemon=True).start()
+        move_prober = not getattr(self.runner, 'prober_motion_inhibited', False)
+        threading.Thread(target=self.runner.safe_stop,
+                         kwargs={'move_prober': move_prober}, daemon=True).start()
 
     def cancel_queue_run(self):
         if self.runner.cancel_queue_event.is_set():
@@ -2198,7 +2210,7 @@ class MainUI:
     def _post_status(self, info: Optional[dict]):
         self._post(self.show_status, info)
 
-    def _set_running_state(self, running: bool):
+    def _set_running_state(self, running: bool, *, reconnect: bool = True):
         self._running = running
         self.light_settings_button.configure(state=tk.NORMAL if self.prober_available and not running else tk.DISABLED)
         if running:
@@ -2212,7 +2224,7 @@ class MainUI:
             self.run_button.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(4, 0))
         self._refresh_connection_controls()
 
-        if not running and self.runner.b1500 is not None and not self.runner.b1500.is_open:
+        if reconnect and not running and self.runner.b1500 is not None and not self.runner.b1500.is_open:
             # Abort/Skip retires the measurement connection. Restore it after
             # the run ends, without forcing the prober to reconnect.
             self._start_connection_check()

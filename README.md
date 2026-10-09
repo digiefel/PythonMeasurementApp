@@ -58,6 +58,29 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 
 ## Documentation
 
+- **ContactTest:** the button beside the procedure selector runs a standalone
+  contact check without moving the prober. Operator name and GND/SMU1–4 choices
+  reset each launch. Selected SMUs are swept against GNDU first, followed by a
+  prompt to lift GNDU and sweeps between selected SMUs. With GND unchecked, the
+  ground stage and prompt are skipped. Each sweep uses 20 points from −10 to
+  +10 mV (excluding zero), a 10 mA compliance limit, high-speed ADC with one
+  sample, parallel readings, Auto ≥100 nA, and automatic settling waits.
+  Individual R–V plots and an overlay show fitted total pair resistances.
+  Only fitted values are saved (one header and one data row) under
+  `C:/Users/EMN Lab/Desktop/ContactTestLog/ContactTest_{timestamp}_{OperatorName}_{chip name}.csv`.
+  Completed pairs are saved after each sweep; skipped pairs are omitted.
+- **I/V sweeps:** `Isweep` and `Vsweep` share optional voltage probes, hardware
+  sweep patterns, ADC/settling controls, and plotting. Open the
+  [interactive sweep/CSV preview](docs/iv_sweep_preview.html) in a browser to
+  explore simulated normal, compliance-flagged, and interrupted measurements.
+  Regenerate it with `python -m scripts.build_iv_preview`.
+- **Sweep CSV:** up to six columns: `VoltageHigh_V`, `VoltageLow_V`,
+  `CurrentHigh_A`, `CurrentLow_A`, `Time_s`, `Status`. Header comments identify
+  the selected endpoints and measured/programmed provenance. Unavailable
+  quantities are omitted, GNDU quantities are NaN, and missing records are empty.
+  Voltage columns use the optional sense probes when selected; current columns
+  always refer to force terminals. Existing IVSweep/FourTerminalIV settings are
+  translated on load to Vsweep/Isweep without rewriting the original config file.
 - **Data management:** [browse measurements, edit device notes/status, and correct assignments](docs/data_management.md).
 - **Setting tooltips:** hover over a setting for the explanation declared beside
   its parameter in the procedure source.

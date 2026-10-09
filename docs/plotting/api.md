@@ -180,8 +180,8 @@ The viewer creates the grid of ImPlot widgets and instantiates render elements.
 Blocks until viewer acknowledges.
 
 - `row_ratios` / `column_ratios` are optional layout weights.
-- They apply to stretched grid columns and to the supported split-span layout used by
-  `IVSweep`.
+- They apply to stretched grids, the side-by-side span layout, and a full-width
+  plot above or below a row of smaller plots (used by `Isweep` and `Vsweep`).
 
 ### Measurement progress
 

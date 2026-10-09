@@ -59,6 +59,7 @@ class MeasurementRunner:
         self.temp_comp_ref_z_heights = None  # (contact, separation, overtravel, hover)
         self._temp_comp_unavailable_logged = False
         self.auto_separation_after_measurement = True
+        self.prober_motion_inhibited = False
         self.stop_event = threading.Event()
         self.cancel_queue_event = threading.Event()
         self.skip_device_event = threading.Event()
@@ -106,17 +107,19 @@ class MeasurementRunner:
                 self.log(str(exc))
 
     
-    def safe_stop(self):
+    def safe_stop(self, *, move_prober=None):
         """
         Stop instrument execution and separate the prober.
         Cancellation never makes concurrent calls into the instrument driver.
         """
+        if move_prober is None:
+            move_prober = not getattr(self, 'prober_motion_inhibited', False)
         self.stop_event.set()
         self.log("Stop requested.")
         self._stop_instrument()
         
         # Separate prober for safety (this is a different bus, OK to call here)
-        if self.is_prober_available():
+        if move_prober and self.is_prober_available():
             try:
                 separated = self.prober_ctrl.separation()
                 if separated and self.contact_state_callback:
@@ -131,10 +134,11 @@ class MeasurementRunner:
 
     def safe_skip_device(self):
         """Signal the runner to abort the current device and continue with the next."""
+        move_prober = not getattr(self, 'prober_motion_inhibited', False)
         self.skip_device_event.set()
         self.log("Skip requested: aborting current device and proceeding to next.")
         self._stop_instrument()
-        if self.is_prober_available():
+        if move_prober and self.is_prober_available():
             try:
                 separated = self.prober_ctrl.separation()
                 if separated and self.contact_state_callback:
@@ -516,6 +520,35 @@ class MeasurementRunner:
             raise
 
     
+    def run_contact_test(self, chip_id, operator, selected, ground, confirm_lift, address):
+        """Instrument-only path: no queue, device, temperature or prober preparation."""
+        from procedures._contact_test import ContactTest
+
+        if not chip_id.strip():
+            raise ValueError('Chip name is required for ContactTest.')
+        previous = self.prober_motion_inhibited
+        self.prober_motion_inhibited = True
+        try:
+            test = ContactTest(self, chip_id, operator, selected, ground, confirm_lift)
+            self.report_status(None)
+            self.check_stop('ContactTest cancelled before starting')
+            b1500 = self.get_b1500(address)
+            with b1500.exclusive():
+                test.execute(b1500, None)
+            return test.results, test.path
+        except InstrumentCancelled as exc:
+            self._stop_instrument()
+            if self.stop_event.is_set() or self.skip_device_event.is_set():
+                raise MeasurementAbortRequested('ContactTest cancelled.') from exc
+            raise
+        except Exception:
+            self._stop_instrument()
+            raise
+        finally:
+            self.prober_motion_inhibited = previous
+            if self.plot is not None:
+                self.plot.clear_progress()
+
     def run_procedure(self, chip_id, site, subsite, device, proc_class, settings):
         # Inject discovered B1500 hardware metadata for procedure-level helpers.
         settings['b1500'] = self.config.data.get('b1500', {})

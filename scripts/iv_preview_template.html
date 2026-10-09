@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Isweep / Vsweep — plotting and CSV explorer</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#183047;background:#f1f5f8;font-size:14px}*{box-sizing:border-box}body{margin:0}main{max-width:1450px;margin:auto;padding:28px}h1{font-size:29px;margin:5px 0 10px;letter-spacing:-.8px}h2{font-size:18px;margin:0 0 14px}p{line-height:1.5}.eyebrow{font-size:12px;letter-spacing:1.6px;text-transform:uppercase;color:#456b81;font-weight:700}.sub{color:#536979;max-width:1000px}.controls,.card{background:white;border:1px solid #d8e2e9;border-radius:12px;padding:18px;margin:18px 0;box-shadow:0 2px 4px #20384706}.controls{display:flex;gap:18px;flex-wrap:wrap;align-items:end;position:sticky;top:0;z-index:2}label{font-size:12px;font-weight:650;display:grid;gap:6px}select,button{font:inherit;border:1px solid #b9cbd7;border-radius:6px;padding:8px 10px;background:white;color:#183047}button{cursor:pointer;background:#173c52;color:white}.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{padding:5px 9px;border-radius:20px;font-size:12px;background:#e4f1ed;color:#20554a}.chip.warn{background:#fff0d6;color:#8c5300}.chip.neutral{background:#e8eef5;color:#385473}#mini{display:grid;gap:14px;grid-template-columns:repeat(var(--n),minmax(0,1fr))}.plot{min-width:0;border:1px solid #d8e2e9;border-radius:8px;padding:12px;background:white}.plot h3{font-size:14px;margin:0 0 5px}.plot svg{display:block;width:100%;height:auto}.legend{display:flex;flex-wrap:wrap;gap:5px 14px;min-height:20px;font-size:11px;color:#536979}.legend span:before{content:'●';color:var(--c);margin-right:5px}#mainplot{margin-top:14px}.details{display:grid;grid-template-columns:1fr 1.3fr;gap:18px}.details .card{margin:0}table{border-collapse:collapse;width:100%;font-size:12px}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #e4ebf0;white-space:nowrap}th{background:#f1f5f8;color:#385473}.scroll{overflow:auto}td.wrap{white-space:normal}pre{font-size:11px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#f5f8fa;padding:14px;border-radius:6px}summary{cursor:pointer;margin:15px 0;font-weight:600}#csvhead{display:flex;justify-content:space-between;align-items:center;gap:20px}#note{padding:10px 14px;background:#eaf2f7;border-radius:7px;line-height:1.5}footer{font-size:12px;color:#627586;margin:24px 0}#error{color:#a94819}.formula{font-family:ui-monospace,monospace;font-size:12px}a{color:#166786}@media(max-width:850px){main{padding:14px}.controls{position:static;gap:10px}#mini,.details{grid-template-columns:1fr}.plot svg{max-height:300px}}
+</style></head>
+<body><main>
+<div class="eyebrow">Instrument-free inspection · actual procedure output</div>
+<h1>Isweep / Vsweep</h1>
+<p class="sub">Explore the channel choices, main plot, diagnostic panels and compact CSV. Each example runs the real procedure against a simulated instrument, including stream parsing and file saving. The figure uses the production plot definitions and data sources.</p>
+<div class="controls">
+<label>Procedure<select id="procedure"><option>Isweep</option><option>Vsweep</option></select></label>
+<label>Voltage sensing<select id="sensing"><option>None</option><option>High only</option><option>Low only</option><option selected>Both</option></select></label>
+<label>Return terminal<select id="low"><option>SMU</option><option>GNDU</option></select></label>
+<label>Terminal drive<select id="symmetric"><option value="false">High / grounded return</option><option value="true">Symmetric ±V/2</option></select></label>
+<label>Pattern<select id="pattern"><option>Single</option><option>Return</option><option>Butterfly</option></select></label>
+<label>Example<select id="condition"><option value="normal">Normal</option><option value="compliance">Compliance flags</option><option value="interrupted">Interrupted mid-point</option></select></label>
+</div>
+<div class="chips" id="chips"></div><p id="note"></p>
+<div id="mini"></div><div id="mainplot"></div>
+<div class="details" style="margin-top:18px">
+<section class="card"><h2>What each SMU acquires</h2><div class="scroll"><table id="acquisition"></table></div><p class="sub">Each active SMU measures exactly one quantity throughout each hardware sweep. No software stepping or extra spot measurements.</p><p id="segments" class="sub"></p></section>
+<section class="card"><h2>What the saved columns mean</h2><div class="scroll"><table id="provenance"></table></div><p class="sub">Four terminal quantities, then time and combined status. A genuinely unavailable quantity has no column. GNDU uses NaN, never a fictitious measured zero. Missing records in an interrupted point are empty cells.</p></section>
+</div>
+<section class="card"><div id="csvhead"><h2>Exact saved CSV</h2><button id="download">Download this CSV</button></div><p id="error"></p><div class="scroll"><table id="csvtable"></table></div><details><summary>Header comments and saved settings</summary><pre id="metadata"></pre></details></section>
+<footer>180 simulated runs cover 60 valid combinations × normal / compliance / interruption. Colours and layout follow the application; this is an SVG preview, not a DearPyGui screenshot. Simulation checks program logic, not physical instrument timing, accuracy, or firmware behaviour. Regenerate with <code>python -m scripts.build_iv_preview</code>.</footer>
+</main>
+<script>
+const cases=/*CASES*/[];
+const ids=['procedure','sensing','low','symmetric','pattern','condition'];
+const colors={C0:'#287da8',C1:'#dc7b30',C2:'#399870',C3:'#ce4757',C7:'#647582'};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+const num=n=>n===0?'0':Math.abs(n)<.01||Math.abs(n)>=10000?n.toExponential(2):Number(n.toPrecision(4)).toString();
+let selected;
+function svgPlot(p,sources,large){
+  const w=large?1200:480,h=large?350:240,L=76,R=20,T=14,B=49;
+  const entries=p.elements.map(e=>({e,x:sources[e.source]?.[0]||[],y:sources[e.source]?.[1]||[]}));
+  const xs=entries.flatMap(e=>e.x),ys=entries.flatMap(e=>e.y);
+  let xmin=xs.length?Math.min(...xs):0,xmax=xs.length?Math.max(...xs):1;
+  let ymin=ys.length?Math.min(...ys):0,ymax=ys.length?Math.max(...ys):1;
+  const dx=(xmax-xmin)||Math.max(Math.abs(xmin)*.1,1e-6),dy=(ymax-ymin)||Math.max(Math.abs(ymin)*.1,1e-6);
+  xmin-=dx*.04;xmax+=dx*.04;ymin-=dy*.08;ymax+=dy*.08;
+  const X=v=>L+(v-xmin)/(xmax-xmin)*(w-L-R),Y=v=>h-B-(v-ymin)/(ymax-ymin)*(h-T-B);
+  let s=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(p.title)}"><rect width="${w}" height="${h}" fill="white"/>`;
+  for(let i=0;i<=4;i++){
+    const xv=xmin+(xmax-xmin)*i/4,yv=ymin+(ymax-ymin)*i/4;
+    s+=`<path d="M${X(xv)} ${T}V${h-B} M${L} ${Y(yv)}H${w-R}" stroke="#e5edf2" fill="none"/>`;
+    s+=`<text x="${X(xv)}" y="${h-B+17}" text-anchor="middle" font-size="11" fill="#617789">${num(xv)}</text>`;
+    s+=`<text x="${L-9}" y="${Y(yv)+4}" text-anchor="end" font-size="11" fill="#617789">${num(yv)}</text>`;
+  }
+  s+=`<text x="${(w+L-R)/2}" y="${h-8}" text-anchor="middle" font-size="12" fill="#385473">${esc(p.xlabel)}</text>`;
+  s+=`<text transform="translate(13 ${(h+T-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#385473">${esc(p.ylabels[0])}</text>`;
+  for(const {e,x,y} of entries){
+    const color=colors[e.color]||colors.C0;
+    if(e.mode!=='scatter')s+=`<polyline points="${x.map((v,i)=>`${X(v)},${Y(y[i])}`).join(' ')}" fill="none" stroke="${color}" stroke-width="1.8"/>`;
+    x.forEach((v,i)=>{const a=X(v),b=Y(y[i]);
+      const title=`<title>${esc(p.xlabel)}: ${v}\n${esc(p.ylabels[0])}: ${y[i]}</title>`;
+      if(e.marker==='x')s+=`<path d="M${a-4} ${b-4}l8 8m-8 0l8 -8" stroke="${color}" stroke-width="2">${title}</path>`;
+      else s+=`<circle cx="${a}" cy="${b}" r="${large?3:2.7}" fill="${color}">${title}</circle>`;
+    });
+  }
+  if(!xs.length)s+=`<text x="${w/2}" y="${h/2}" text-anchor="middle" font-size="13" fill="#617789">No complete points yet</text>`;
+  s+='</svg>';
+  return `<div class="plot"><h3>${esc(p.title)}</h3>${s}<div class="legend">${entries.filter(t=>t.e.legend_label).map(t=>`<span style="--c:${colors[t.e.color]||colors.C0}">${esc(t.e.legend_label)}</span>`).join('')}</div></div>`;
+}
+function update(){
+  const symAllowed=$('procedure').value==='Vsweep'&&$('low').value==='SMU';
+  $('symmetric').disabled=!symAllowed;
+  if(!symAllowed)$('symmetric').value='false';
+  selected=cases.find(c=>ids.every(id=>String(c[id])===$(id).value));
+  if(!selected)throw new Error('Missing preview case');
+  const c=selected,main=c.plots.find(p=>p.id==='iv'),mini=c.plots.filter(p=>p.id!=='iv');
+  $('mini').style.setProperty('--n',mini.length);
+  $('mini').innerHTML=mini.map(p=>svgPlot(p,c.sources,false)).join('');
+  $('mainplot').innerHTML=svgPlot(main,c.sources,true);
+  const rows=c.csv.split('\n').filter(s=>s&&!s.startsWith('#')).map(s=>s.split(','));
+  const count=rows.length-1;
+  $('chips').innerHTML=`<span class="chip">${c.procedure}</span><span class="chip neutral">${mini.length} diagnostic panels</span><span class="chip neutral">${rows[0].length} CSV columns</span><span class="chip neutral">${count} saved rows</span><span class="chip ${c.error?'warn':''}">${c.error?'Partial run':'Complete run'}</span>`;
+  $('note').innerHTML=`<b>Main axes:</b> ${esc(main.xlabel)} → ${esc(main.ylabels[0])}. ${c.low==='GNDU'&&c.sensing!=='Low only'&&c.sensing!=='Both'?'The main voltage uses GNDU’s nominal 0 V reference; the file still saves NaN for its voltage.':''}`;
+  $('acquisition').innerHTML='<tr><th>Role</th><th>Channel</th><th>Measurement</th></tr>'+c.measurements.map(m=>`<tr><td>${m.role}</td><td>${m.channel}</td><td>${m.kind===1?'Current':'Voltage'}</td></tr>`).join('');
+  $('segments').textContent=`Instrument sweep commands: ${c.segments.length}. `+c.segments.map((s,i)=>`Segment ${i+1}: ${num(s[2])} → ${num(s[3])}${Math.abs(s[0])===3?' → start':''}, ${s[4]} outward points.`).join(' ');
+  $('provenance').innerHTML='<tr><th>CSV column</th><th>Meaning for this configuration</th></tr>'+Object.entries(c.quantities).map(([name,q])=>`<tr><td>${name}</td><td class="wrap">${esc(q.label)} · <b>${esc(q.basis)}</b></td></tr>`).join('')+'<tr><td>Time_s</td><td class="wrap">Force-high reading timestamp</td></tr><tr><td>Status</td><td class="wrap">Combined instrument flags</td></tr>';
+  $('csvtable').innerHTML=rows.map((row,i)=>`<tr>${row.map(v=>i===0?`<th>${esc(v)}</th>`:`<td>${v===''?'—':esc(v==='nan'?'NaN':Number.isFinite(Number(v))?num(Number(v)):v)}</td>`).join('')}</tr>`).join('');
+  $('metadata').textContent=c.csv.split('\n').filter(s=>s.startsWith('#')).join('\n');
+  $('error').textContent=c.error?c.error+'. The last row retains the data already received; missing cells are blank.':c.condition==='compliance'?'Red crosses mark instrument flags; readings remain in the file.':'';
+}
+ids.forEach(id=>$(id).addEventListener('change',update));
+$('download').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([selected.csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`${selected.procedure}_${selected.sensing.replaceAll(' ','-')}_${selected.low}_${selected.pattern}_${selected.condition}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
+update();
+</script></body></html>

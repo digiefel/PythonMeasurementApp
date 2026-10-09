@@ -3,6 +3,7 @@ import math
 import time
 from dataclasses import dataclass
 
+from procedures._smu_parameters import ACQUISITION_PARAMETERS
 from procedures.base import Choice, MeasurementProcedure, SMU, parameter
 from instrumentio.constants import B1500_CURRENT_RANGES, B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
@@ -195,24 +196,7 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('measurement_range', 'Voltage Meas Range', 0.0, Choice(B1500_VOLTAGE_RANGES, float), help='Applies to both voltage-sensing SMUs. Auto selects a range; Auto ≥ sets a lower bound; Fixed prevents range changes.'),
         parameter('current_measurement_range', 'Current Range (Source / Meas)', 1e-9, Choice(B1500_CURRENT_RANGES, float), help='Controls both source and measurement ranges. Auto ≥ sets a lower bound; the source always uses one range covering ±Ibias. Auto leaves range selection unrestricted. Note: ranges below 1nA can be slow.'),
         parameter('current_compliance', 'Return Current Compliance (A)', 0.01, float),
-        parameter('adc_type', 'ADC Type', 0, Choice(((0, 'High-speed'), (1, 'High-resolution')), int), help='Selects the ADC for all four SMUs. High-speed supports parallel measurements.'),
-        parameter('adc_mode', 'ADC Integration Mode', 0,
-                  Choice(((0, 'Auto'), (1, 'Manual'), (2, 'Power line cycles')), int),
-                  help='Auto scales instrument-selected averaging/integration. Manual uses sample count for high-speed or 80 µs units for high-resolution. PLC uses whole power line cycles (20 ms each at 50 Hz).'),
-        parameter('adc_coefficient', 'ADC Samples / Factor / PLC (0 = mode default)', 0.0, float,
-                  help='Integer coefficient. Auto/Manual: 1–1023 for high-speed, 1–127 for high-resolution. PLC: 1–100. Zero selects the mode default: HS Auto/Manual 1, HR Auto 6, HR Manual 3, PLC 1.'),
-        parameter('parallel_measurement', 'Parallel Measurement (high-speed ADC)', False, bool,
-                  help='Measure the four SMUs in parallel within each sweep step. Requires high-speed ADC; does not run separate contact sweeps concurrently.'),
-        parameter('adc_autozero', 'ADC Autozero (high-resolution ADC)', False, bool,
-                  help='Cancels high-resolution ADC offset, adding integration time. Has no effect with high-speed ADC.'),
-        parameter('source_wait_factor', 'Source Settling Factor (0–10, step 0.1)', 1.0, float,
-                  help='Source wait = factor × instrument automatic wait + offset, before changing output. Default 1 preserves automatic timing; 0 removes its automatic component.'),
-        parameter('source_wait_offset', 'Source Settling Offset (s, step 0.0001)', 0.0, float,
-                  help='Adds 0–1 seconds to the source wait. Separate from hold and step delays.'),
-        parameter('measurement_wait_factor', 'Measurement Settling Factor (0–10, step 0.1)', 1.0, float,
-                  help='Measurement wait = factor × instrument automatic wait + offset. Default 1 preserves automatic settling even when Delay Time is zero. Reducing it may measure before the device settles.'),
-        parameter('measurement_wait_offset', 'Measurement Settling Offset (s, step 0.0001)', 0.0, float,
-                  help='Adds 0–1 seconds to the measurement wait. The instrument wait can be covered by a longer Delay Time.'),
+        *ACQUISITION_PARAMETERS,
         parameter('hold_time', 'Hold Time (s)', 0.0, float, help='Wait at the beginning of each sweep, before the first step delay.'),
         parameter('delay_time', 'Delay Time (s)', 0.0, float, help='Wait after setting each step output and before measurement. Zero does not disable automatic settling.'),
         parameter('second_delay', 'Second Delay (s)', 0.0, float, help='Step delay from measurement start to the next output step. The instrument also waits for measurement completion if that takes longer.'),

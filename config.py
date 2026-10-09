@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Optional
 from instrumentio.constants import DEFAULT_SMU_CHANNEL_MAP
 from models import load_devices_csv
+from procedures._iv_config import migrate_iv_config
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
@@ -114,6 +115,7 @@ class Config:
         if normalized_last.get('temperature_mode') not in ('Setpoint', 'Sweep'):
             normalized_last['temperature_mode'] = 'Setpoint'
         merged['last_selection'] = normalized_last
+        migrate_iv_config(merged)
         if not merged.get('devices_csv_path'):
             merged['devices_csv_path'] = self.default_devices_csv_path
         b1500_defaults = deepcopy(DEFAULT_CONFIG['b1500'])
