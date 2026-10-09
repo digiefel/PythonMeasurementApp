@@ -120,7 +120,7 @@ def show_results(ui, results, path):
     body = ttk.Frame(dialog, padding=18)
     body.pack(fill='both', expand=True)
     ttk.Label(body, text='Pair', font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=0, sticky='w')
-    ttk.Label(body, text='Fitted resistance (Ω)', font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=1, padx=(22, 0))
+    ttk.Label(body, text='Fit R (Ω)', font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=1, padx=(22, 0))
     for row, key in enumerate(SUMMARY_ORDER, start=1):
         ttk.Label(body, text=f'R{key}').grid(row=row, column=0, sticky='w', pady=3)
         ttk.Label(body, text=format_resistance(results.get(key)), font=('TkFixedFont', 11)).grid(

@@ -99,14 +99,14 @@ class ContactTest(MeasurementProcedure):
             elements = [Curve(f'{key}_iv', mode='scatter', marker='o', marker_size=3,
                               color=color, legend_label=f'R{key}',
                               legend_label_source=f'{key}_fit',
-                              legend_label_template=f'R{key}={{value:.1f}}Ω'),
+                              legend_label_template=f'R{key}={{value:.1f}}'),
                         Curve(f'{key}_iv_fit', mode='line', color=color, show_in_legend=False)]
             plots.append(PlotDef(key, row=index // 3, col=index % 3,
                                  xlabel='V (mV)', ylabels=('I (mA)',), elements=elements))
             if key in selected:
                 overlays.append(Curve(f'{key}_resistance', mode='bar', color=color, show_in_legend=False))
         plots.append(PlotDef('all', row=3, col=1, colspan=2,
-                             ylabels=('R (Ω)',), elements=overlays,
+                             ylabels=('R (ohm)',), elements=overlays,
                              xlim=(-0.5, len(SUMMARY_ORDER) - 0.5),
                              xticks=tuple((f'R{key}', index) for index, key in enumerate(SUMMARY_ORDER))))
         return plots
