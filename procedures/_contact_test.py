@@ -52,15 +52,20 @@ def filename_part(value):
     return value
 
 
-def fitted_resistance(rows):
+def fitted_current(rows):
     # Fit I=G*V+offset: the commanded voltage is the independent sweep quantity.
     # Flags, missing data and B1500 overflow sentinels do not constitute a fit.
     valid = [(v, i) for v, i, status in rows if not status and v is not None and i is not None
              and math.isfinite(v) and math.isfinite(i) and abs(v) < 1e99 and abs(i) < 1e99]
     if len({v for v, _ in valid}) < 3:
-        return math.nan
+        return None
     fit = linear_fit([v for v, _ in valid], [i for _, i in valid])
-    return 1 / fit.slope if math.isfinite(fit.slope) and fit.slope > 0 else math.nan
+    return fit if math.isfinite(fit.slope) and math.isfinite(fit.intercept) and fit.slope > 0 else None
+
+
+def fitted_resistance(rows):
+    fit = fitted_current(rows)
+    return 1 / fit.slope if fit is not None else math.nan
 
 
 class ContactTest(MeasurementProcedure):
@@ -91,9 +96,11 @@ class ContactTest(MeasurementProcedure):
         selected = {f'{a}{b}' for a, b in self.first + self.second}
         for index, key in enumerate(SUMMARY_ORDER):
             color = f'C{index}'
-            elements = [Curve(f'{key}_iv', mode='line', color=color, legend_label=f'R{key}',
+            elements = [Curve(f'{key}_iv', mode='scatter', marker='o', marker_size=3,
+                              color=color, legend_label=f'R{key}',
                               legend_label_source=f'{key}_fit',
-                              legend_label_template=f'R{key}={{value:.1f}}Ω')]
+                              legend_label_template=f'R{key}={{value:.1f}}Ω'),
+                        Curve(f'{key}_iv_fit', mode='line', color=color, show_in_legend=False)]
             plots.append(PlotDef(key, row=index // 3, col=index % 3,
                                  xlabel='V (mV)', ylabels=('I (mA)',), elements=elements))
             if key in selected:
@@ -211,6 +218,11 @@ class ContactTest(MeasurementProcedure):
         plot.replace_source(f'{key}_iv', [v for v, _ in current], [i for _, i in current])
         if resistance is not None:
             plot.replace_source(f'{key}_fit', [-10., 10.], [resistance, resistance])
+            fit = fitted_current(rows)
+            if fit is not None:
+                voltages = [VOLTAGE_START, VOLTAGE_STOP]
+                plot.replace_source(f'{key}_iv_fit', [v * 1000 for v in voltages],
+                                    [(fit.slope * v + fit.intercept) * 1000 for v in voltages])
             if math.isfinite(resistance):
                 plot.replace_source(f'{key}_resistance', [SUMMARY_ORDER.index(key)], [resistance])
 

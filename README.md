@@ -65,7 +65,8 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
   ground stage and prompt are skipped. Each sweep uses 20 points from −10 to
   +10 mV (excluding zero), a 10 mA compliance limit, high-speed ADC with one
   sample, parallel readings, Auto ≥100 nA, and automatic settling waits.
-  Individual panels show current in mA with compact fitted-resistance labels;
+  Individual panels show current scatter in mA, fitted lines including the
+  intercept, and compact fitted-resistance labels;
   the combined panel shows one fitted-resistance bar per measured pair.
   Only fitted values are saved (one header and one data row) under
   `C:/Users/EMN Lab/Desktop/ContactTestLog/ContactTest_{timestamp}_{OperatorName}_{chip name}.csv`.

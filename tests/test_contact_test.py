@@ -254,10 +254,13 @@ class ContactTestTests(unittest.TestCase):
         for plot in plots[:10]:
             self.assertEqual(plot.title, '')
             self.assertEqual(plot.ylabels, ('I (mA)',))
-            self.assertEqual(len(plot.elements), 1)
+            self.assertEqual(len(plot.elements), 2)
             element = plot.elements[0]
-            self.assertEqual((element.source, element.mode, element.marker), (f'{plot.id}_iv', 'line', None))
+            self.assertEqual((element.source, element.mode, element.marker), (f'{plot.id}_iv', 'scatter', 'o'))
             self.assertEqual(element.legend_label_template.format(value=123.4), f'R{plot.id}=123.4Ω')
+            line = plot.elements[1]
+            self.assertEqual((line.source, line.mode, line.show_in_legend), (f'{plot.id}_iv_fit', 'line', False))
+            self.assertEqual(line.color, element.color)
         self.assertEqual(plots[-1].ylabels, ('R (Ω)',))
         self.assertEqual(plots[-1].xticks, tuple((f'R{key}', i) for i, key in enumerate(SUMMARY_ORDER)))
         for element in plots[-1].elements:
@@ -277,6 +280,30 @@ class ContactTestTests(unittest.TestCase):
         with patch('plotting.viewer.dpg.set_item_label') as label:
             viewer._redraw_source('12_fit')
         label.assert_called_once_with('current', 'R12=123.4Ω')
+
+    def test_real_plot_bridge_registers_fit_labels_and_completes_all_pairs(self):
+        from plotting.bridge import PlotBridge
+        bridge = PlotBridge.__new__(PlotBridge)
+        bridge._process = Mock()
+        bridge._process.is_alive.return_value = True
+        bridge._sources, bridge._pending = {}, {}
+        bridge._pending_lock = threading.Lock()
+        bridge._progress = {'revision': 0}
+        bridge._send_and_wait = Mock()
+        bridge._send_fire_and_forget = Mock()
+        self.runner.plot = bridge
+        procedure = self.procedure()
+        procedure.execute(Instrument(), None)
+        for index, key in enumerate(SUMMARY_ORDER):
+            self.assertEqual(bridge.source(f'{key}_fit').y[-1], procedure.results[key])
+            self.assertEqual(bridge.source(f'{key}_resistance').x, [index])
+            self.assertEqual(len(bridge.source(f'{key}_iv').y), 20)
+            line = bridge.source(f'{key}_iv_fit')
+            self.assertEqual(line.x, [-10., 10.])
+            for voltage_mv, current_ma in zip(line.x, line.y):
+                expected_ma = voltage_mv / Instrument.resistances[key] + 2e-6
+                self.assertAlmostEqual(current_ma, expected_ma)
+        self.assertTrue(procedure.path.exists())
 
     def test_not_discoverable_as_persisted_procedure(self):
         from procedures import load_procedures

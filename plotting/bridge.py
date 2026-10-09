@@ -124,6 +124,9 @@ class PlotBridge:
 
         for plot_def in plots:
             for elem in plot_def.elements:
+                label_source = getattr(elem, 'legend_label_source', '')
+                if label_source:
+                    self._sources.setdefault(label_source, DataSource())
                 source_name = getattr(elem, "source", "")
                 if source_name and source_name not in self._sources:
                     self._sources[source_name] = DataSource()
