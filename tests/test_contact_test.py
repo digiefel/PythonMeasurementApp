@@ -131,10 +131,10 @@ class ContactTestTests(unittest.TestCase):
             xs, ys = self.runner.plot.sources[f'{key}_fit']
             self.assertEqual(xs, [-10., 10.])
             self.assertAlmostEqual(ys[0], value)
-            self.assertEqual(len(self.runner.plot.sources[f'{key}_rv'][0]), 20)
+            self.assertEqual(len(self.runner.plot.sources[f'{key}_resistance'][0]), 20)
             current_x, current_y = self.runner.plot.sources[f'{key}_iv']
             self.assertEqual(len(current_x), 20)
-            self.assertAlmostEqual(current_y[0], -.01 / value + 2e-9)
+            self.assertAlmostEqual(current_y[0], 1000 * (-.01 / value + 2e-9))
         self.assertEqual(len(self.runner.plot.definitions), 11)
         with procedure.path.open() as stream:
             rows = list(csv.reader(stream))
@@ -198,7 +198,7 @@ class ContactTestTests(unittest.TestCase):
         procedure = self.procedure((1, 2), False)
         procedure.execute(instrument, None)
         self.assertAlmostEqual(procedure.results['12'], Instrument.resistances['12'])
-        self.assertEqual(len(self.runner.plot.sources['12_flagged'][0]), 1)
+        self.assertEqual(len(self.runner.plot.sources['12_resistance'][0]), 20)
         self.runner.report_status.assert_called()
 
     def test_short_stream_is_not_saved_as_a_completed_fit(self):
@@ -236,7 +236,7 @@ class ContactTestTests(unittest.TestCase):
         self.assertEqual((overlay.id, overlay.row, overlay.col, overlay.rowspan, overlay.colspan),
                          ('all', 3, 1, 1, 2))
         self.assertEqual({element.source for element in overlay.elements},
-                         {'12_iv', '12_rv', '12_flagged', '12_fit'})
+                         {'12_resistance'})
         viewer = PlotViewer.__new__(PlotViewer)
         viewer._body_anchor_tag = 'anchor'
         viewer._absolute_layout = dict(kind='grid', cells=[(p.id, p) for p in plots],
@@ -249,23 +249,33 @@ class ContactTestTests(unittest.TestCase):
         configure.assert_any_call('12', pos=[0, 0], width=300, height=200)
         configure.assert_any_call('all', pos=[300, 600], width=600, height=200)
 
-    def test_dual_axes_use_current_lines_and_resistance_markers_without_legend(self):
-        from plotting import Curve, HLine
-        for plot in self.procedure().plot_definitions():
+    def test_current_panels_have_compact_fit_labels_and_overlay_only_resistance_lines(self):
+        plots = self.procedure().plot_definitions()
+        for plot in plots[:10]:
             self.assertEqual(plot.title, '')
-            self.assertEqual(plot.ylabels, ('I (A)', 'R (Ω)'))
-            colors = {}
-            for element in plot.elements:
-                self.assertFalse(element.show_in_legend)
-                key = element.source.split('_')[0]
-                colors.setdefault(key, element.color)
-                self.assertEqual(element.color, colors[key])
-                if isinstance(element, HLine):
-                    self.assertEqual(element.yaxis, 1)
-                elif isinstance(element, Curve) and element.source.endswith('_iv'):
-                    self.assertEqual((element.yaxis, element.mode, element.marker), (0, 'line', None))
-                else:
-                    self.assertEqual((element.yaxis, element.mode), (1, 'scatter'))
+            self.assertEqual(plot.ylabels, ('I (mA)',))
+            self.assertEqual(len(plot.elements), 1)
+            element = plot.elements[0]
+            self.assertEqual((element.source, element.mode, element.marker), (f'{plot.id}_iv', 'line', None))
+            self.assertEqual(element.legend_label_template.format(value=123.4), f'R{plot.id}=123.4Ω')
+        self.assertEqual(plots[-1].ylabels, ('R (Ω)',))
+        for element in plots[-1].elements:
+            self.assertTrue(element.source.endswith('_resistance'))
+            self.assertEqual((element.mode, element.marker, element.show_in_legend), ('line', None, False))
+
+    def test_fit_source_updates_current_curve_label(self):
+        from plotting import DataSource
+        from plotting.viewer import PlotViewer
+        viewer = PlotViewer.__new__(PlotViewer)
+        element = self.procedure().plot_definitions()[0].elements[0]
+        source = DataSource()
+        source.append_many([0], [123.4])
+        viewer._sources = {'12_fit': source}
+        viewer._curves = {'12_iv': [SimpleNamespace(element=element, series_ids=['current'])]}
+        viewer._histograms, viewer._linear_fits, viewer._hlines_by_source = {}, {}, {}
+        with patch('plotting.viewer.dpg.set_item_label') as label:
+            viewer._redraw_source('12_fit')
+        label.assert_called_once_with('current', 'R12=123.4Ω')
 
     def test_not_discoverable_as_persisted_procedure(self):
         from procedures import load_procedures

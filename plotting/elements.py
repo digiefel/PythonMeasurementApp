@@ -72,6 +72,8 @@ class Curve:
     legend_label: str = ""
     show_in_legend: bool = True
     marker_size: float | None = None
+    legend_label_source: str = ""
+    legend_label_template: str = ""
 
 
 @dataclass

@@ -18,7 +18,7 @@ import time
 from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH, B1500_SWP_VF_SGLLIN, B1500_STOP_DISABLE, B1500_LAST_STOP
 from instrumentio.constants import SMU_CHANNEL_MAP
 from instrumentio.descriptors import describe_status_bits
-from plotting import Curve, HLine, PlotDef, linear_fit
+from plotting import Curve, PlotDef, linear_fit
 from procedures.base import MeasurementProcedure, MeasurementAbortRequested
 
 OUTPUT_DIRECTORY = Path('C:/Users/EMN Lab/Desktop/ContactTestLog')
@@ -91,19 +91,15 @@ class ContactTest(MeasurementProcedure):
         selected = {f'{a}{b}' for a, b in self.first + self.second}
         for index, key in enumerate(SUMMARY_ORDER):
             color = f'C{index}'
-            elements = [Curve(f'{key}_iv', mode='line', color=color, yaxis=0, show_in_legend=False),
-                        Curve(f'{key}_rv', mode='scatter', marker='o', marker_size=3,
-                              color=color, yaxis=1, show_in_legend=False),
-                        Curve(f'{key}_flagged', mode='scatter', marker='x', color=color,
-                              yaxis=1, show_in_legend=False),
-                        HLine(source=f'{key}_fit', color=color, line_style='dash',
-                              yaxis=1, show_in_legend=False)]
+            elements = [Curve(f'{key}_iv', mode='line', color=color, legend_label=f'R{key}',
+                              legend_label_source=f'{key}_fit',
+                              legend_label_template=f'R{key}={{value:.1f}}Ω')]
             plots.append(PlotDef(key, row=index // 3, col=index % 3,
-                                 xlabel=f'{key} · V (mV)', ylabels=('I (A)', 'R (Ω)'), elements=elements))
+                                 xlabel='V (mV)', ylabels=('I (mA)',), elements=elements))
             if key in selected:
-                overlays.extend(elements)
+                overlays.append(Curve(f'{key}_resistance', mode='line', color=color, show_in_legend=False))
         plots.append(PlotDef('all', row=3, col=1, colspan=2, xlabel='All · V (mV)',
-                             ylabels=('I (A)', 'R (Ω)'), elements=overlays))
+                             ylabels=('R (Ω)',), elements=overlays))
         return plots
 
     def measure(self, device=None):
@@ -208,15 +204,14 @@ class ContactTest(MeasurementProcedure):
         plot = self.runner.plot
         if plot is None:
             return
-        current = [(v * 1000, i) for v, i, _ in rows
+        current = [(v * 1000, i * 1000) for v, i, _ in rows
                    if math.isfinite(v) and math.isfinite(i) and abs(v) < 1e99 and abs(i) < 1e99]
         plot.replace_source(f'{key}_iv', [v for v, _ in current], [i for _, i in current])
-        for flagged, suffix in ((False, 'rv'), (True, 'flagged')):
-            pairs = [(v * 1000, v / i) for v, i, status in rows
-                     if bool(status) == flagged and math.isfinite(v) and math.isfinite(i)
-                     and abs(v) < 1e99 and 0 < abs(i) < 1e99 and math.isfinite(v / i)]
-            plot.replace_source(f'{key}_{suffix}', [v for v, _ in pairs], [r for _, r in pairs])
-        if resistance is not None and math.isfinite(resistance):
+        pairs = [(v * 1000, v / i) for v, i, _ in rows
+                 if math.isfinite(v) and math.isfinite(i)
+                 and abs(v) < 1e99 and 0 < abs(i) < 1e99 and math.isfinite(v / i)]
+        plot.replace_source(f'{key}_resistance', [v for v, _ in pairs], [r for _, r in pairs])
+        if resistance is not None:
             plot.replace_source(f'{key}_fit', [-10., 10.], [resistance, resistance])
 
     def save_results(self):

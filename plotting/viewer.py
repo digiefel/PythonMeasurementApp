@@ -288,6 +288,9 @@ class PlotViewer:
 
         for plot_def in plots:
             for elem in plot_def.elements:
+                label_source = getattr(elem, 'legend_label_source', '')
+                if label_source:
+                    self._sources.setdefault(label_source, DataSource())
                 source_name = getattr(elem, "source", "")
                 if source_name and source_name not in self._sources:
                     self._sources[source_name] = DataSource()
@@ -810,6 +813,13 @@ class PlotViewer:
             return
 
         dirty_plots: set[str] = set()
+        if ds.y:
+            for states in self._curves.values():
+                for state in states:
+                    element = state.element
+                    if element.legend_label_source == source_name and element.show_in_legend:
+                        label = element.legend_label_template.format(value=ds.y[-1])
+                        dpg.set_item_label(state.series_ids[0], label)
 
         for state in self._curves.get(source_name, []):
             for series_id in state.series_ids:
