@@ -4,7 +4,6 @@ import math
 import tempfile
 import unittest
 
-from procedures._iv_config import migrate_iv_config
 from procedures._iv_model import IVPlan, sweep_segments
 from procedures.i_sweep import ISweepProcedure
 from procedures.v_sweep import VSweepProcedure
@@ -145,21 +144,6 @@ class IVSweepTests(unittest.TestCase):
             proc.execute(instrument, type('Device', (), {'name': 'sample'})())
         self.assertEqual(instrument.calls, [])
 
-    def test_legacy_configuration_migration_is_lossless_and_idempotent(self):
-        data = {'procedures': {'IVSweep': {'v_max': 2.0, 'double_sweep': 'false', 'butterfly_sweep': False},
-                               'FourTerminalIV': {'force_high_channel': 4, 'sense_high_channel': 5,
-                                                  'measurement_range': -2., 'current_compliance': .02}},
-                'last_selection': {'procedure': 'IVSweep'}}
-        migrate_iv_config(data)
-        self.assertEqual(data['last_selection']['procedure'], 'Vsweep')
-        self.assertEqual(data['procedures']['Vsweep']['sweep_pattern'], 'Single')
-        self.assertEqual(data['procedures']['Isweep']['voltage_range'], -2.)
-        self.assertEqual(data['procedures']['Isweep']['return_current_compliance'], .02)
-        self.assertEqual(data['procedures']['Isweep']['sense_low'], 6)
-        before = repr(data)
-        migrate_iv_config(data)
-        self.assertEqual(repr(data), before)
-
     def test_new_procedures_are_discoverable_and_old_ones_are_gone(self):
         from procedures import load_procedures
         procedures = load_procedures()
@@ -185,12 +169,6 @@ class IVSweepTests(unittest.TestCase):
         _, runner, _, text, _ = self.run_case(show_fit=False)
         self.assertNotIn('# FitResistance_ohm:', text)
         self.assertEqual(runner.plot.sources['fit'], ([], []))
-
-    def test_existing_new_settings_take_priority_over_legacy_defaults(self):
-        data = {'procedures': {'Vsweep': {'v_max': .2}, 'IVSweep': {'v_max': 15.}},
-                'last_selection': {'procedure': 'Vsweep'}}
-        migrate_iv_config(data)
-        self.assertEqual(data['procedures'], {'Vsweep': {'v_max': .2}})
 
     def test_overflow_voltage_sentinels_cannot_cancel_into_a_valid_main_point(self):
         plan = IVPlan('Force I', 4, 3, 5, 6)

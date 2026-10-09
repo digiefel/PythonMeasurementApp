@@ -79,8 +79,7 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
   the selected endpoints and measured/programmed provenance. Unavailable
   quantities are omitted, GNDU quantities are NaN, and missing records are empty.
   Voltage columns use the optional sense probes when selected; current columns
-  always refer to force terminals. Existing IVSweep/FourTerminalIV settings are
-  translated on load to Vsweep/Isweep without rewriting the original config file.
+  always refer to force terminals.
 - **Data management:** [browse measurements, edit device notes/status, and correct assignments](docs/data_management.md).
 - **Setting tooltips:** hover over a setting for the explanation declared beside
   its parameter in the procedure source.
