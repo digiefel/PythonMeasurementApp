@@ -166,6 +166,7 @@ class IVSweepTests(unittest.TestCase):
                               if line.startswith('# FitResistance_ohm:'))
             self.assertAlmostEqual(float(resistance), 1000.)
             self.assertEqual(len(runner.plot.sources['fit'][0]), 2)
+            self.assertAlmostEqual(runner.plot.sources['fit_resistance'][1][0], 1000.)
         _, runner, _, text, _ = self.run_case(show_fit=False)
         self.assertNotIn('# FitResistance_ohm:', text)
         self.assertEqual(runner.plot.sources['fit'], ([], []))

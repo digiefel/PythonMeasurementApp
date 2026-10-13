@@ -30,7 +30,7 @@ SWEEP_PARAMETERS = (
     parameter('voltage_range', 'Voltage Measurement Range (V)', 0.0, Choice(B1500_VOLTAGE_RANGES, float)),
     parameter('sense_voltage_compliance', 'Sense Probe Voltage Compliance (V)', 10.0, float,
               help='Only used by optional voltage probes. They force 0 A on a 1 nA source range.'),
-    parameter('show_fit', 'Show Whole-Trace Linear Fit', True, bool,
+    parameter('show_fit', 'Show R Fit', True, bool,
               help='Fits V=R*I+b across all finite points, including flagged points and return branches. Disable for nonlinear/hysteretic devices. Fit results are saved in the header, not extra columns.'),
     *ACQUISITION_PARAMETERS,
     parameter('hold_time', 'Hold Time (s)', 0.0, float, help='At the start of each hardware segment.'),

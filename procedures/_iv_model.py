@@ -226,7 +226,9 @@ class IVPlan:
                                        color='C3', legend_label='Instrument flag'),
                              ]))
         if self.show_fit:
-            plots[-1].elements.append(Curve('fit', color='C2', legend_label='Whole-trace linear fit'))
+            plots[-1].elements.append(Curve('fit', color='C2', legend_label='R fit',
+                                           legend_label_source='fit_resistance',
+                                           legend_label_template='R fit = {value:.1f} Ω'))
         return plots
 
     def fit(self, rows):
@@ -241,6 +243,8 @@ class IVPlan:
 
     def plot_sources(self, rows):
         sources = {'main': ([], []), 'flagged': ([], []), 'fit': ([], [])}
+        if self.show_fit:
+            sources['fit_resistance'] = ([], [])
         traces = [t for *_, ts in self.diagnostics() for t in ts]
         sources.update({t.name: ([], []) for t in traces})
 
@@ -262,6 +266,7 @@ class IVPlan:
         result = self.fit(rows)
         if result is not None:
             fit, low, high = result
+            append('fit_resistance', 0.0, fit.slope)
             for current in (low, high):
                 voltage = fit.slope * current + fit.intercept
                 x, y = (voltage, current) if self.force_mode == 'Force V' else (current, voltage)
