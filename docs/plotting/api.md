@@ -190,7 +190,7 @@ runner.plot.replace_source("map", [0.0] * 12, values_top_row_first)
 - The colour range runs from the smallest to the largest finite value in the grid
   and is updated on every redraw. Use `legend_label_template`, for example
   `"I = {min:.3g} … {max:.3g} uA"`, to show that range in the legend.
-- Use `NaN` for cells without data.
+- Use `NaN` for cells without data; they are drawn in the lowest colour.
 - The heatmap does not take part in live axis fitting. Set the plot's `xlim` and
   `ylims` to the heatmap's bounds.
 - A colormap applies to the whole plot, so put at most one heatmap in a plot.

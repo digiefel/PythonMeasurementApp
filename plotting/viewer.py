@@ -843,8 +843,9 @@ class PlotViewer:
         y_axis = self._y_axis(plot_id, 0)
         label = elem.legend_label_template if elem.show_in_legend else f"##{elem.source}_heat"
         # Start with an empty grid; format="" turns off the per-cell value labels.
+        # Never hand NaN to ImPlot: it indexes the colormap with it and crashes the viewer.
         series_id = dpg.add_heat_series(
-            [float("nan")] * (elem.rows * elem.cols), elem.rows, elem.cols,
+            [0.0] * (elem.rows * elem.cols), elem.rows, elem.cols,
             label=label, parent=y_axis, format="",
             bounds_min=elem.bounds_min, bounds_max=elem.bounds_max,
         )
@@ -937,7 +938,8 @@ class PlotViewer:
         # The colour range follows the data, so the legend label is the only readout of it.
         # TODO: show a colour bar; dpg.add_colormap_scale cannot sit inside a subplots grid.
         low, high = float(finite.min()), float(finite.max())
-        dpg.set_value(state.series_id, [values.tolist()])
+        # Empty (NaN) cells are drawn in the lowest colour.
+        dpg.set_value(state.series_id, [np.where(np.isfinite(values), values, low).tolist()])
         dpg.configure_item(state.series_id, scale_min=low, scale_max=high if high > low else low + 1.0)
         if state.element.legend_label_template and state.element.show_in_legend:
             dpg.set_item_label(state.series_id, state.element.legend_label_template.format(min=low, max=high))

@@ -10,7 +10,7 @@ The RSUs then switch back to the WGFMU for the next fatigue block.
 import time
 import numpy as np
 from plotting import PlotDef, Curve
-from procedures.base import Choice, parameter
+from procedures.base import SMU, Choice, parameter
 from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
 from procedures._iv_model import sweep_segments
 from instrumentio.codes import (
@@ -22,7 +22,8 @@ from instrumentio.constants import B1500_CURRENT_RANGES
 from instrumentio.descriptors import describe_status_bits
 
 # Each RSU has one SMU cabled into it; this is wiring, not a setting.
-RSU_SMU = {101: 1, 102: 2}
+# SMU numbers become B1500 slots through the channel map found at start-up.
+RSU_SMU = {101: "SMU1", 102: "SMU2"}
 
 
 class FTJFatigueProcedure(PUNDFatigueV2Procedure):
@@ -69,7 +70,8 @@ class FTJFatigueProcedure(PUNDFatigueV2Procedure):
 			                max(0.0, self.base_voltage + max_abs_v) + v_margin), None),
 			        elements=waveform),
 			PlotDef("qv", row=1, col=0, xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=qv),
-			PlotDef("smu_iv", row=1, col=1, xlabel="SMU 1 Voltage (V)", ylabels=("SMU 2 Current (A)",), elements=smu),
+			PlotDef("smu_iv", row=1, col=1, xlabel="SMU 1 Voltage (V)", ylabels=("|SMU 2 Current| (A)",),
+			        yscales=("log",), elements=smu),
 		], row_ratios=[2.0, 1.0])
 
 	def _run_wgfmu_block(self, wgfmu, ts, block, fatigue_reps, fatigue_vectors, read_vectors,
@@ -125,7 +127,7 @@ class FTJFatigueProcedure(PUNDFatigueV2Procedure):
 		"""Butterfly sweep on SMU 1 with SMU 2 at 0 V. Returns (segment, V1, I1, I2, status) rows."""
 		b1500 = self.b1500
 		wgfmu = b1500.wgfmu
-		force, ground = RSU_SMU[self.channel_1], RSU_SMU[self.channel_2]
+		force, ground = SMU.coerce(RSU_SMU[self.channel_1]), SMU.coerce(RSU_SMU[self.channel_2])
 		for channel in (self.channel_1, self.channel_2):
 			wgfmu.set_operation_mode(channel, WGFMU_OPERATION_MODE_SMU)
 			wgfmu.update_channel(channel)
@@ -158,8 +160,8 @@ class FTJFatigueProcedure(PUNDFatigueV2Procedure):
 				rows.append((segment, v, i1, i2, s0 | s1 | s2))
 		b1500.set_switch(B1500_CH_ALL, False)
 
-		# The I-V curve shows SMU 2's current as measured, without a sign change.
-		self.runner.plot.append_batch({f"SMU_{read_idx}": [(v, i2) for _, v, _, i2, _ in rows]})
+		# A log axis cannot show negative currents, so the plot shows |I|; the CSV keeps the sign.
+		self.runner.plot.append_batch({f"SMU_{read_idx}": [(v, abs(i2)) for _, v, _, i2, _ in rows]})
 		return rows
 
 	def measure(self, device):
@@ -184,7 +186,7 @@ class FTJFatigueProcedure(PUNDFatigueV2Procedure):
 		try:
 			b1500.enable_error_detect(True)
 			b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
-			smu_channels = [RSU_SMU[self.channel_1], RSU_SMU[self.channel_2]]
+			smu_channels = [SMU.coerce(RSU_SMU[self.channel_1]), SMU.coerce(RSU_SMU[self.channel_2])]
 			self.prepare_asu_channels(b1500, smu_channels, self.smu_current_range)
 			# High-resolution ADC in auto mode: sensitive at nA, still well under a second per sweep.
 			b1500.configure_smu_acquisition(smu_channels, adc=self.smu_adc_type, mode=0, coefficient=0,
