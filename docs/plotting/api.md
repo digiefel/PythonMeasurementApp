@@ -38,7 +38,7 @@ class PlotDef:
 - `xlim` and non-`None` `ylims` set the initial view for those axes; they do not stay
   as hard pan/zoom constraints.
 - `xlink` references another PlotDef's `id`. Linked plots share pan/zoom on x-axis.
-- `elements` is a list of visual primitives (Curve, Histogram, LinearFit, HLine, VLine).
+- `elements` is a list of visual primitives (Curve, Histogram, LinearFit, HLine, VLine, Heatmap).
 - If `xlim`/`ylims` are left as `None`, the viewer live-fits those axes while data is
   streaming, adds a small margin, and stops live-fitting once the visible limits no
   longer match the last auto-fit limits it set.
@@ -161,6 +161,39 @@ class VLine:
 ```
 
 Rendered as an ImPlot infinite vertical reference line.
+
+### Heatmap
+
+```python
+@dataclass
+class Heatmap:
+    source: str                        # cell values are this source's y-values
+    rows: int
+    cols: int
+    bounds_min: tuple[float, float]    # (x, y) of the grid's lower-left corner
+    bounds_max: tuple[float, float]    # (x, y) of the grid's upper-right corner
+    colormap: str = "viridis"          # "viridis" | "plasma" | "hot" | "cool" | "jet" | "rdbu" | "spectral" | "greys"
+    legend_label_template: str = ""    # supports {min}, {max}
+    show_in_legend: bool = True
+```
+
+A grid of `rows` × `cols` cells spread evenly between `bounds_min` and `bounds_max`,
+each coloured by its value. Send the whole grid at once with `replace_source`:
+the y-values are the cell values, row by row, starting with the top row (highest y)
+and going left to right. The x-values are ignored, so any list of the same length works.
+
+```python
+# 3 rows × 4 columns covering x = 0..4, y = 0..3
+runner.plot.replace_source("map", [0.0] * 12, values_top_row_first)
+```
+
+- The colour range runs from the smallest to the largest finite value in the grid
+  and is updated on every redraw. Use `legend_label_template`, for example
+  `"I = {min:.3g} … {max:.3g} uA"`, to show that range in the legend.
+- Use `NaN` for cells without data.
+- The heatmap does not take part in live axis fitting. Set the plot's `xlim` and
+  `ylims` to the heatmap's bounds.
+- A colormap applies to the whole plot, so put at most one heatmap in a plot.
 
 ## API methods
 

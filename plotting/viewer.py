@@ -14,7 +14,7 @@ import dearpygui.dearpygui as dpg
 import numpy as np
 
 from app_logging import configure_logging
-from plotting.elements import Curve, DataSource, HLine, Histogram, LinearFit, PlotDef, ToolbarButton, VLine
+from plotting.elements import Curve, DataSource, Heatmap, HLine, Histogram, LinearFit, PlotDef, ToolbarButton, VLine
 from plotting.export import capture_framebuffer
 from plotting.stats import linear_fit
 from plotting.style import (
@@ -71,6 +71,15 @@ class _HLineState:
     __slots__ = ("plot_id", "element", "series_id")
 
     def __init__(self, plot_id: str, element: HLine, series_id: int | str) -> None:
+        self.plot_id = plot_id
+        self.element = element
+        self.series_id = series_id
+
+
+class _HeatmapState:
+    __slots__ = ("plot_id", "element", "series_id")
+
+    def __init__(self, plot_id: str, element: Heatmap, series_id: int | str) -> None:
         self.plot_id = plot_id
         self.element = element
         self.series_id = series_id
@@ -134,6 +143,17 @@ _TOOLBAR_ACTIONS: dict[str, Callable[[], None]] = {
     "tool:metrics": dpg.show_metrics,
     "tool:font_manager": dpg.show_font_manager,
     "tool:item_registry": dpg.show_item_registry,
+}
+
+_COLORMAP_MAP = {
+    "viridis": dpg.mvPlotColormap_Viridis,
+    "plasma": dpg.mvPlotColormap_Plasma,
+    "hot": dpg.mvPlotColormap_Hot,
+    "cool": dpg.mvPlotColormap_Cool,
+    "jet": dpg.mvPlotColormap_Jet,
+    "rdbu": dpg.mvPlotColormap_RdBu,
+    "spectral": dpg.mvPlotColormap_Spectral,
+    "greys": dpg.mvPlotColormap_Greys,
 }
 
 _LINE_THEME_CACHE: dict[tuple[int, int, int, int], int | str] = {}
@@ -233,6 +253,7 @@ class PlotViewer:
         self._linear_fits: dict[str, list[_LinearFitState]] = {}
         self._hlines_by_source: dict[str, list[_HLineState]] = {}
         self._all_hlines: list[_HLineState] = []
+        self._heatmaps: dict[str, list[_HeatmapState]] = {}
         self._axis_release_tags: set[int | str] = set()
 
     def poll_queue(self) -> None:
@@ -452,6 +473,7 @@ class PlotViewer:
         self._linear_fits.clear()
         self._hlines_by_source.clear()
         self._all_hlines.clear()
+        self._heatmaps.clear()
         self._axis_release_tags.clear()
 
     def _normalize_ratios(self, ratios: list[float] | tuple[float, ...], count: int) -> list[float]:
@@ -739,6 +761,8 @@ class PlotViewer:
                 self._create_hline(elem, plot_def.id)
             elif isinstance(elem, VLine):
                 self._create_vline(elem, plot_def.id)
+            elif isinstance(elem, Heatmap):
+                self._create_heatmap(elem, plot_def.id)
 
     def _y_axis(self, plot_id: str, yaxis_idx: int):
         tags = self._yaxis_tags.get(plot_id, [])
@@ -815,6 +839,19 @@ class PlotViewer:
         if theme is not None:
             dpg.bind_item_theme(series_id, theme)
 
+    def _create_heatmap(self, elem: Heatmap, plot_id: str) -> None:
+        y_axis = self._y_axis(plot_id, 0)
+        label = elem.legend_label_template if elem.show_in_legend else f"##{elem.source}_heat"
+        # Start with an empty grid; format="" turns off the per-cell value labels.
+        series_id = dpg.add_heat_series(
+            [float("nan")] * (elem.rows * elem.cols), elem.rows, elem.cols,
+            label=label, parent=y_axis, format="",
+            bounds_min=elem.bounds_min, bounds_max=elem.bounds_max,
+        )
+        # ImPlot colormaps apply to a whole plot, so a plot should hold at most one heatmap.
+        dpg.bind_colormap(self._plot_tags[plot_id], _COLORMAP_MAP[elem.colormap.lower()])
+        self._heatmaps.setdefault(elem.source, []).append(_HeatmapState(plot_id, elem, series_id))
+
     def _redraw_source(self, source_name: str) -> None:
         ds = self._sources.get(source_name)
         if ds is None:
@@ -845,6 +882,9 @@ class PlotViewer:
         for state in self._hlines_by_source.get(source_name, []):
             self._redraw_hline(state, ds)
             dirty_plots.add(state.plot_id)
+
+        for state in self._heatmaps.get(source_name, []):
+            self._redraw_heatmap(state, ds)
 
         for plot_id in dirty_plots:
             self._mark_plot_fit_dirty(plot_id)
@@ -888,6 +928,19 @@ class PlotViewer:
                     resistance_si=f"{format_si_compact(resistance)}Ohm",
                 ),
             )
+
+    def _redraw_heatmap(self, state: _HeatmapState, ds: DataSource) -> None:
+        values = np.asarray(ds.y, dtype=float)
+        finite = values[np.isfinite(values)]
+        if values.size != state.element.rows * state.element.cols or finite.size == 0:
+            return
+        # The colour range follows the data, so the legend label is the only readout of it.
+        # TODO: show a colour bar; dpg.add_colormap_scale cannot sit inside a subplots grid.
+        low, high = float(finite.min()), float(finite.max())
+        dpg.set_value(state.series_id, [values.tolist()])
+        dpg.configure_item(state.series_id, scale_min=low, scale_max=high if high > low else low + 1.0)
+        if state.element.legend_label_template and state.element.show_in_legend:
+            dpg.set_item_label(state.series_id, state.element.legend_label_template.format(min=low, max=high))
 
     def _redraw_hline(self, state: _HLineState, ds: DataSource) -> None:
         if not ds.y:

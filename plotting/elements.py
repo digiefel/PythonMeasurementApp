@@ -121,6 +121,23 @@ class VLine:
     show_in_legend: bool = True
 
 
+@dataclass
+class Heatmap:
+    """Grid of colour-mapped cells, redrawn whenever its source changes.
+
+    The source's y-values are the cell values, row by row, starting with the
+    top row (highest y) and going left to right. Its x-values are ignored.
+    """
+    source: str
+    rows: int
+    cols: int
+    bounds_min: tuple[float, float]     # (x, y) of the lower-left corner of the grid
+    bounds_max: tuple[float, float]     # (x, y) of the upper-right corner of the grid
+    colormap: str = "viridis"
+    legend_label_template: str = ""     # supports {min}, {max}: the current colour range
+    show_in_legend: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Plot definition
 # ---------------------------------------------------------------------------

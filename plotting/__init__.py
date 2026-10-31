@@ -2,7 +2,7 @@
 
 Public surface used by procedures and runner:
 
-    from plotting import PlotBridge, PlotDef, Curve, Histogram, LinearFit, HLine, VLine
+    from plotting import PlotBridge, PlotDef, Curve, Histogram, LinearFit, HLine, VLine, Heatmap
     from plotting import linear_fit, DataSource, LinearFitResult
 """
 
@@ -16,6 +16,7 @@ from plotting.elements import (
     LinearFit,
     HLine,
     VLine,
+    Heatmap,
 )
 from plotting.stats import linear_fit
 from plotting.bridge import PlotBridge
@@ -28,6 +29,7 @@ __all__ = [
     "LinearFit",
     "HLine",
     "VLine",
+    "Heatmap",
     "DataSource",
     "LinearFitResult",
     "ToolbarButton",
