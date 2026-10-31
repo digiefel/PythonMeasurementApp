@@ -1,9 +1,11 @@
 """First-order reversal curves (FORC) on a ferroelectric capacitor with the WGFMU.
 
-The waveform saturates at Vmax, then repeatedly goes down to a reversal voltage
-Vr and back up to Vmax. Each rising branch from Vr to Vmax is one FORC. The
-reversal voltages are evenly spaced from Vmax down to Vmin, and every ramp has
-the same slope, so all FORCs are measured at the same sweep rate.
+The waveform saturates at Vstart, then repeatedly goes to a reversal voltage Vr
+and back to Vstart. Each branch from Vr back to Vstart is one FORC. The reversal
+voltages are evenly spaced from Vstart to Vend, and every ramp has the same
+slope, so all FORCs are measured at the same sweep rate. Either voltage can be
+negative; Vstart > Vend gives the usual descending reversals, Vstart < Vend the
+mirrored ones.
 
 The live plot shows the voltage and current against time, one continuous Q-V
 curve, and an I(Vr, V) heatmap preview: the measured current of each finished
@@ -28,20 +30,48 @@ from instrumentio.constants import (
 )
 
 
+def forc_map_axes(vstart, vend, forc_count):
+	"""Grid of the I(Vr, V) map: one column per curve, one row per reversal voltage.
+
+	Returns the row voltages (top row, highest V, first), the column reversal
+	voltages (increasing left to right), and the Heatmap bounds.
+	"""
+	levels = np.linspace(vstart, vend, forc_count + 1)
+	v_grid = np.sort(levels)[::-1]
+	vr_grid = np.sort(levels[1:])
+	step = abs(vend - vstart) / forc_count
+	bounds_min = (vr_grid[0] - step / 2, v_grid[-1] - step / 2)
+	bounds_max = (vr_grid[-1] + step / 2, v_grid[0] + step / 2)
+	return v_grid, vr_grid, bounds_min, bounds_max
+
+
+def forc_map_grid(vstart, forcs, forc_samples, v_grid, vr_grid):
+	"""Current (uA) of each measured curve at the samples closest to the grid voltages; NaN elsewhere."""
+	grid = np.full((len(v_grid), len(vr_grid)), np.nan)
+	for (_, _, vr), samples in zip(forcs, forc_samples):
+		if not samples:
+			continue
+		v_measured, i_measured = np.array(samples).T
+		rows = np.flatnonzero((v_grid >= min(vr, vstart) - 1e-9) & (v_grid <= max(vr, vstart) + 1e-9))
+		nearest = np.abs(v_measured[None, :] - v_grid[rows, None]).argmin(axis=1)
+		grid[rows, np.abs(vr_grid - vr).argmin()] = i_measured[nearest] * 1e6
+	return grid
+
+
 class FORCProcedure(MeasurementProcedure):
 	NAME = "FORC"
 	PARAMETERS = (
 		parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
 		parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
 		parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
-		parameter('vmax', 'Vmax (V)', 1.0, float,
-		          help="Saturation voltage. Every reversal curve ends here."),
-		parameter('vmin', 'Vmin (V)', -1.0, float,
-		          help="Lowest reversal voltage, reached by the last reversal curve."),
+		parameter('vstart', 'Vstart (V)', 1.0, float,
+		          help="Saturation voltage. Every reversal curve starts and ends here."),
+		parameter('vend', 'Vend (V)', -1.0, float,
+		          help="Last reversal voltage, reached by the last reversal curve."),
 		parameter('forc_count', 'Number of Reversal Curves', 20, int,
-		          help="Reversal voltages are evenly spaced from Vmax down to Vmin."),
+		          help="Reversal voltages are evenly spaced from Vstart to Vend."),
 		parameter('frequency', 'Frequency (Hz)', 1e3, float,
-		          help="Frequency of one full Vmax → Vmin → Vmax triangle. "
+		          help="Frequency of one full Vstart → Vend → Vstart triangle. "
 		               "All ramps use this slope, so shorter curves take less time."),
 		parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0], Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
 		parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
@@ -55,25 +85,25 @@ class FORCProcedure(MeasurementProcedure):
 		"""
 		if self.frequency <= 0:
 			raise ValueError("Frequency must be > 0")
-		if self.vmax <= self.vmin:
-			raise ValueError("Vmax must be greater than Vmin")
+		if self.vstart == self.vend:
+			raise ValueError("Vstart and Vend must differ")
 		if self.forc_count < 1:
 			raise ValueError("Number of reversal curves must be at least 1")
 
-		# One full Vmax -> Vmin -> Vmax triangle lasts 1/f; every ramp shares its slope.
-		slope = 2 * (self.vmax - self.vmin) * self.frequency
+		# One full Vstart -> Vend -> Vstart triangle lasts 1/f; every ramp shares its slope.
+		slope = 2 * abs(self.vend - self.vstart) * self.frequency
 		# The 0 V hold at the start gives a current baseline, like the leading edge in PUND.
 		hold = 0.1 / self.frequency
 
-		vectors = [(hold, 0.0), (abs(self.vmax) / slope, self.vmax)]
+		vectors = [(hold, 0.0), (abs(self.vstart) / slope, self.vstart)]
 		t = sum(dt for dt, _ in vectors)
 		forcs = []
-		for vr in np.linspace(self.vmax, self.vmin, self.forc_count + 1)[1:]:
-			ramp = (self.vmax - vr) / slope
-			vectors += [(ramp, float(vr)), (ramp, self.vmax)]
+		for vr in np.linspace(self.vstart, self.vend, self.forc_count + 1)[1:]:
+			ramp = abs(self.vstart - vr) / slope
+			vectors += [(ramp, float(vr)), (ramp, self.vstart)]
 			forcs.append((t + ramp, t + 2 * ramp, float(vr)))
 			t += 2 * ramp
-		vectors.append((abs(self.vmax) / slope, 0.0))
+		vectors.append((abs(self.vstart) / slope, 0.0))
 		return vectors, hold, forcs
 
 	def measure(self, device):
@@ -134,20 +164,16 @@ class FORCProcedure(MeasurementProcedure):
 			wgfmu.add_sequence(self.channel_1, pattern_pg, 1.0)
 			wgfmu.add_sequence(self.channel_2, pattern_iv, 1.0)
 
-			# The map samples every curve at the reversal voltages: one column per curve, one row per voltage.
-			v_grid = np.linspace(self.vmax, self.vmin, self.forc_count + 1)  # top row first
-			step = (self.vmax - self.vmin) / self.forc_count
-			map_bounds_min = (self.vmin - step / 2, self.vmin - step / 2)
-			map_bounds_max = (self.vmax - step / 2, self.vmax + step / 2)
-
-			v_margin = 0.1 * (self.vmax - self.vmin)
+			v_grid, vr_grid, map_bounds_min, map_bounds_max = forc_map_axes(self.vstart, self.vend, self.forc_count)
+			v_low, v_high = min(self.vstart, self.vend), max(self.vstart, self.vend)
+			v_margin = 0.1 * (v_high - v_low)
 			runner = self.runner
 			runner.configure_plot(f'FORC - {device.name}', [
 				PlotDef("waveform", row=0, col=0, colspan=2,
 				        xlabel="Time (s)",
 				        ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=(0, pattern_duration),
-				        ylims=((min(self.vmin, 0.0) - v_margin, max(self.vmax, 0.0) + v_margin), None),
+				        ylims=((min(v_low, 0.0) - v_margin, max(v_high, 0.0) + v_margin), None),
 				        elements=[
 					        Curve("V", color=(0, 0, 0.8), yaxis=0, legend_label="V"),
 					        Curve("I", color=(0.9, 0.27, 0), yaxis=1, legend_label="I"),
@@ -221,16 +247,7 @@ class FORCProcedure(MeasurementProcedure):
 					# Redraw the whole map whenever a curve finishes; cells without data stay NaN.
 					if finished > drawn_forcs:
 						drawn_forcs = finished
-						grid = np.full((self.forc_count + 1, self.forc_count), np.nan)
-						for k, ((_, _, vr), samples) in enumerate(zip(forcs[:finished], forc_samples)):
-							if not samples:
-								continue
-							v_measured, i_measured = np.array(samples).T
-							# Each cell shows the measured current at the sample closest to that grid voltage.
-							rows = np.flatnonzero(v_grid >= vr - 1e-9)
-							nearest = np.abs(v_measured[None, :] - v_grid[rows, None]).argmin(axis=1)
-							# Columns run left to right in increasing Vr, while curves run in decreasing Vr.
-							grid[rows, self.forc_count - 1 - k] = i_measured[nearest] * 1e6
+						grid = forc_map_grid(self.vstart, forcs[:finished], forc_samples, v_grid, vr_grid)
 						runner.plot.replace_source("MAP", [0.0] * grid.size, grid.ravel().tolist())
 
 				# Status was read before fetching, so a completed run has no samples left to read.
