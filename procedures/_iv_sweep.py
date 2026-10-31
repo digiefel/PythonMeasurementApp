@@ -16,8 +16,8 @@ from instrumentio.descriptors import describe_status_bits
 CHANNEL_PARAMETERS = (
     parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
     parameter('high_channel', 'Force High SMU', 4, SMU),
-    parameter('low_channel', 'Force Low Terminal', 3, SMUOrGNDU),
     parameter('sense_high', 'Sense High SMU (optional)', None, OptionalSMU),
+    parameter('low_channel', 'Force Low Terminal', 3, SMUOrGNDU),
     parameter('sense_low', 'Sense Low SMU (optional)', None, OptionalSMU),
 )
 SWEEP_PARAMETERS = (
