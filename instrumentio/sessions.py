@@ -1062,6 +1062,11 @@ class WGFMUSession:
         ret = dll_wgfmu.WGFMU_setOperationMode(channel_id, mode)
         self._check_ret(ret, "WGFMU set operation mode")
 
+    def update_channel(self, channel_id: int):
+        """Apply the channel setup now, e.g. to switch the RSU to its SMU input."""
+        ret = dll_wgfmu.WGFMU_updateChannel(channel_id)
+        self._check_ret(ret, "WGFMU update channel")
+
     def set_force_voltage_range(self, channel_id: int, rng: int):
         ret = dll_wgfmu.WGFMU_setForceVoltageRange(channel_id, rng)
         self._check_ret(ret, "WGFMU set force voltage range")
