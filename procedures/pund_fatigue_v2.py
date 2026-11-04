@@ -254,42 +254,26 @@ class PUNDFatigueV2Procedure(MeasurementProcedure):
 
 	@staticmethod
 	def _compute_read_cycles(cycle_count: int, reads_per_decade: int) -> list[int]:
-		"""Return sparse read cycle numbers, with the final fatigue cycle always included."""
+		"""Return read cycles spaced linearly within each decade, with cycle 1 and the final cycle always included.
+
+		Decade 10^d to 10^(d+1) gets its N reads at the multiples of 10^(d+1)/N above 10^d,
+		rounded to whole cycles: N = 2 gives 1, 5, 10, 50, 100, ...; N = 10 gives
+		1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer than N reads when N > 9.
+		"""
 		n = int(cycle_count)
 		ppd = int(reads_per_decade)
 		if ppd <= 0 or n < 1:
 			return []
-
-		cycles = []
+		cycles = {1, n}
 		decade = 0
-		while True:
-			base = 10 ** decade
-			next_base = base * 10
-
-			if decade == 0:
-				for c in range(1, min(ppd + 1, 10 + 1, n + 1)):
-					cycles.append(c)
-			else:
-				step = max(1, next_base // ppd)
-				if step > base:
-					start = step
-				elif step == base:
-					start = step * 2
-				else:
-					start = base + step
-
-				for c in range(start, next_base + 1, step):
-					if c > n:
-						break
-					cycles.append(c)
-
-			if next_base >= n:
-				break
+		while 10 ** decade < n:
+			step = 10 ** (decade + 1) / ppd
+			for k in range(1, ppd + 1):
+				cycle = int(round(k * step))
+				if 10 ** decade < cycle <= n:
+					cycles.add(cycle)
 			decade += 1
-
-		if n not in cycles:
-			cycles.append(n)
-		return sorted(set(cycles))
+		return sorted(cycles)
 
 	def _configure_wgfmu(self, wgfmu):
 		wgfmu.clear()

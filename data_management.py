@@ -135,8 +135,8 @@ def measurement_base(path):
     stem = path.stem
     if path.suffix.lower() == '.png':
         return stem.removesuffix('_plot')
-    # WGFMU sampling writes several combination CSVs and one shared plot.
-    return re.sub(r'_c\d+$', '', stem)
+    # Several CSVs share one plot: WGFMU sampling combinations (_c003) and FORC fatigue reads (_c100_PUND).
+    return re.sub(r'_c\d+(_[A-Z]+)?$', '', stem)
 
 
 def chips_in(root):

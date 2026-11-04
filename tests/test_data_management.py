@@ -50,6 +50,17 @@ class DataManagementTests(unittest.TestCase):
         self.assertEqual(items[1].plot_files, (png,))
         self.assertFalse(items[1].warnings)
 
+    def test_scan_groups_per_read_csvs_of_one_run(self):
+        csv, png = self.measurement(tag='FORC_Fatigue')
+        reads = [csv.with_name(csv.stem + suffix + '.csv') for suffix in ('_c0_FORC', '_c0_PUND', '_c100_PUND')]
+        for path in reads:
+            path.write_bytes(csv.read_bytes())
+        csv.unlink()
+        items = self.scan()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(set(items[0].data_files), set(reads))
+        self.assertEqual(items[0].plot_files, (png,))
+
     def test_scan_reports_directory_header_mismatch_and_missing_metadata(self):
         wrong = data.Identity('Wrong', 'Elsewhere', 'Other', 'D')
         self.measurement(header_identity=wrong)
