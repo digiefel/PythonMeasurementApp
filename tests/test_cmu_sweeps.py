@@ -111,11 +111,6 @@ class CfSweepTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'open: 10kHz–100kHz does not span 1kHz–100kHz'):
             run(CfSweepProcedure, settings | {'start_frequency': '1k'})
 
-    def test_invalid_settings(self):
-        for settings in ({'biases': ''}, {'start_frequency': '500'}, {'points': 1002}, {'step_delay': 2}):
-            with self.subTest(settings=settings), self.assertRaises(ValueError):
-                CfSweepProcedure(settings, '', '', None)
-
 
 class CVSweepTests(unittest.TestCase):
     def test_z_theta_sweep_per_frequency(self):

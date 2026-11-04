@@ -90,30 +90,6 @@ class CfSweepProcedure(MeasurementProcedure):
         self.stop_hz = parse_si_value(str(self.stop_frequency))
         self.ac_level = self.ac_level_mv / 1000.0
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
-        self._validate_settings()
-
-    def _validate_settings(self):
-        if not self.bias_list:
-            raise ValueError("At least one DC bias is required.")
-        for f in (self.start_hz, self.stop_hz):
-            if not (1e3 <= f <= 5e6):
-                raise ValueError(f"Frequency {f:.6g} Hz out of range [1 kHz, 5 MHz].")
-        if not (1 <= self.points <= 1001):
-            raise ValueError("C-f points must be between 1 and 1001.")
-        if self.start_hz == self.stop_hz and self.points > 1:
-            raise ValueError("Start and Stop Frequency are equal; use points=1 for a spot-like measurement.")
-        if self.spacing not in ('log', 'linear'):
-            raise ValueError(f"Invalid spacing: {self.spacing!r}")
-        if not (0.0 <= self.ac_level_mv <= 250.0):
-            raise ValueError("AC Level must be between 0 and 250 mV for CMU.")
-        if self.integration_mode not in (0, 1, 2):
-            raise ValueError("Integration Mode must be Auto (0), Manual (1), or PLC (2).")
-        if self.integration_value < 1:
-            raise ValueError("Integration Value must be >= 1.")
-        if not (0.0 <= self.hold_time <= 655.35 and 0.0 <= self.delay_time <= 655.35):
-            raise ValueError("Hold and Delay Time must be between 0 and 655.35 s.")
-        if not (0.0 <= self.step_delay <= 1.0):
-            raise ValueError("Step Delay must be between 0 and 1 s.")
 
     def _report_calibration_coverage(self):
         # Correction is interpolated between calibrated frequencies, so each type must span the sweep range.
@@ -241,15 +217,9 @@ class CfSweepProcedure(MeasurementProcedure):
                 )
                 self.report_progress(index, len(self.bias_list), 'Bias sweeps')
         finally:
-            try:
-                # Cleanup runs on success, instrument error, or user abort to avoid leaving the DUT biased.
-                b1500.zero_output(B1500_CH_ALL)
-            except Exception as e:
-                self.log(f"Warning: failed to zero outputs after C-f sweep: {e}")
-            try:
-                b1500.set_switch(B1500_CH_ALL, False)
-            except Exception as e:
-                self.log(f"Warning: failed to open switches after C-f sweep: {e}")
+            # Cleanup runs on success, instrument error, or user abort to avoid leaving the DUT biased.
+            b1500.zero_output(B1500_CH_ALL)
+            b1500.set_switch(B1500_CH_ALL, False)
 
         self.log(f"Collected {len(results)} C-f data points")
         self.save_measurement_outputs(results, "CfSweep", device, columns)

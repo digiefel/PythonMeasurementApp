@@ -777,8 +777,7 @@ class B1500Session:
         # Measurement mode = C-f sweep
         self._visa_write(f"MM 22,{cmu_channel}\n")
         self._visa_write(f"IMP {cmu_mode}\n")
-        meas_range_int = int(meas_range) if meas_range == int(meas_range) else meas_range
-        self._visa_write(f"RC {cmu_channel},{meas_range_int}\n")
+        self._visa_write(f"RC {cmu_channel},{meas_range:g}\n")
         self._visa_write(f"DCV {cmu_channel},{dc_bias:.6g}\n")
         self._check_instrument_errors("C-f sweep setup")
         self._visa_write("TSR\n")
@@ -794,18 +793,12 @@ class B1500Session:
 
             for step in range(points):
                 # MM22 + LMN1 + FMT 5,1 order: Time, Para1, Para2, Osc, DCBias, Frequency.
-                _ts, _tc, time_type, time_s = _read_token()
+                _ts, _tc, _tt, time_s = _read_token()
                 p1_status, _c1, _t1, para1 = _read_token()
                 p2_status, _c2, _t2, para2 = _read_token()
                 _os, _oc, _ot, _ov = _read_token()
                 _ds, _dc, _dt, dc_bias_v = _read_token()
-                _fs, _fc, freq_type, freq_hz = _read_token()
-
-                if time_type != 'T' or freq_type != 'F':
-                    raise RuntimeError(
-                        f"Unexpected C-f stream layout at step {step}: token types "
-                        f"{time_type!r}...{freq_type!r}, expected 'T'...'F'"
-                    )
+                _fs, _fc, _ft, freq_hz = _read_token()
 
                 callback(
                     step,
