@@ -744,6 +744,83 @@ class B1500Session:
             # Restore normal termination (newline)
             self._visa_set_termchar(10, True)
 
+    @_measurement_io
+    def stream_cf_sweep(self, cmu_channel, cmu_mode, meas_range, dc_bias, log_scale,
+                        start_hz, stop_hz, points, hold, delay, step_delay, callback):
+        """Execute a C-f (frequency) sweep at constant DC bias, streaming each point.
+
+        The CMU keeps the AC level (set beforehand with force_cmu_ac_level) and
+        dc_bias constant and steps the frequency from start_hz to stop_hz in
+        `points` linear or log-spaced steps (single stair; WFC modes 1 and 2).
+        After the sweep the CMU stays at the start frequency and dc_bias;
+        callers zero the output.
+
+        FMT 5,1 adds the source data, so each point is six tokens: Time, Para1,
+        Para2, OscLevel, DCBias, Frequency. IMP determines Para1/Para2.
+        Reference: docs/B1500 Programmers Guide 9018-01851.pdf, printed
+        pp. 1-28 (data order), 2-37 (C-f sweep), 3-97 (example), 4-232 (WFC),
+        4-237 (WMFC), 4-249 (WTFC).
+
+        Args:
+            callback: Called as callback(step, freq_hz, para1, para2, dc_bias_v,
+                      time_s, s1, s2) after each step completes.
+        """
+        self._visa_write("FMT 5,1\n")
+        self._visa_write("TSC 1\n")
+        self._visa_write("LMN 1\n")
+        # No automatic abort; return to the start frequency afterwards.
+        self._visa_write("WMFC 1,1\n")
+        self._visa_write(f"WTFC {hold:g},{delay:g},{step_delay:g}\n")
+        # TODO: WFC modes 3/4 (double stair) once their returned point count is confirmed on hardware.
+        sweep_mode = 2 if log_scale else 1
+        self._visa_write(f"WFC {cmu_channel},{sweep_mode},{start_hz:.10g},{stop_hz:.10g},{points}\n")
+        # Measurement mode = C-f sweep
+        self._visa_write(f"MM 22,{cmu_channel}\n")
+        self._visa_write(f"IMP {cmu_mode}\n")
+        meas_range_int = int(meas_range) if meas_range == int(meas_range) else meas_range
+        self._visa_write(f"RC {cmu_channel},{meas_range_int}\n")
+        self._visa_write(f"DCV {cmu_channel},{dc_bias:.6g}\n")
+        self._check_instrument_errors("C-f sweep setup")
+        self._visa_write("TSR\n")
+
+        # Set VISA termination character to comma (ASCII 44)
+        self._visa_set_termchar(44, True)
+
+        try:
+            self._visa_write("XE\n")
+
+            def _read_token():
+                return parse_fmt5_item(self._visa_read(64))
+
+            for step in range(points):
+                # MM22 + LMN1 + FMT 5,1 order: Time, Para1, Para2, Osc, DCBias, Frequency.
+                _ts, _tc, time_type, time_s = _read_token()
+                p1_status, _c1, _t1, para1 = _read_token()
+                p2_status, _c2, _t2, para2 = _read_token()
+                _os, _oc, _ot, _ov = _read_token()
+                _ds, _dc, _dt, dc_bias_v = _read_token()
+                _fs, _fc, freq_type, freq_hz = _read_token()
+
+                if time_type != 'T' or freq_type != 'F':
+                    raise RuntimeError(
+                        f"Unexpected C-f stream layout at step {step}: token types "
+                        f"{time_type!r}...{freq_type!r}, expected 'T'...'F'"
+                    )
+
+                callback(
+                    step,
+                    freq_hz,
+                    para1,
+                    para2,
+                    dc_bias_v,
+                    time_s,
+                    parse_scpi_status(p1_status),
+                    parse_scpi_status(p2_status),
+                )
+        finally:
+            # Restore normal termination (newline)
+            self._visa_set_termchar(10, True)
+
     @staticmethod
     def _normalize_corr_type(corr_type) -> int:
         if isinstance(corr_type, str):
