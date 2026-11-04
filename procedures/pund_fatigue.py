@@ -522,10 +522,10 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				if available > plotted_count:
 					batches: dict[tuple[int, str], dict] = {}
 
-					for sample_index in range(plotted_count, available):
-						self.check_stop(b1500)
-						t_v, voltage = wgfmu.get_measure_value(self.channel_1, sample_index)
-						t_i, current = wgfmu.get_measure_value(self.channel_2, sample_index)
+					# One call per channel for all new samples; per-sample calls cannot keep up with closely spaced reads.
+					samples_v = wgfmu.read_chunk(self.channel_1, plotted_count, available - plotted_count)
+					samples_i = wgfmu.read_chunk(self.channel_2, plotted_count, available - plotted_count)
+					for sample_index, ((t_v, voltage), (t_i, current)) in enumerate(zip(samples_v, samples_i), plotted_count):
 						data_ch1.append((t_v, voltage))
 						data_ch2.append((t_i, current))
 
@@ -584,7 +584,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 					if plot_batch:
 						self.runner.plot.append_batch(plot_batch)
 
-					plotted_count = available
+					plotted_count = len(data_ch1)
 					last_progress_time = time.monotonic()
 					continue
 

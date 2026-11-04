@@ -272,9 +272,10 @@ class PUNDProcedure(MeasurementProcedure):
 					# Group points by rep for overlay plotting
 					rep_batches: dict[int, dict] = {}
 
-					for i in range(plotted_count, available):
-						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
-						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
+					# One call per channel for all new samples, instead of two calls per sample.
+					samples_v = wgfmu.read_chunk(self.channel_1, plotted_count, available - plotted_count)
+					samples_i = wgfmu.read_chunk(self.channel_2, plotted_count, available - plotted_count)
+					for (t_v, v), (t_i, cur) in zip(samples_v, samples_i):
 						t = t_v if t_v is not None else t_i
 						data.append([t, cur, v])
 
@@ -330,7 +331,7 @@ class PUNDProcedure(MeasurementProcedure):
 					if batch_update:
 						runner.plot.append_batch(batch_update)
 
-					plotted_count = available
+					plotted_count = len(data)
 
 				if status == STATUS_COMPLETED:
 					break
