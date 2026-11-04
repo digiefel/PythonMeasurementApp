@@ -8,7 +8,7 @@ from procedures._cmu import (
     phase_compensated,
     report_cmu_status,
     resolve_cmu_channel,
-    rp_cp_from_z_theta,
+    z_theta_pairs,
 )
 from instrumentio.constants import (
     B1500_CMU_CHANNELS,
@@ -37,6 +37,16 @@ CF_SPACINGS = (
     ('linear', 'Linear'),
 )
 
+# Z-theta figure: one row per pair, (plot id, y label, y scale) for the left and right panel.
+# "z" and "theta" are measured; the rest come from procedures._cmu.z_theta_pairs.
+Z_THETA_ROWS = (
+    (("z", "|Z| (Ohm)", "log"), ("theta", "Theta", "linear")),
+    (("zre", "Z' (Ohm)", "log"), ("zim", "-Z'' (Ohm)", "log")),
+    (("rp", "Rp (Ohm)", "log"), ("cp", "Cp (F)", "linear")),
+    (("rs", "Rs (Ohm)", "log"), ("cs", "Cs (F)", "linear")),
+    (("g", "G (S)", "log"), ("b", "B (S)", "log")),
+)
+
 
 class CfSweepProcedure(MeasurementProcedure):
     """CMU-based capacitance-frequency sweep for B1500, repeated at several DC biases.
@@ -50,8 +60,12 @@ class CfSweepProcedure(MeasurementProcedure):
     point after the delay time. All traces are plotted against frequency, one
     colour per bias, and the CSV always includes a Bias_V column.
 
-    When cmu_mode is Z-Theta, Rp and Cp are computed per point at the measured
-    frequency and plotted in a 2×2 layout alongside Z and Theta.
+    When cmu_mode is Z-Theta, the plot shows every equivalent-circuit pair
+    against frequency, one row each: |Z|-Theta (measured), Z'-(-Z''), Rp-Cp,
+    Rs-Cs and G-B (calculated at the measured frequency). The CSV holds only
+    the measured values; every pair can be recalculated from Z and Theta.
+    Legends number the sweeps in bias-list order, so a repeated bias is still
+    distinguishable.
 
     Open/short/load correction uses the calibration stored for the channel (for
     example by the CVSweep calibration buttons). The instrument interpolates
@@ -64,7 +78,7 @@ class CfSweepProcedure(MeasurementProcedure):
     PARAMETERS = (
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('cmu_channel', 'CMU Channel', -1, Choice(B1500_CMU_CHANNELS, int)),
-        parameter('cmu_mode', 'C-f Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int), help='Selects the impedance representation returned by the CMU. Z–Theta modes also produce derived parallel resistance and capacitance plots.'),
+        parameter('cmu_mode', 'C-f Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int), help="Selects the impedance representation returned by the CMU. Z–Theta modes also plot the Z'-Z'', Rp-Cp, Rs-Cs and G-B pairs."),
         parameter('biases', 'DC Biases (V)', '0', ValueList, help="Comma-separated DC bias values in volts, e.g. '-1, 0, 1'. One frequency sweep per bias, run in the order typed."),
         parameter('start_frequency', 'Start Frequency (Hz)', '1k', str, help="SI prefixes are accepted, e.g. '1k'. Range 1 kHz to 5 MHz."),
         parameter('stop_frequency', 'Stop Frequency (Hz)', '5M', str, help="SI prefixes are accepted, e.g. '5M'. Range 1 kHz to 5 MHz."),
@@ -133,45 +147,34 @@ class CfSweepProcedure(MeasurementProcedure):
             f"bias=[{bias_str}], Vac={self.ac_level_mv:.1f} mV"
         )
 
-        # Plot source names are bias-tagged so all bias sweeps share one figure.
+        # Curves are named by position in the bias list, so a repeated bias (e.g. '0, 1, 0') gets its own curve.
+        labels = [f"{i + 1}: {self._bias_label(bias)}" for i, bias in enumerate(self.bias_list)]
         xscale = "log" if self.spacing == 'log' else "linear"
         if is_z_theta:
-            theta_unit = "deg" if is_degrees else "rad"
-            panels = {"z": [], "theta": [], "rp": [], "cp": []}
-            for i, bias in enumerate(self.bias_list):
-                color = f'C{i % 10}'
-                tag = self._bias_label(bias)
-                panels["z"].append(    Curve(f"z_{tag}",     color=color, legend_label=f"Z @ {tag}"))
-                panels["theta"].append(Curve(f"theta_{tag}", color=color, legend_label=f"θ @ {tag}"))
-                panels["rp"].append(   Curve(f"rp_{tag}",    color=color, legend_label=f"Rp @ {tag}"))
-                panels["cp"].append(   Curve(f"cp_{tag}",    color=color, legend_label=f"Cp @ {tag}"))
-            self.runner.configure_plot(f"C-f Sweep - {device.name}", [
-                PlotDef("z",     row=0, col=0, xlabel="Frequency (Hz)", ylabels=("Z (Ohm)",),
-                        xscale=xscale, yscales=("log",), elements=panels["z"]),
-                PlotDef("theta", row=0, col=1, xlabel="Frequency (Hz)", ylabels=(f"Theta ({theta_unit})",),
-                        xscale=xscale, xlink="z", elements=panels["theta"]),
-                PlotDef("rp",    row=1, col=0, xlabel="Frequency (Hz)", ylabels=("Rp (Ohm)",),
-                        xscale=xscale, xlink="z", elements=panels["rp"]),
-                PlotDef("cp",    row=1, col=1, xlabel="Frequency (Hz)", ylabels=("Cp (F)",),
-                        xscale=xscale, xlink="z", elements=panels["cp"]),
-            ], row_ratios=(1.0, 1.0), column_ratios=(1.0, 1.0))
-            columns = ["Bias_V", "Frequency_Hz", primary_label, monitor_label, "Rp (Ohm)", "Cp (F)"]
+            plots = []
+            for row, pair in enumerate(Z_THETA_ROWS):
+                for col, (plot_id, ylabel, yscale) in enumerate(pair):
+                    if plot_id == "theta":
+                        ylabel = f"Theta ({'deg' if is_degrees else 'rad'})"
+                    curves = [Curve(f"{plot_id}_{i}", color=f'C{i % 10}', legend_label=label)
+                              for i, label in enumerate(labels)]
+                    plots.append(PlotDef(plot_id, row=row, col=col, xlabel="Frequency (Hz)", ylabels=(ylabel,),
+                                         xscale=xscale, yscales=(yscale,), xlink="" if plot_id == "z" else "z",
+                                         elements=curves))
+            self.runner.configure_plot(f"C-f Sweep - {device.name}", plots)
         else:
             elements = []
-            for i, bias in enumerate(self.bias_list):
-                color = f'C{i % 10}'
-                tag = self._bias_label(bias)
-                elements.append(Curve(f"p_{tag}", color=color, line_style="solid",
-                                      legend_label=f"{primary_label} @ {tag}"))
-                elements.append(Curve(f"m_{tag}", color=color, line_style="dash", yaxis=1,
-                                      legend_label=f"{monitor_label} @ {tag}"))
+            for i, label in enumerate(labels):
+                elements.append(Curve(f"p_{i}", color=f'C{i % 10}', line_style="solid",
+                                      legend_label=f"{primary_label} @ {label}"))
+                elements.append(Curve(f"m_{i}", color=f'C{i % 10}', line_style="dash", yaxis=1,
+                                      legend_label=f"{monitor_label} @ {label}"))
             self.runner.configure_plot(f"C-f Sweep - {device.name}", [
                 PlotDef("cf", xlabel="Frequency (Hz)", ylabels=(primary_label, monitor_label),
                         xscale=xscale, elements=elements),
             ])
-            columns = ["Bias_V", "Frequency_Hz", primary_label, monitor_label]
-        columns += ["Bias_Monitor_V", "Time_sec",
-                    f"Status_{primary_name}", f"Status_{monitor_name}", "Status_Combined"]
+        columns = ["Bias_V", "Frequency_Hz", primary_label, monitor_label, "Bias_Monitor_V", "Time_sec",
+                   f"Status_{primary_name}", f"Status_{monitor_name}", "Status_Combined"]
 
         self.check_stop(b1500)
         b1500.reset()
@@ -190,32 +193,27 @@ class CfSweepProcedure(MeasurementProcedure):
             b1500.set_cmu_integ(self.integration_mode, self.integration_value)
             b1500.force_cmu_ac_level(self.cmu_channel, self.ac_level)
 
-            for index, bias in enumerate(self.bias_list, start=1):
+            for index, bias in enumerate(self.bias_list):
                 self.check_stop(b1500)
-                tag = self._bias_label(bias)
 
-                def on_point(_, freq, para1, para2, bias_monitor, time_s, s1, s2, _bias=bias, _tag=tag):
+                def on_point(_, freq, para1, para2, bias_monitor, time_s, s1, s2, _bias=bias, _i=index):
                     self.check_stop(b1500)
-                    self.runner.plot.append_point(f"{'z' if is_z_theta else 'p'}_{_tag}", freq, para1)
-                    self.runner.plot.append_point(f"{'theta' if is_z_theta else 'm'}_{_tag}", freq, para2)
+                    self.runner.plot.append_point(f"{'z' if is_z_theta else 'p'}_{_i}", freq, para1)
+                    self.runner.plot.append_point(f"{'theta' if is_z_theta else 'm'}_{_i}", freq, para2)
                     report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
-                    row = [_bias, freq, para1, para2]
                     if is_z_theta:
-                        # Only Z-theta sweeps have derived Rp/Cp columns and plot traces.
-                        rp, cp = rp_cp_from_z_theta(para1, para2, freq, is_degrees)
-                        if math.isfinite(rp):
-                            self.runner.plot.append_point(f"rp_{_tag}", freq, rp)
-                        if math.isfinite(cp):
-                            self.runner.plot.append_point(f"cp_{_tag}", freq, cp)
-                        row += [rp, cp]
-                    results.append(row + [bias_monitor, time_s, s1, s2, s1 | s2])
+                        # Only Z-theta sweeps have the calculated pair panels.
+                        for plot_id, value in z_theta_pairs(para1, para2, freq, is_degrees).items():
+                            if math.isfinite(value):
+                                self.runner.plot.append_point(f"{plot_id}_{_i}", freq, value)
+                    results.append([_bias, freq, para1, para2, bias_monitor, time_s, s1, s2, s1 | s2])
 
                 b1500.stream_cf_sweep(
                     self.cmu_channel, self.cmu_mode, self.measurement_range, bias,
                     self.spacing == 'log', self.start_hz, self.stop_hz, self.points,
                     self.hold_time, self.delay_time, self.step_delay, on_point,
                 )
-                self.report_progress(index, len(self.bias_list), 'Bias sweeps')
+                self.report_progress(index + 1, len(self.bias_list), 'Bias sweeps')
         finally:
             # Cleanup runs on success, instrument error, or user abort to avoid leaving the DUT biased.
             b1500.zero_output(B1500_CH_ALL)

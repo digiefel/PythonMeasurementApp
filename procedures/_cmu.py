@@ -1,5 +1,6 @@
 """Shared helpers for CMU (impedance) procedures: CVSweep and CfSweep."""
 
+import cmath
 import math
 
 from instrumentio.constants import B1500_CMU_CHANNELS
@@ -92,6 +93,28 @@ def rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
         return float('nan'), float('nan')
     # Convert the series-like Z/theta stream into the parallel RC values users usually inspect.
     return Z / cos_t, -sin_t / (omega * Z)
+
+
+def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict[str, float]:
+    """Equivalent-circuit pairs from |Z| and phase: Z', Z'' and Rp-Cp, Rs-Cs, G-B.
+
+    Series view: Z = Z' + jZ'' (Rs = Z', Cs = -1/(ω Z'')).
+    Parallel view: Y = 1/Z = G + jB (Rp = 1/G, Cp = B/ω).
+    """
+    z = cmath.rect(Z, math.radians(theta) if is_degrees else theta)
+    y = 1 / z
+    omega = 2.0 * math.pi * freq
+    return {
+        "zre": z.real,
+        "zim": -z.imag,
+        "rp": 1 / y.real,
+        "cp": y.imag / omega,
+        "rs": z.real,
+        # A purely resistive reading (phase exactly 0) has no series capacitance.
+        "cs": -1 / (omega * z.imag) if z.imag else math.nan,
+        "g": y.real,
+        "b": y.imag,
+    }
 
 
 def report_cmu_status(runner, channel, seen, s1, s2):

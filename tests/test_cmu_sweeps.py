@@ -84,16 +84,33 @@ class CfSweepTests(unittest.TestCase):
             'biases': '1, -500m, 0', 'start_frequency': '1k', 'stop_frequency': '1M', 'points': 4})
         self.assertEqual([float(r['Bias_V']) for r in rows], [1.0] * 4 + [-0.5] * 4 + [0.0] * 4)
         self.assertEqual([float(r['Frequency_Hz']) for r in rows[:4]], [1e3, 1e4, 1e5, 1e6])
-        for row in rows:
-            self.assertAlmostEqual(float(row['Cp (F)']) / C_DUT, 1.0)
-            self.assertAlmostEqual(float(row['Rp (Ohm)']) / R_DUT, 1.0)
         sweeps = [args for name, args, _ in instrument.calls if name == 'stream_cf_sweep']
         self.assertEqual([args[3] for args in sweeps], [1.0, -0.5, 0.0])
         self.assertTrue(all(args[4] for args in sweeps))
         self.assertEqual(instrument.calls[-2:], [('zero_output', (B1500_CH_ALL,), {}),
                                                  ('set_switch', (B1500_CH_ALL, False), {})])
-        self.assertEqual(len(runner.plot.sources['cp_+1V'][0]), 4)
+        self.assertEqual(len(runner.plot.sources['cp_0'][0]), 4)
         self.assertEqual(runner.plots[0].xscale, 'log')
+
+    def test_pair_panels_match_the_parallel_rc_and_csv_holds_measured_values(self):
+        runner, _, rows = run(CfSweepProcedure, {'start_frequency': '1k', 'stop_frequency': '1M', 'points': 4})
+        self.assertEqual(list(rows[0]), ['Bias_V', 'Frequency_Hz', 'Z (Ohm)', 'Theta_deg (deg)', 'Bias_Monitor_V',
+                                         'Time_sec', 'Status_Z', 'Status_Theta_deg', 'Status_Combined'])
+        self.assertEqual([p.id for p in runner.plots], ['z', 'theta', 'zre', 'zim', 'rp', 'cp', 'rs', 'cs', 'g', 'b'])
+        for step, row in enumerate(rows):
+            omega = 2 * math.pi * float(row['Frequency_Hz'])
+            z = 1 / (1 / R_DUT + 1j * omega * C_DUT)
+            expected = {'zre': z.real, 'zim': -z.imag, 'rp': R_DUT, 'cp': C_DUT, 'rs': z.real,
+                        'cs': -1 / (omega * z.imag), 'g': 1 / R_DUT, 'b': omega * C_DUT}
+            for plot_id, value in expected.items():
+                self.assertAlmostEqual(runner.plot.sources[f'{plot_id}_0'][1][step] / value, 1.0, msg=plot_id)
+
+    def test_repeated_bias_gets_its_own_curve(self):
+        runner, _, rows = run(CfSweepProcedure, {'biases': '0, 1, 0', 'points': 3})
+        self.assertEqual(len(rows), 9)
+        for i in range(3):
+            self.assertEqual(len(runner.plot.sources[f'z_{i}'][0]), 3)
+        self.assertEqual([c.legend_label for c in runner.plots[0].elements], ['1: +0V', '2: +1V', '3: +0V'])
 
     def test_linear_spacing(self):
         runner, instrument, rows = run(CfSweepProcedure, {
