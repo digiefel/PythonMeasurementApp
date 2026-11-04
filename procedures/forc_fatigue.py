@@ -1,7 +1,7 @@
 """
 FORC Fatigue Procedure - PUND reads during fatigue, with a full FORC at chosen cycles.
 
-Same fatigue cycles and log-spaced PUND reads as PUNDFatigueV2, all in one WGFMU
+Same fatigue cycles and per-decade PUND reads as PUNDFatigue, all in one WGFMU
 run. A FORC (the waveform of the FORC procedure: Vstart, Vend, number of reversal
 curves, frequency) runs on the pristine device at cycle 0 and after each fatigue
 cycle count listed in "FORC at Cycles". Cycle 0 also gets a PUND read. Where a
@@ -19,22 +19,22 @@ import numpy as np
 from plotting import PlotDef, Curve, Heatmap
 from procedures.base import parameter
 from procedures.forc import FORCProcedure, forc_map_axes, forc_map_grid
-from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
+from procedures.pund_fatigue import PUNDFatigueProcedure
 
 # Each map is its own small plot, so only this many FORCs get one.
 MAX_MAPS = 6
-# PUND Q-V: the current offset is the mean of the first samples, as in PUNDFatigueV2.
+# PUND Q-V: the current offset is the mean of the first samples, as in PUNDFatigue.
 PUND_BASELINE_POINTS = 50
 HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
 
-_V2_PARAMETERS = PUNDFatigueV2Procedure.PARAMETERS
+_PUND_FATIGUE_PARAMETERS = PUNDFatigueProcedure.PARAMETERS
 _FORC_PARAMETERS = {p.key: p for p in FORCProcedure.PARAMETERS}
 
 
-class FORCFatigueProcedure(PUNDFatigueV2Procedure):
+class FORCFatigueProcedure(PUNDFatigueProcedure):
 	NAME = "FORCFatigue"
 	PARAMETERS = (
-		*_V2_PARAMETERS[:-2],
+		*_PUND_FATIGUE_PARAMETERS[:-2],
 		_FORC_PARAMETERS['vstart'],
 		_FORC_PARAMETERS['vend'],
 		_FORC_PARAMETERS['forc_count'],
@@ -43,7 +43,7 @@ class FORCFatigueProcedure(PUNDFatigueV2Procedure):
 		parameter('forc_cycles', 'FORC at Cycles', '1e2, 1e4, 1e6', str,
 		          help="Comma-separated fatigue cycle counts that get a FORC, besides the pristine one "
 		               "at cycle 0. Each must be between 1 and the fatigue cycle count."),
-		*_V2_PARAMETERS[-2:],  # measurement ranges
+		*_PUND_FATIGUE_PARAMETERS[-2:],  # measurement ranges
 	)
 	# TODO: the inherited "Preview Sequence" shows the PUND reads only, not cycle 0 or the FORCs.
 

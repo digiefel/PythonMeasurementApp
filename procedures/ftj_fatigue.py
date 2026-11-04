@@ -1,7 +1,7 @@
 """
 FTJ Fatigue Procedure - PUND fatigue with an SMU I-V sweep after every read.
 
-Same fatigue and read schedule as PUNDFatigueV2. After each WGFMU read, both
+Same fatigue and read schedule as PUNDFatigue. After each WGFMU read, both
 RSUs switch to their SMU input and a butterfly staircase sweep reads the
 junction: SMU 1 (on WGFMU channel 1) sweeps base → base+Vmax → base → base−Vmax
 → base, while SMU 2 (on WGFMU channel 2) holds 0 V and measures the current.
@@ -11,7 +11,7 @@ import time
 import numpy as np
 from plotting import PlotDef, Curve
 from procedures.base import SMU, Choice, parameter
-from procedures.pund_fatigue_v2 import PUNDFatigueV2Procedure
+from procedures.pund_fatigue import PUNDFatigueProcedure
 from procedures._iv_model import sweep_segments
 from instrumentio.codes import (
 	B1500_CH_ALL, B1500_CH_NOCH, B1500_LAST_STOP, B1500_STOP_DISABLE,
@@ -26,10 +26,10 @@ from instrumentio.descriptors import describe_status_bits
 RSU_SMU = {101: "SMU1", 102: "SMU2"}
 
 
-class FTJFatigueProcedure(PUNDFatigueV2Procedure):
+class FTJFatigueProcedure(PUNDFatigueProcedure):
 	NAME = "FTJFatigue"
 	PARAMETERS = (
-		*PUNDFatigueV2Procedure.PARAMETERS,
+		*PUNDFatigueProcedure.PARAMETERS,
 		parameter('smu_points', 'SMU Sweep Points (outward leg)', 21, int,
 		          help="Butterfly sweep base → +Vmax → base → −Vmax → base, with the PUND Vmax."),
 		parameter('smu_current_range', 'SMU Current Range (A)', 1e-9, Choice(B1500_CURRENT_RANGES, float)),
@@ -112,7 +112,7 @@ class FTJFatigueProcedure(PUNDFatigueV2Procedure):
 			return
 		t0 = samples[0][0]
 		batch = {f"V_{read_idx}": [], f"I_{read_idx}": [], f"QV_{read_idx}": []}
-		# Same Q-V as PUNDFatigueV2: offset from the first 50 samples, negated current.
+		# Same Q-V as PUNDFatigue: offset from the first 50 samples, negated current.
 		baseline = float(np.mean([i for _, _, i in samples[:50]]))
 		charge, last_t = 0.0, t0
 		for t, v, i in samples:

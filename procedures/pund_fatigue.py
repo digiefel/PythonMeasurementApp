@@ -1,8 +1,9 @@
 """
 PUND Fatigue Procedure - High cycle count pulsing with sparse measurements.
 
-Sends up to 1e12 PUND cycles using WGFMU hardware repetition.
+Sends up to 1e12 square cycles using WGFMU hardware repetition.
 Optionally measures at N points (linear or log spaced) throughout the run.
+TODO
 """
 import time
 import numpy as np
@@ -28,9 +29,9 @@ def _preview_sequence(ui):
 	from tkinter import messagebox
 	try:
 		settings = ui.collect_settings()
-		cycle_count = float(settings['cycle_count'])
-		frequency = float(settings['frequency'])
-		ppd = int(float(settings['points_per_decade']))
+		cycle_count = float(settings['fatigue_count'])
+		frequency = float(settings['fatigue_freq'])
+		ppd = int(float(settings['reads_per_decade']))
 		preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
 	except (TypeError, ValueError) as exc:
 		messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {exc}", parent=ui.root)
@@ -44,7 +45,7 @@ def _preview_sequence(ui):
 		duration = f"{total_sec / 3600:.2f} h"
 	lines = [
 		f"Cycle Count: {cycle_count:.2e}", f"Frequency: {frequency:.0f} Hz",
-		f"Points per Decade: {ppd}", f"Decades: {preview['decades']:.1f}", "",
+		f"Reads per Decade: {ppd}", f"Decades: {preview['decades']:.1f}", "",
 		f"Total Measurements: {preview['total_measurements']}",
 		f"Estimated Duration: {duration}", "", "Measurement at cycles:",
 	]
@@ -66,459 +67,563 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
 		parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
 		parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
-		parameter('vmax', 'Vmax (V)', 1.0, float),
-		parameter('base_voltage', 'Base Voltage (V)', 0.0, float),
-		parameter('frequency', 'Frequency (Hz)', 1e3, float),
-		parameter('pulse_delay', 'Pulse Delay (s)', 0.0, float),
-		parameter('cycle_count', 'Cycle Count', 1e6, float),
-		parameter('invert_polarity', 'Invert Polarity (PNNPP)', False, bool),
-		parameter('points_per_decade', 'Points per Decade', 10, int),
-		parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0], Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
-		parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0], Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+		parameter('vmax', 'Pulse Amplitude (V)', 1.0, float),
+        parameter('base_voltage', 'Base Voltage (V)', 0.0, float), # baseline voltage: V = V_base +- V_max
+        parameter('hold_base', 'Hold Base V continuously', True, bool), # hold baseline for the entire time?
+		parameter('fatigue_freq', 'Fatigue Frequency (Hz)', 1e4, float), # inverse duration of the fatigue pulses
+        parameter('fatigue_delay', 'Fatigue Cycle Delay (s)', 0.0, float), # wait time between fatigue pulses
+		parameter('fatigue_count', 'Fatigue Cycle Count', 1e6, float), # total fatigue cycle count
+		parameter('fatigue_pulse_type', 'Type of Fatigue Cycle', 'square',
+            Choice((('square', 'Square'), ('triangle', 'Triangle'), ('pund', 'PUND')))),
+        parameter('read_pulse_freq', 'Read Frequency (Hz)', 1e4, float), # inverse duration of the read pulses
+        parameter('read_pulse_type', 'Type of Read Cycle', 'pund',
+                  Choice((('pund', 'PUND'), ('pn', 'PN'), ('both', 'PN+PUND')))),
+		parameter('reads_per_decade', 'Read Cycles per Decade', 10, int),
+        parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
+                  Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
+        parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0],
+                  Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
 	)
 	UI_ACTIONS = (
 		action("Preview Sequence", _preview_sequence),
 	)
 
-	def _build_pund_pattern(self):
-		"""Build PUND waveform vectors: N-P-P-N-N (or inverted P-N-N-P-P)."""
-		if self.frequency <= 0:
-			raise ValueError("Frequency must be > 0")
-		if self.vmax <= 0:
-			raise ValueError("Vmax must be > 0")
 
-		signs = [1, -1, -1, 1, 1] if self.invert_polarity else [-1, 1, 1, -1, -1]
+	MIN_INTERVAL = 1e-8
+	RESOLUTION = 1e-8
+	STATUS_COMPLETED = 10000
+	POST_COMPLETION_DRAIN_TIMEOUT_S = 30.0
+	PUND_SIGNS = (-1, 1, 1, -1, -1)
 
-		# Timing as fractions of period T = 1/f
-		# Each pulse: 0.4T at ±Vmax, 0.4T at base_voltage, 0.2T gap; edges 0.1T
-		T = 1.0 / self.frequency
+	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
+		super().__init__(settings, output_root, output_relative, runner, fallback_root)
+		self.fatigue_count_int = int(float(self.fatigue_count))
+		self._validate_settings()
+
+	def _validate_settings(self):
+		if self.vmax == 0.0:
+			raise ValueError("vmax must be non-zero. Use a negative value to invert polarity.")
+		if self.fatigue_freq <= 0:
+			raise ValueError("fatigue_freq must be > 0")
+		if self.read_pulse_freq <= 0:
+			raise ValueError("read_pulse_freq must be > 0")
+		if self.fatigue_delay < 0:
+			raise ValueError("fatigue_delay must be >= 0")
+		if self.fatigue_count_int < 1:
+			raise ValueError("fatigue_count must be >= 1")
+		if self.reads_per_decade <= 0:
+			raise ValueError("reads_per_decade must be > 0")
+		if self.fatigue_pulse_type not in ('square', 'triangle', 'pund'):
+			raise ValueError(f"Invalid fatigue_pulse_type: {self.fatigue_pulse_type!r}")
+		if self.read_pulse_type not in ('pund', 'pn', 'both'):
+			raise ValueError(f"Invalid read_pulse_type: {self.read_pulse_type!r}")
+
+	def _idle_voltage(self):
+		return self.base_voltage if self.hold_base else 0.0
+
+	def _positive_level(self):
+		return self.base_voltage + self.vmax
+
+	def _negative_level(self):
+		return self.base_voltage - self.vmax
+
+	def _append_square_level(self, vectors, level, duration):
+		"""Append a fast transition to level followed by a constant hold."""
+		if duration <= 0:
+			return
+		edge = min(self.MIN_INTERVAL, duration)
+		vectors.append((edge, level))
+		hold = duration - edge
+		if hold > 0:
+			vectors.append((hold, level))
+
+	def _append_idle_hold(self, vectors, duration):
+		if duration > 0:
+			self._append_square_level(vectors, self._idle_voltage(), duration)
+
+	def _build_square_fatigue_vectors(self):
+		"""Square PN fatigue cycle: positive segment, negative segment, optional idle delay."""
+		segment = 1.0 / self.fatigue_freq
+		vectors = []
+		self._append_square_level(vectors, self._positive_level(), segment)
+		self._append_square_level(vectors, self._negative_level(), segment)
+		self._append_idle_hold(vectors, self.fatigue_delay)
+		return vectors
+
+	def _build_triangle_fatigue_vectors(self):
+		"""Triangular PN fatigue pulses, then optional idle delay."""
+		vectors = self._build_triangular_pn_vectors(self.fatigue_freq)
+		self._append_idle_hold(vectors, self.fatigue_delay)
+		return vectors
+
+	def _build_triangular_pulse_vectors(self, frequency, signs):
+		"""Triangular PUND timing: ramp out, ramp back, base hold."""
+		T = 1.0 / frequency
 		pulse_width = 0.4 * T
-		gap = 0.2 * T + self.pulse_delay
+		gap = 0.2 * T
 		edge = 0.1 * T
 
 		vectors = [(edge, self.base_voltage)]
-		for s in signs:
-			# Measured cycles use the full five-pulse PUND sequence so polarization and non-switching currents separate.
-			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
-			            (pulse_width, self.base_voltage), 
-			            (gap, self.base_voltage)]
-		vectors[-1] = (edge, self.base_voltage)  # last gap becomes trailing edge
+		for sign in signs:
+			vectors += [
+				(pulse_width, self._positive_level() if sign > 0 else self._negative_level()),
+				(pulse_width, self.base_voltage),
+				(gap, self.base_voltage),
+			]
+		vectors[-1] = (edge, self._idle_voltage())
 		return vectors
 
-	def _build_pn_pattern(self):
-		"""Build PN switching waveform vectors: P-N (or inverted N-P)."""
-		signs = [-1, 1] if self.invert_polarity else [1, -1]
-		T = 1.0 / self.frequency
-		pulse_width = 0.4 * T
-		gap = 0.2 * T + self.pulse_delay
+	def _build_triangular_pn_vectors(self, frequency):
+		"""Triangular PN pulses with idle only before and after the PN pair."""
+		T = 1.0 / frequency
 		edge = 0.1 * T
-
+		half_period = 0.5 / frequency
 		vectors = [(edge, self.base_voltage)]
-		for s in signs:
-			# Fatigue cycles are shorter PN stress pulses; they are repeated in hardware without measurement events.
-			vectors += [(pulse_width, (s * self.vmax) + self.base_voltage), 
-			            (pulse_width, self.base_voltage), 
-			            (gap, self.base_voltage)]
-		vectors[-1] = (edge, self.base_voltage)
+		for level in (self._positive_level(), self._negative_level()):
+			vectors.append((half_period, level))
+			vectors.append((half_period, self.base_voltage))
+		vectors.append((edge, self._idle_voltage()))
 		return vectors
 
-	def _get_measure_cycles(self):
-		"""Return list of cycle numbers at which to measure.
-		
-		Uses points_per_decade for linear spacing within each decade.
-		For example, with ppd=10 and cycle_count=1e3:
-		  1,2,3,4,5,6,7,8,9,10,20,30,...,100,200,300,...,1000
-		"""
-		n = int(self.cycle_count)
-		ppd = self.points_per_decade
-		if ppd <= 0 or n < 1:
-			return []
-		
-		return self._compute_measure_cycles(n, ppd)
-	
+	def _build_fatigue_vectors(self):
+		if self.fatigue_pulse_type == 'square':
+			return self._build_square_fatigue_vectors()
+		if self.fatigue_pulse_type == 'triangle':
+			return self._build_triangle_fatigue_vectors()
+		vectors = self._build_triangular_pulse_vectors(self.fatigue_freq, self.PUND_SIGNS)
+		self._append_idle_hold(vectors, self.fatigue_delay)
+		return vectors
+
+	def _build_read_vectors(self):
+		if self.read_pulse_type == 'pn':
+			return self._build_triangular_pn_vectors(self.read_pulse_freq)
+		if self.read_pulse_type == 'pund':
+			return self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS)
+
+		vectors = []
+		vectors.extend(self._build_triangular_pn_vectors(self.read_pulse_freq))
+		self._append_idle_hold(vectors, 1.0 / self.read_pulse_freq)
+		vectors.extend(self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS))
+		return vectors
+
+	def _read_phase_spans(self):
+		"""Return plotted read phases as (key, label, start_s, end_s)."""
+		pn_duration = sum(dt for dt, _ in self._build_triangular_pn_vectors(self.read_pulse_freq))
+		pund_duration = sum(
+			dt for dt, _ in self._build_triangular_pulse_vectors(self.read_pulse_freq, self.PUND_SIGNS)
+		)
+
+		if self.read_pulse_type == 'pn':
+			return [('pn', 'PN', 0.0, pn_duration)]
+		if self.read_pulse_type == 'pund':
+			return [('pund', 'PUND', 0.0, pund_duration)]
+
+		gap_duration = 1.0 / self.read_pulse_freq
+		pund_start = pn_duration + gap_duration
+		return [
+			('pn', 'PN', 0.0, pn_duration),
+			('pund', 'PUND', pund_start, pund_start + pund_duration),
+		]
+
 	@staticmethod
-	def _compute_measure_cycles(cycle_count: int, points_per_decade: int) -> list:
-		"""Compute measurement cycles with linear spacing per decade.
-		
-		With ppd=10: 1,2,...,10,20,30,...,100,200,300,...
-		With ppd=5:  1,2,3,4,5,20,40,60,80,100,200,400,...
-		With ppd=2:  1,2,50,100,500,1000,...
-		With ppd=1:  1,100,1000,...
-		With ppd=20: 1,2,...,10,15,20,25,...,100,150,200,...
+	def _phase_for_time(read_time_s, phase_spans):
+		for phase in phase_spans:
+			_key, _label, start, end = phase
+			if start <= read_time_s < end:
+				return phase
+		if phase_spans and read_time_s == phase_spans[-1][3]:
+			return phase_spans[-1]
+		return None
+
+	@staticmethod
+	def _phase_color(phase_key, intensity):
+		shade = 0.45 + 0.55 * intensity
+		if phase_key == 'pn':
+			return (0.12 * shade, 0.47 * shade, 0.71 * shade)
+		return (1.0 * shade, 0.5 * shade, 0.05 * shade)
+
+	def _iv_vectors_for(self, vectors):
+		# Channel 2 always stays at 0 V; all PG/base/fatigue/read voltage is applied only on channel 1.
+		return [(dt, 0.0) for dt, _ in vectors]
+
+	def _sample_interval(self):
+		raw_interval = 1e-3 / self.read_pulse_freq
+		sample_interval = max(raw_interval, self.MIN_INTERVAL)
+		sample_interval = round(sample_interval / self.RESOLUTION) * self.RESOLUTION
+		return max(sample_interval, self.MIN_INTERVAL)
+
+	@staticmethod
+	def _compute_read_cycles(cycle_count: int, reads_per_decade: int) -> list[int]:
+		"""Return read cycles spaced linearly within each decade, with cycle 1 and the final cycle always included.
+
+		Decade 10^d to 10^(d+1) gets its N reads at the multiples of 10^(d+1)/N above 10^d,
+		rounded to whole cycles: N = 2 gives 1, 5, 10, 50, 100, ...; N = 10 gives
+		1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer than N reads when N > 9.
 		"""
 		n = int(cycle_count)
-		ppd = points_per_decade
+		ppd = int(reads_per_decade)
 		if ppd <= 0 or n < 1:
 			return []
-		
-		cycles = []
+		cycles = {1, n}
 		decade = 0
-		while True:
-			base = 10 ** decade
-			next_base = base * 10
-			
-			if decade == 0:
-				# First decade: only first ppd cycles (1,2,...,ppd)
-				# Cap at (1,2,...,10)
-				for c in range(1, min(ppd + 1, 10 + 1, n + 1)):
-					cycles.append(c)
-			else:
-				# step = next_base / ppd (integer division, at least 1)
-				# For ppd=10: step=10 -> 20,30,...,100
-				# For ppd=5: step=20 -> 20,40,60,80,100
-				# For ppd=2: step=50 -> 50,100
-				# For ppd=20: step=5 -> 15,20,25,...,100
-				# For ppd=50: step=2 -> 12,14,16,...,100
-				step = max(1, next_base // ppd)
-				
-				# Start after base to avoid duplicate with previous decade's end
-				if step > base:
-					start = step  # step is already past base
-				elif step == base:
-					start = step * 2  # skip base (which equals step)
-				else:  # step < base (ppd > 10)
-					start = base + step
-				
-				for c in range(start, next_base + 1, step):
-					if c > n:
-						break
-					cycles.append(c)
-			
-			if next_base >= n:
-				break
+		while 10 ** decade < n:
+			step = 10 ** (decade + 1) / ppd
+			for k in range(1, ppd + 1):
+				cycle = int(round(k * step))
+				if 10 ** decade < cycle <= n:
+					cycles.add(cycle)
 			decade += 1
-		
-		return cycles
+		return sorted(cycles)
+
+	def _configure_wgfmu(self, wgfmu):
+		wgfmu.clear()
+		wgfmu.connect(self.channel_1)
+		wgfmu.connect(self.channel_2)
+
+		wgfmu.set_operation_mode(self.channel_1, WGFMU_OPERATION_MODE_PG)
+		wgfmu.set_operation_mode(self.channel_2, WGFMU_OPERATION_MODE_FASTIV)
+		wgfmu.set_force_voltage_range(self.channel_1, WGFMU_FORCE_VOLTAGE_RANGE_AUTO)
+		wgfmu.set_force_voltage_range(self.channel_2, WGFMU_FORCE_VOLTAGE_RANGE_AUTO)
+
+		wgfmu.set_measure_mode(self.channel_1, WGFMU_MEASURE_MODE_VOLTAGE)
+		wgfmu.set_measure_mode(self.channel_2, WGFMU_MEASURE_MODE_CURRENT)
+		wgfmu.set_measure_voltage_range(self.channel_1, self.meas_range_1)
+		wgfmu.set_measure_current_range(self.channel_2, self.meas_range_2)
+		wgfmu.set_measure_enabled(self.channel_1, WGFMU_MEASURE_ENABLED_ENABLE)
+		wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
 	@staticmethod
-	def get_preview_info(cycle_count: float, frequency: float, points_per_decade: int) -> dict:
-		"""Generate preview info for UI without instantiating the procedure.
-		
-		Returns dict with:
-		  - measure_cycles: list of cycle numbers where measurements occur
-		  - total_measurements: count of measurement points
-		  - pattern_duration: single cycle duration in seconds
-		  - total_duration: estimated total run time
-		  - decades: number of decades spanned
-		"""
-		n = int(cycle_count)
-		ppd = points_per_decade
-		
-		# Use shared method for cycle calculation
-		measure_cycles = PUNDFatigueProcedure._compute_measure_cycles(n, ppd)
-		
-		# Pattern duration for fatigue is the PN cycle: 2 pulses instead of 5
-		T = 1.0 / frequency if frequency > 0 else 1.0
-		meas_duration = 5.2 * T 
-		fatigue_duration = 2.2 * T
-		
-		# Most cycles are fatigue. So approximate total duration by fatigue cycles.
-		total_duration = (fatigue_duration * (cycle_count - len(measure_cycles))) + (meas_duration * len(measure_cycles))
-		
+	def _format_cycle_count(count):
+		if count <= 1000:
+			return str(int(count))
+		mantissa, exponent = f"{count:.4e}".split('e')
+		return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
+
+	def _report_fatigue_progress(self, cycles_sent):
+		self.report_progress(
+			cycles_sent, self.fatigue_count_int, "Fatigue cycles sent",
+			count_labels=(self._format_cycle_count(cycles_sent),
+			              self._format_cycle_count(self.fatigue_count_int)),
+		)
+
+	@staticmethod
+	def _add_vectors(wgfmu, pattern_name, vectors):
+		for dt, voltage in vectors:
+			if dt > 0:
+				wgfmu.add_vector(pattern_name, dt, voltage)
+
+	def _create_pattern_pair(self, wgfmu, pg_name, iv_name, initial_pg, pg_vectors, measure_points=None, sample_interval=None, measure_start=0.0):
+		wgfmu.create_pattern(pg_name, initial_pg)
+		self._add_vectors(wgfmu, pg_name, pg_vectors)
+
+		wgfmu.create_pattern(iv_name, 0.0)
+		self._add_vectors(wgfmu, iv_name, self._iv_vectors_for(pg_vectors))
+
+		if measure_points is not None and sample_interval is not None:
+			wgfmu.set_measure_event(
+				pg_name,
+				"meas",
+				measure_start,
+				measure_points,
+				sample_interval,
+				sample_interval,
+				WGFMU_MEASURE_EVENT_DATA_AVERAGED,
+			)
+			wgfmu.set_measure_event(
+				iv_name,
+				"meas",
+				measure_start,
+				measure_points,
+				sample_interval,
+				sample_interval,
+				WGFMU_MEASURE_EVENT_DATA_AVERAGED,
+			)
+
+	def _plot_sources(self, cycle_num, phase_key):
+		return (
+			f"V_{cycle_num}_{phase_key}",
+			f"I_{cycle_num}_{phase_key}",
+			f"IV_{cycle_num}_{phase_key}",
+			f"QV_{cycle_num}_{phase_key}",
+		)
+
+	def _configure_plot(self, device, read_cycles, read_duration):
+		max_cycles_to_plot = min(len(read_cycles), 50)
+		step_plot = max(1, len(read_cycles) // max_cycles_to_plot)
+		plot_indices = list(range(0, len(read_cycles), step_plot))
+		if (len(read_cycles) - 1) not in plot_indices:
+			plot_indices.append(len(read_cycles) - 1)
+
+		max_cycle = read_cycles[-1] if read_cycles else 1
+		log_max = np.log10(max(max_cycle, 1))
+		elements = []
+		iv_elements = []
+		qv_elements = []
+		source_map = {}
+		phase_spans = self._read_phase_spans()
+
+		for read_idx in plot_indices:
+			cycle_num = read_cycles[read_idx]
+			log_cycle = np.log10(max(cycle_num, 1))
+			intensity = 0.2 + 0.7 * (log_cycle / max(log_max, 1))
+			show = read_idx == 0 or read_idx == len(read_cycles) - 1
+			label = f"cycle {cycle_num}"
+			source_map[read_idx] = {}
+			for phase_key, phase_label, _start, _end in phase_spans:
+				color = self._phase_color(phase_key, intensity)
+				v_source, i_source, iv_source, qv_source = self._plot_sources(cycle_num, phase_key)
+				series_label = f"{phase_label} {label}"
+				elements.append(Curve(v_source, color=color, yaxis=0,
+				                      legend_label=f"V ({series_label})", show_in_legend=show))
+				elements.append(Curve(i_source, color=color, yaxis=1,
+				                      legend_label=f"I ({series_label})", show_in_legend=show))
+				iv_elements.append(Curve(iv_source, color=color,
+				                         legend_label=series_label, show_in_legend=show))
+				qv_elements.append(Curve(qv_source, color=color,
+				                         legend_label=series_label, show_in_legend=show))
+				source_map[read_idx][phase_key] = (v_source, i_source, iv_source, qv_source)
+
+		max_abs_v = abs(self.vmax)
+		v_margin = max(max_abs_v * 0.1, 0.1)
+		y_min = min(0.0, self.base_voltage - max_abs_v) - v_margin
+		y_max = max(0.0, self.base_voltage + max_abs_v) + v_margin
+
+		self.runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
+			PlotDef("pund_fat", row=0, col=0, colspan=2,
+			        xlabel="Time (s)",
+			        ylabels=("Voltage (V)", "Current (uA)"),
+			        xlim=(0, read_duration),
+			        ylims=((y_min, y_max), None),
+			        elements=elements),
+			PlotDef("iv_loop", row=1, col=0,
+			        xlabel="Voltage (V)",
+			        ylabels=("Current (uA)",),
+			        elements=iv_elements),
+			PlotDef("qv_loop", row=1, col=1,
+			        xlabel="Voltage (V)",
+			        ylabels=("Charge (nC)",),
+			        elements=qv_elements),
+		], row_ratios=[2.0, 1.0])
+
+		return source_map
+
+	@staticmethod
+	def get_preview_info(cycle_count: float, frequency: float, reads_per_decade: int) -> dict:
+		read_cycles = PUNDFatigueProcedure._compute_read_cycles(int(cycle_count), int(reads_per_decade))
 		return {
-			'measure_cycles': measure_cycles,
-			'total_measurements': len(measure_cycles),
-			'pattern_duration': meas_duration,
-			'total_duration': total_duration,
-			'decades': np.log10(max(n, 1)),
+			'measure_cycles': read_cycles,
+			'total_measurements': len(read_cycles),
+			'pattern_duration': 2.0 / frequency if frequency > 0 else 0.0,
+			'total_duration': cycle_count * (2.0 / frequency if frequency > 0 else 0.0),
+			'decades': np.log10(max(int(cycle_count), 1)),
 		}
 
 	def measure(self, device):
 		b1500 = self.b1500
+		wgfmu = b1500.wgfmu
 		self.check_stop(b1500)
 
-		vectors_meas = self._build_pund_pattern()
-		vectors_fat = self._build_pn_pattern()
-		# Timing estimates use the actual vector durations, including pulse_delay and edge segments.
-		pattern_duration_meas = sum(dt for dt, _ in vectors_meas)
-		pattern_duration_fat = sum(dt for dt, _ in vectors_fat)
-		
-		measure_cycles = self._get_measure_cycles()
-		total_time = (pattern_duration_fat * (self.cycle_count - len(measure_cycles))) + (pattern_duration_meas * len(measure_cycles))
+		read_cycles = self._compute_read_cycles(self.fatigue_count_int, self.reads_per_decade)
+		if not read_cycles:
+			raise ValueError("No read cycles were generated.")
 
+		fatigue_vectors = self._build_fatigue_vectors()
+		read_vectors = self._build_read_vectors()
+		fatigue_duration = sum(dt for dt, _ in fatigue_vectors)
+		read_duration = sum(dt for dt, _ in read_vectors)
+		settle_duration = 1.0 / self.fatigue_freq
+		phase_spans = self._read_phase_spans()
+		sample_interval = self._sample_interval()
+		sample_points = max(1, int(round(read_duration / sample_interval)))
+		expected_total = sample_points * len(read_cycles)
+		source_map = self._configure_plot(device, read_cycles, read_duration)
+		self._report_fatigue_progress(0)
+
+		total_time = (
+			(self.fatigue_count_int * fatigue_duration)
+			+ (len(read_cycles) * settle_duration)
+			+ (len(read_cycles) * read_duration)
+		)
 		self.log(f"Starting PUND Fatigue on {device.name}")
-		self.log(f"  {self.cycle_count:.2e} cycles @ {self.frequency:.0f} Hz, Vmax={self.vmax}V")
-		self.log(f"  {len(measure_cycles)} measurement points ({self.points_per_decade} pts/decade)")
-		self.log(f"  Estimated duration: {total_time:.1f} s (+ initialization + data transfer ≈ 25 s)")
+		self.log(
+			f"  {self.fatigue_count_int:.2e} {self.fatigue_pulse_type} fatigue cycles, "
+			f"Vmax={self.vmax:g} V, reads={len(read_cycles)}"
+		)
+		self.log(
+			f"  Fatigue duration/cycle: {fatigue_duration:.6g} s, "
+			f"read duration: {read_duration:.6g} s, sample interval: {sample_interval:.9g} s"
+		)
+		self.log(f"  Estimated waveform duration: {total_time:.1f} s")
 
-		wgfmu = b1500.wgfmu
 		ts = self.get_run_timestamp()
-		pattern_fat_pg = f"FAT_PG_{ts}"  # fatigue pattern ch1 (PUND waveform, no measure)
-		pattern_fat_iv = f"FAT_IV_{ts}"  # fatigue pattern ch2 (0V, no measure)
-		pattern_meas_pg = f"MEAS_PG_{ts}"  # measure pattern ch1
-		pattern_meas_iv = f"MEAS_IV_{ts}"  # measure pattern ch2
+		initial_pg = self._idle_voltage()
 
 		try:
-			wgfmu.clear()
-			wgfmu.connect(self.channel_1)
-			wgfmu.connect(self.channel_2)
+			self._configure_wgfmu(wgfmu)
+			fat_pg = f"FAT_FAT_PG_{ts}"
+			fat_iv = f"FAT_FAT_IV_{ts}"
+			read_pg = f"FAT_READ_PG_{ts}"
+			read_iv = f"FAT_READ_IV_{ts}"
 
-			wgfmu.set_operation_mode(self.channel_1, WGFMU_OPERATION_MODE_PG)
-			wgfmu.set_operation_mode(self.channel_2, WGFMU_OPERATION_MODE_FASTIV)
-			wgfmu.set_force_voltage_range(self.channel_1, WGFMU_FORCE_VOLTAGE_RANGE_AUTO)
-			wgfmu.set_force_voltage_range(self.channel_2, WGFMU_FORCE_VOLTAGE_RANGE_AUTO)
-
-			wgfmu.set_measure_mode(self.channel_1, WGFMU_MEASURE_MODE_VOLTAGE)
-			wgfmu.set_measure_mode(self.channel_2, WGFMU_MEASURE_MODE_CURRENT)
-			wgfmu.set_measure_voltage_range(self.channel_1, self.meas_range_1)
-			wgfmu.set_measure_current_range(self.channel_2, self.meas_range_2)
-			wgfmu.set_measure_enabled(self.channel_1, WGFMU_MEASURE_ENABLED_ENABLE)
-			wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
-
-			# Compute sampling parameters for measure pattern
-			# As in PUND, sample at roughly 1000 points per period and quantize to WGFMU 10 ns timing.
-			MIN_INTERVAL = 1e-8
-			RESOLUTION = 1e-8
-			raw_interval = 1e-3 / self.frequency
-			sample_interval = max(raw_interval, MIN_INTERVAL)
-			sample_interval = round(sample_interval / RESOLUTION) * RESOLUTION
-			sample_points = int(pattern_duration_meas / sample_interval)
-
-			# Create fatigue pattern for ch1 (PG mode - applies PN waveform, no measure event)
-			wgfmu.create_pattern(pattern_fat_pg, self.base_voltage)
-			for dt, voltage in vectors_fat:
-				if dt > 0:
-					wgfmu.add_vector(pattern_fat_pg, dt, voltage)
-
-			# Create fatigue pattern for ch2 (FastIV mode - holds at 0V, no measure event)
-			wgfmu.create_pattern(pattern_fat_iv, 0.0)
-			for dt, _ in vectors_fat:
-				if dt > 0:
-					wgfmu.add_vector(pattern_fat_iv, dt, 0.0)
-
-			# Create measure patterns with sampling
-			wgfmu.create_pattern(pattern_meas_pg, self.base_voltage)
-			for dt, voltage in vectors_meas:
-				if dt > 0:
-					wgfmu.add_vector(pattern_meas_pg, dt, voltage)
-
-			wgfmu.create_pattern(pattern_meas_iv, 0.0)
-			for dt, _ in vectors_meas:
-				if dt > 0:
-					wgfmu.add_vector(pattern_meas_iv, dt, 0.0)
-
-			wgfmu.set_measure_event(
-				pattern_meas_pg, "meas", 0.0, sample_points,
-				sample_interval, sample_interval, WGFMU_MEASURE_EVENT_DATA_AVERAGED
-			)
-			wgfmu.set_measure_event(
-				pattern_meas_iv, "meas", 0.0, sample_points,
-				sample_interval, sample_interval, WGFMU_MEASURE_EVENT_DATA_AVERAGED
+			self._create_pattern_pair(wgfmu, fat_pg, fat_iv, initial_pg, fatigue_vectors)
+			self._create_pattern_pair(
+				wgfmu,
+				read_pg,
+				read_iv,
+				initial_pg,
+				[(settle_duration, initial_pg), *read_vectors],
+				measure_points=sample_points,
+				sample_interval=sample_interval,
+				measure_start=settle_duration,
 			)
 
-			# Build sequence: interleave fatigue bursts with measure cycles
 			prev_cycle = 0
-			for mc in measure_cycles:
-				# Hardware repetition compresses long fatigue runs into one sequence entry between measured cycles.
-				fatigue_count = mc - prev_cycle - 1
-				if fatigue_count > 0:
-					wgfmu.add_sequence(self.channel_1, pattern_fat_pg, fatigue_count)
-					wgfmu.add_sequence(self.channel_2, pattern_fat_iv, fatigue_count)
-				# Measure cycle
-				# Only measured PUND cycles have measure events, so returned samples are grouped contiguously.
-				wgfmu.add_sequence(self.channel_1, pattern_meas_pg, 1)
-				wgfmu.add_sequence(self.channel_2, pattern_meas_iv, 1)
-				prev_cycle = mc
+			for cycle_num in read_cycles:
+				self.check_stop(b1500)
+				fatigue_reps = cycle_num - prev_cycle
+				if fatigue_reps > 0:
+					wgfmu.add_sequence(self.channel_1, fat_pg, float(fatigue_reps))
+					wgfmu.add_sequence(self.channel_2, fat_iv, float(fatigue_reps))
+				wgfmu.add_sequence(self.channel_1, read_pg, 1.0)
+				wgfmu.add_sequence(self.channel_2, read_iv, 1.0)
+				prev_cycle = cycle_num
 
-			# Remaining fatigue cycles after last measurement
-			remaining = int(self.cycle_count) - prev_cycle
+			remaining = self.fatigue_count_int - prev_cycle
 			if remaining > 0:
-				wgfmu.add_sequence(self.channel_1, pattern_fat_pg, remaining)
-				wgfmu.add_sequence(self.channel_2, pattern_fat_iv, remaining)
+				wgfmu.add_sequence(self.channel_1, fat_pg, float(remaining))
+				wgfmu.add_sequence(self.channel_2, fat_iv, float(remaining))
 
-			# Force both channels back to zero/base voltage after the fatigue schedule.
-			pattern_cleanup = f"CLEANUP_{ts}"
-			wgfmu.create_pattern(pattern_cleanup, self.base_voltage)
-			wgfmu.add_vector(pattern_cleanup, 1e-4, 0.0) 
-			wgfmu.add_sequence(self.channel_1, pattern_cleanup, 1.0)
-			
-			pattern_cleanup_iv = f"CLEANUP_IV_{ts}"
-			wgfmu.create_pattern(pattern_cleanup_iv, 0.0)
-			wgfmu.add_vector(pattern_cleanup_iv, 1e-4, 0.0) 
-			wgfmu.add_sequence(self.channel_2, pattern_cleanup_iv, 1.0)
+			cleanup_pg = f"FAT_CLEANUP_PG_{ts}"
+			cleanup_iv = f"FAT_CLEANUP_IV_{ts}"
+			self._create_pattern_pair(wgfmu, cleanup_pg, cleanup_iv, initial_pg, [(1e-4, 0.0)])
+			wgfmu.add_sequence(self.channel_1, cleanup_pg, 1.0)
+			wgfmu.add_sequence(self.channel_2, cleanup_iv, 1.0)
 
+			self.check_stop(b1500)
 			wgfmu.execute()
 
-			# --- Set up live plot before polling ---
-			runner = self.runner
-			# Build Curve elements with logarithmic color gradient for each measured cycle
-			# Blues for voltage, oranges for current
-			# Limit displayed cycles so million-cycle runs remain responsive while first/last are visible.
-			max_cycles_to_plot = min(len(measure_cycles), 50)
-			step_plot = max(1, len(measure_cycles) // max_cycles_to_plot)
-			cycles_to_plot_idx = list(range(0, len(measure_cycles), step_plot))
-			if (len(measure_cycles) - 1) not in cycles_to_plot_idx:
-				cycles_to_plot_idx.append(len(measure_cycles) - 1)
-
-			# For logarithmic color scaling: use log10 of cycle number
-			max_cycle = measure_cycles[-1] if measure_cycles else 1
-			log_max = np.log10(max(max_cycle, 1))
-
-			elements = []
-			iv_elements = []
-			qv_elements = []
-			meas_idx_to_sources = {}  # meas_idx -> (v_source, i_source, iv_source, qv_source)
-			for plot_idx, meas_idx in enumerate(cycles_to_plot_idx):
-				cycle_num = measure_cycles[meas_idx]
-				log_cycle = np.log10(max(cycle_num, 1))
-				intensity = 0.2 + 0.7 * (log_cycle / max(log_max, 1))
-				show = (meas_idx == 0 or meas_idx == len(measure_cycles) - 1)
-				v_legend = f"V (cycle {cycle_num})" if show else ""
-				i_legend = f"I (cycle {cycle_num})" if show else ""
-				q_legend = f"Q (cycle {cycle_num})" if show else ""
-				i_color = (intensity, 0.3 * intensity, 0)
-				elements.append(Curve(f"V_{cycle_num}", color=(0, 0, intensity),
-				                      yaxis=0, legend_label=v_legend, show_in_legend=show))
-				elements.append(Curve(f"I_{cycle_num}", color=i_color,
-				                      yaxis=1, legend_label=i_legend, show_in_legend=show))
-				iv_elements.append(Curve(f"IV_{cycle_num}", color=i_color,
-				                         legend_label=i_legend, show_in_legend=show))
-				qv_elements.append(Curve(f"QV_{cycle_num}", color=i_color,
-				                         legend_label=q_legend, show_in_legend=show))
-				meas_idx_to_sources[meas_idx] = (f"V_{cycle_num}", f"I_{cycle_num}",
-				                                  f"IV_{cycle_num}", f"QV_{cycle_num}")
-
-			# Calculate expected limits for the overlay plot
-			v_margin = self.vmax * 0.1
-			xlim = (0, pattern_duration_meas)
-			ylim = (self.base_voltage - self.vmax - v_margin, self.base_voltage + self.vmax + v_margin)
-
-			runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
-				PlotDef("pund_fat", row=0, col=0, colspan=2,
-				        xlabel="Time (s)",
-				        ylabels=("Voltage (V)", "Current (uA)"),
-				        xlim=xlim,
-				        ylims=(ylim, None),
-				        elements=elements),
-				PlotDef("iv_loop", row=1, col=0,
-				        xlabel="Voltage (V)",
-				        ylabels=("Current (uA)",),
-				        elements=iv_elements),
-				PlotDef("qv_loop", row=1, col=1,
-				        xlabel="Voltage (V)",
-				        ylabels=("Charge (nC)",),
-				        elements=qv_elements),
-			], row_ratios=[2.0, 1.0])
-
-			# Poll for data and plot live
-			STATUS_COMPLETED = 10000
 			plotted_count = 0
 			data_ch1 = []
 			data_ch2 = []
+			read_start_times_s: dict[int, float] = {}
 			i_baseline_samples: dict[int, list] = {}
 			i_baseline: dict[int, float] = {}
-			q_accum: dict[int, float] = {}
-			last_t_per_cycle: dict[int, float] = {}
+			q_accum: dict[tuple[int, str], float] = {}
+			last_t_per_phase: dict[tuple[int, str], float] = {}
+			last_progress_time = time.monotonic()
 
 			while True:
 				self.check_stop(b1500)
-				status, elapsed, total = wgfmu.get_status()
-
-				# Get available measurement data
+				status, _elapsed, _total = wgfmu.get_status()
 				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
 				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
-				available = min(measured_1, measured_2)
+				available = min(measured_1, measured_2, expected_total)
 
-				# Fetch and plot new points
 				if available > plotted_count:
-					# Group points by measurement cycle for overlay plotting
-					cycle_batches: dict[int, dict] = {}
+					batches: dict[tuple[int, str], dict] = {}
 
-					for i in range(plotted_count, available):
+					for sample_index in range(plotted_count, available):
 						self.check_stop(b1500)
+						t_v, voltage = wgfmu.get_measure_value(self.channel_1, sample_index)
+						t_i, current = wgfmu.get_measure_value(self.channel_2, sample_index)
+						data_ch1.append((t_v, voltage))
+						data_ch2.append((t_i, current))
 
-						t_v, v = wgfmu.get_measure_value(self.channel_1, i)
-						t_i, cur = wgfmu.get_measure_value(self.channel_2, i)
-						data_ch1.append((t_v, v))
-						data_ch2.append((t_i, cur))
+						read_idx = sample_index // sample_points
+						sample_in_read = sample_index % sample_points
+						if sample_in_read == sample_points - 1:
+							self._report_fatigue_progress(read_cycles[read_idx])
+						timestamp = t_v if t_v is not None else t_i
+						if timestamp is None:
+							read_time_s = sample_in_read * sample_interval
+						else:
+							read_start_s = read_start_times_s.setdefault(read_idx, timestamp)
+							read_time_s = max(0.0, timestamp - read_start_s)
+						if read_idx >= len(read_cycles) or read_idx not in source_map:
+							continue
 
-						# Determine which measurement cycle this point belongs to
-						# Samples are contiguous by measured PUND cycle; split index into cycle and offset.
-						meas_idx = i // sample_points
-						sample_in_cycle = i % sample_points
+						phase = self._phase_for_time(read_time_s, phase_spans)
+						if phase is None:
+							continue
+						phase_key, _phase_label, _start, _end = phase
+						if phase_key not in source_map[read_idx]:
+							continue
 
-						# Only plot cycles in our display list
-						if meas_idx in cycles_to_plot_idx and meas_idx < len(measure_cycles):
-							rel_t = sample_in_cycle * sample_interval
+						batch_key = (read_idx, phase_key)
+						batch = batches.setdefault(batch_key, {'v': [], 'i': [], 'iv': [], 'qv': []})
+						batch['v'].append((read_time_s, voltage))
+						batch['i'].append((read_time_s, current * 1e6))
 
-							if meas_idx not in cycle_batches:
-								cycle_batches[meas_idx] = {'v': [], 'i': [], 'iv': [], 'qv': []}
-							cycle_batches[meas_idx]['v'].append((rel_t, v))
-							cycle_batches[meas_idx]['i'].append((rel_t, cur * 1e6))
+						if read_idx not in i_baseline:
+							samples = i_baseline_samples.setdefault(read_idx, [])
+							if len(samples) < 50:
+								samples.append(current)
+							if len(samples) == 50:
+								i_baseline[read_idx] = float(np.mean(samples))
 
-							# Accumulate first 50 samples per cycle for baseline
-							# Baseline correction is per measured cycle because leakage/drift can change with fatigue.
-							if meas_idx not in i_baseline:
-								samples = i_baseline_samples.setdefault(meas_idx, [])
-								if len(samples) < 50:
-									samples.append(cur)
-								if len(samples) == 50:
-									i_baseline[meas_idx] = float(np.mean(samples))
+						if read_idx in i_baseline:
+							current_adj = -(current - i_baseline[read_idx])
+							batch['iv'].append((voltage, current_adj * 1e6))
+							if batch_key not in q_accum:
+								q_accum[batch_key] = 0.0
+								last_t_per_phase[batch_key] = read_time_s
+							else:
+								dt = read_time_s - last_t_per_phase[batch_key]
+								if dt > 0:
+									q_accum[batch_key] += current_adj * dt
+								last_t_per_phase[batch_key] = read_time_s
+							batch['qv'].append((voltage, q_accum[batch_key] * 1e9))
 
-							# IV and QV use baseline-corrected current, only once baseline is ready
-							if meas_idx in i_baseline:
-								# Keep the same current sign convention as the plain PUND procedure.
-								cur_adj = -(cur - i_baseline[meas_idx])
-								cycle_batches[meas_idx]['iv'].append((v, cur_adj * 1e6))
-
-								if meas_idx not in q_accum:
-									q_accum[meas_idx] = 0.0
-									last_t_per_cycle[meas_idx] = rel_t
-								else:
-									dt = rel_t - last_t_per_cycle[meas_idx]
-									if dt > 0:
-										# Integrate corrected current to build the Q-V loop for this measured cycle.
-										q_accum[meas_idx] += cur_adj * dt
-									last_t_per_cycle[meas_idx] = rel_t
-								cycle_batches[meas_idx]['qv'].append((v, q_accum[meas_idx] * 1e9))
-
-					# Build batch update for all cycles
-					batch_update = {}
-					for meas_idx, batch_data in cycle_batches.items():
-						if meas_idx in meas_idx_to_sources:
-							v_source, i_source, iv_source, qv_source = meas_idx_to_sources[meas_idx]
-							batch_update[v_source] = batch_data['v']
-							batch_update[i_source] = batch_data['i']
-							batch_update[iv_source] = batch_data['iv']
-							batch_update[qv_source] = batch_data['qv']
-
-					if batch_update:
-						runner.plot.append_batch(batch_update)
+					plot_batch = {}
+					for (read_idx, phase_key), batch in batches.items():
+						v_source, i_source, iv_source, qv_source = source_map[read_idx][phase_key]
+						plot_batch[v_source] = batch['v']
+						plot_batch[i_source] = batch['i']
+						plot_batch[iv_source] = batch['iv']
+						plot_batch[qv_source] = batch['qv']
+					if plot_batch:
+						self.runner.plot.append_batch(plot_batch)
 
 					plotted_count = available
-					self.check_stop(b1500)
+					last_progress_time = time.monotonic()
+					continue
 
-				if status == STATUS_COMPLETED:
-					break
+				if status == self.STATUS_COMPLETED:
+					if plotted_count >= expected_total:
+						break
+					if (time.monotonic() - last_progress_time) > self.POST_COMPLETION_DRAIN_TIMEOUT_S:
+						self.log(
+							"Warning: WGFMU completed before all read samples were available "
+							f"({plotted_count}/{expected_total} samples)."
+						)
+						break
 
 				time.sleep(0.05)
 
-			# Build data arrays from collected points
-			data = [data_ch1, data_ch2]
-
-			# Save data: each measurement point is sample_points samples
-			# Group by measurement cycle
 			all_rows = []
-			for meas_idx, cycle_num in enumerate(measure_cycles):
-				# Reattach the physical cycle number to each contiguous block of returned WGFMU samples.
-				offset = meas_idx * sample_points
+			for read_idx, cycle_num in enumerate(read_cycles):
+				offset = read_idx * sample_points
 				for i in range(sample_points):
-					if offset + i < len(data[0]) and offset + i < len(data[1]):
-						t_v, voltage = data[0][offset + i]
-						t_i, current = data[1][offset + i]
-						all_rows.append([cycle_num, t_v, voltage, current])
+					row_idx = offset + i
+					if row_idx < len(data_ch1) and row_idx < len(data_ch2):
+						t_v, voltage = data_ch1[row_idx]
+						t_i, current = data_ch2[row_idx]
+						timestamp = t_v if t_v is not None else t_i
+						all_rows.append([cycle_num, timestamp, voltage, current])
 
-			if all_rows:
-				self.save_measurement_outputs(
-					all_rows,
-					"PUND_Fatigue",
-					device,
-					["Cycle", "Time_s", "Voltage_V", "Current_A"],
-					plot_suffix="_overlay.png",
-					save_plot=bool(measure_cycles),
-				)
+			self.save_measurement_outputs(
+				all_rows,
+				"PUND_Fatigue",
+				device,
+				["Cycle", "Time_s", "Voltage_V", "Current_A"],
+				plot_suffix="_overlay.png",
+				save_plot=bool(all_rows),
+			)
 
-			self.log(f"PUND Fatigue complete: {self.cycle_count:.2e} cycles, {len(measure_cycles)} measurements")
+			self.log(
+				f"PUND Fatigue complete: {self.fatigue_count_int:.2e} cycles, "
+				f"{len(read_cycles)} reads, {len(all_rows)} samples"
+			)
 
 		finally:
 			try:
