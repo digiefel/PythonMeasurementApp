@@ -81,21 +81,6 @@ def phase_compensated(cmu_calibration, channel) -> bool:
     return bool(result)
 
 
-def rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
-    """Compute parallel-RC equivalent from impedance magnitude and phase angle.
-
-    Returns (Rp, Cp) in Ohm and Farad respectively, or (nan, nan) on degenerate input.
-    """
-    theta_rad = math.radians(theta) if is_degrees else theta
-    omega = 2.0 * math.pi * freq
-    cos_t = math.cos(theta_rad)
-    sin_t = math.sin(theta_rad)
-    if abs(cos_t) < 1e-15 or abs(Z) < 1e-30 or omega < 1e-15:
-        return float('nan'), float('nan')
-    # Convert the series-like Z/theta stream into the parallel RC values users usually inspect.
-    return Z / cos_t, -sin_t / (omega * Z)
-
-
 def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict[str, float]:
     """Equivalent-circuit pairs from |Z| and phase: Z'-Z'' ("zre", "zim"), Rp-Cp, Rs-Cs, G-B.
 
