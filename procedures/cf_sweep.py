@@ -1,7 +1,7 @@
 import math
 
 from plotting import PlotDef, Curve
-from procedures.base import Choice, MeasurementProcedure, parameter
+from procedures.base import Choice, MeasurementProcedure, ValueList, parameter
 from procedures._cmu import (
     calibrated_frequencies,
     freq_label,
@@ -65,7 +65,7 @@ class CfSweepProcedure(MeasurementProcedure):
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('cmu_channel', 'CMU Channel', -1, Choice(B1500_CMU_CHANNELS, int)),
         parameter('cmu_mode', 'C-f Meas Output', B1500_CMUM_Z_TDEG, Choice(B1500_CMU_MEASUREMENT_MODES, int), help='Selects the impedance representation returned by the CMU. Z–Theta modes also produce derived parallel resistance and capacitance plots.'),
-        parameter('biases', 'DC Biases (V)', '0', str, help="Comma-separated DC bias values in volts, e.g. '-1, 0, 1'. One frequency sweep per bias, run in the order typed."),
+        parameter('biases', 'DC Biases (V)', '0', ValueList, help="Comma-separated DC bias values in volts, e.g. '-1, 0, 1'. One frequency sweep per bias, run in the order typed."),
         parameter('start_frequency', 'Start Frequency (Hz)', '1k', str, help="SI prefixes are accepted, e.g. '1k'. Range 1 kHz to 5 MHz."),
         parameter('stop_frequency', 'Stop Frequency (Hz)', '5M', str, help="SI prefixes are accepted, e.g. '5M'. Range 1 kHz to 5 MHz."),
         parameter('points', 'Points', 51, int, help='Frequency points per bias, 1 to 1001.'),

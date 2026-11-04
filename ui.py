@@ -14,6 +14,7 @@ from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
 from ui_site_selection import SiteSelectionDialog
 from ui_light_settings import show_light_settings
+from ui_list_builder import show_list_builder
 from data_management import selection_annotations
 
 from config import Config
@@ -38,7 +39,7 @@ from instrumentio.descriptors import describe_data_type, describe_data_type_shor
 from runner import MeasurementAbortRequested, MeasurementSkipRequested, MeasurementRunner
 from instrumentio.bridge import InstrumentCancelled, InstrumentError
 from procedures import load_procedures
-from procedures.base import Choice, OptionalSMU, SMU, SMUOrGNDU, WGFMUChannel
+from procedures.base import Choice, OptionalSMU, SMU, SMUOrGNDU, ValueList, WGFMUChannel
 from tooltip_helper import attach_tooltip
 from ui_smu_calibration import calibrate_smus
 from plotting import PlotBridge
@@ -1126,6 +1127,21 @@ class MainUI:
                     values = [label_val] + values
                 combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
                 combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                self.param_vars[key] = (var, param)
+            elif kind is ValueList:
+                # Typed lists stay editable; the button fills the field with evenly spaced values.
+                var = tk.StringVar(value=str(val))
+                list_frame = ttk.Frame(self.params_frame)
+                list_frame.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                list_frame.grid_columnconfigure(0, weight=1)
+                ttk.Entry(list_frame, textvariable=var).grid(row=0, column=0, sticky="ew")
+                build_button = ttk.Button(
+                    list_frame, text="…", width=2,
+                    command=lambda v=var, title=label: show_list_builder(self.root, v, title),
+                )
+                build_button.grid(row=0, column=1, padx=(4, 0))
+                attach_tooltip(build_button, "Build an evenly spaced list")
+                self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
             elif isinstance(kind, Choice):
                 options = self._choice_options_for_param(proc_name, param)

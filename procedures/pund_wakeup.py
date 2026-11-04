@@ -10,7 +10,7 @@ import time
 import numpy as np
 
 from plotting import PlotDef, Curve
-from procedures.base import Choice, MeasurementProcedure, WGFMUChannel, parameter
+from procedures.base import Choice, MeasurementProcedure, ValueList, WGFMUChannel, parameter
 from instrumentio.codes import (
     WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
     WGFMU_MEASURE_ENABLED_ENABLE,
@@ -33,7 +33,7 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
         parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
         parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
-        parameter('vmax', 'List of Vmax values (V)', "1.0, 1.5, 2.0", str),
+        parameter('vmax', 'List of Vmax values (V)', "1.0, 1.5, 2.0", ValueList),
         parameter('base_voltage', 'Base Voltage (V)', 0.0, float), # baseline voltage: V = V_base +- V_max
         parameter('hold_base', 'Hold Base V continuously', True, bool), # hold baseline for the entire time?
         parameter('fatigue_freq', 'Fatigue Frequency (Hz)', 1e3, float), # inverse duration of the fatigue pulses

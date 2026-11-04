@@ -104,6 +104,17 @@ class WGFMUChannel:
         return cls.coerce(WGFMU_CHANNEL_MAP.get(ui_value, ui_value))
 
 
+class ValueList:
+    """A list of numbers typed as text, e.g. '1u, 10u, 100u' (SI prefixes allowed).
+
+    The form shows a list builder button beside the field. Procedures receive the
+    text unchanged and read the numbers with ``si_utils.parse_si_list``.
+    """
+    @staticmethod
+    def coerce(value):
+        return str(value)
+
+
 @dataclass(frozen=True)
 class ProcedureParameter:
     """One setting: UI field, runtime value, CSV metadata and hover help.
@@ -208,7 +219,7 @@ class MeasurementProcedure(ABC):
             return float(value)
         if kind is str:
             return str(value)
-        if kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel):
+        if kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel, ValueList):
             return kind.coerce(value)
         if isinstance(kind, Choice):
             return kind.coerce(value)

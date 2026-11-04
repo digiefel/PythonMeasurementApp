@@ -1,7 +1,7 @@
 import math
 
 from plotting import PlotDef, Curve
-from procedures.base import Choice, MeasurementProcedure, parameter, action
+from procedures.base import Choice, MeasurementProcedure, ValueList, parameter, action
 from instrumentio.constants import (
     B1500_CMU_CHANNELS,
     B1500_CMU_INTEGRATION_MODES,
@@ -77,7 +77,7 @@ class CVSweepProcedure(MeasurementProcedure):
         parameter('points', 'Points', 101, int),
         parameter('measurement_range', 'MFCMU Meas Range', B1500_AUTO_RANGE, Choice(B1500_CMU_SWEEP_RANGES, float)),
         parameter('ac_level_mv', 'AC Level (mV)', 30.0, float, help='AC excitation superimposed on the swept DC bias for impedance measurement.'),
-        parameter('frequencies', 'Frequencies', '100k', str, help="Comma-separated frequencies in Hz; SI prefixes are accepted, e.g. '10k, 100k, 1M'. One sweep per frequency."),
+        parameter('frequencies', 'Frequencies', '100k', ValueList, help="Comma-separated frequencies in Hz; SI prefixes are accepted, e.g. '10k, 100k, 1M'. One sweep per frequency."),
         parameter('integration_mode', 'Integration Mode', 0, Choice(B1500_CMU_INTEGRATION_MODES, int)),
         parameter('integration_value', 'Integration (manual/PLC)', 1, int, help='In PLC mode, integration lasts this many power line cycles. One PLC is 20 ms at 50 Hz.'),
         parameter('hold_time', 'Hold Time (s)', 0.0, float),
