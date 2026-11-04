@@ -67,15 +67,21 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
 		parameter('channel_1', 'WGFMU Channel 1 (PG Vmeas)', 101, WGFMUChannel),
 		parameter('channel_2', 'WGFMU Channel 2 (FastIV Imeas)', 102, WGFMUChannel),
-		parameter('vmax', 'Pulse Amplitude (V)', 1.0, float),
-        parameter('base_voltage', 'Base Voltage (V)', 0.0, float), # baseline voltage: V = V_base +- V_max
+		parameter('v_pos', 'Vpos (V)', 1.0, float,
+		          help='Peak voltage of the positive pulses, absolute (not added to Vbase).'),
+		parameter('v_base', 'Vbase (V)', 0.0, float,
+		          help='Voltage between pulses.'),
+		parameter('v_neg', 'Vneg (V)', -1.0, float,
+		          help='Peak voltage of the negative pulses, absolute (not added to Vbase).'),
         parameter('hold_base', 'Hold Base V continuously', True, bool), # hold baseline for the entire time?
-		parameter('fatigue_freq', 'Fatigue Frequency (Hz)', 1e4, float), # inverse duration of the fatigue pulses
+		parameter('fatigue_freq', 'Fatigue Frequency (Hz)', 1e4, float,
+		          help='Square: each level lasts 1/f. Triangle and PUND: sets the ramp speed; the tallest pulse lasts as long as at this frequency.'),
         parameter('fatigue_delay', 'Fatigue Cycle Delay (s)', 0.0, float), # wait time between fatigue pulses
 		parameter('fatigue_count', 'Fatigue Cycle Count', 1e6, float), # total fatigue cycle count
 		parameter('fatigue_pulse_type', 'Type of Fatigue Cycle', 'square',
             Choice((('square', 'Square'), ('triangle', 'Triangle'), ('pund', 'PUND')))),
-        parameter('read_pulse_freq', 'Read Frequency (Hz)', 1e4, float), # inverse duration of the read pulses
+        parameter('read_pulse_freq', 'Read Frequency (Hz)', 1e4, float,
+                  help='Sets the ramp speed of the read pulses; the tallest pulse lasts as long as at this frequency.'),
         parameter('read_pulse_type', 'Type of Read Cycle', 'pund',
                   Choice((('pund', 'PUND'), ('pn', 'PN'), ('both', 'PN+PUND')))),
 		parameter('reads_per_decade', 'Read Cycles per Decade', 10, int),
@@ -98,11 +104,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
 		super().__init__(settings, output_root, output_relative, runner, fallback_root)
 		self.fatigue_count_int = int(float(self.fatigue_count))
+		# The tallest pulse height. Triangular pulses all ramp at the slew rate this height gets at the set frequency.
+		self.vmax = max(abs(self.v_pos - self.v_base), abs(self.v_neg - self.v_base))
 		self._validate_settings()
 
 	def _validate_settings(self):
 		if self.vmax == 0.0:
-			raise ValueError("vmax must be non-zero. Use a negative value to invert polarity.")
+			raise ValueError("Vpos or Vneg must differ from Vbase.")
 		if self.fatigue_freq <= 0:
 			raise ValueError("fatigue_freq must be > 0")
 		if self.read_pulse_freq <= 0:
@@ -119,13 +127,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			raise ValueError(f"Invalid read_pulse_type: {self.read_pulse_type!r}")
 
 	def _idle_voltage(self):
-		return self.base_voltage if self.hold_base else 0.0
-
-	def _positive_level(self):
-		return self.base_voltage + self.vmax
-
-	def _negative_level(self):
-		return self.base_voltage - self.vmax
+		return self.v_base if self.hold_base else 0.0
 
 	def _append_square_level(self, vectors, level, duration):
 		"""Append a fast transition to level followed by a constant hold."""
@@ -145,8 +147,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		"""Square PN fatigue cycle: positive segment, negative segment, optional idle delay."""
 		segment = 1.0 / self.fatigue_freq
 		vectors = []
-		self._append_square_level(vectors, self._positive_level(), segment)
-		self._append_square_level(vectors, self._negative_level(), segment)
+		self._append_square_level(vectors, self.v_pos, segment)
+		self._append_square_level(vectors, self.v_neg, segment)
 		self._append_idle_hold(vectors, self.fatigue_delay)
 		return vectors
 
@@ -157,31 +159,38 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		return vectors
 
 	def _build_triangular_pulse_vectors(self, frequency, signs):
-		"""Triangular PUND timing: ramp out, ramp back, base hold."""
+		"""Triangular PUND timing: ramp out, ramp back, base hold.
+
+		The tallest pulse ramps for 0.4T each way; shorter pulses ramp at the same speed.
+		"""
 		T = 1.0 / frequency
-		pulse_width = 0.4 * T
 		gap = 0.2 * T
 		edge = 0.1 * T
 
-		vectors = [(edge, self.base_voltage)]
+		vectors = [(edge, self.v_base)]
 		for sign in signs:
+			level = self.v_pos if sign > 0 else self.v_neg
+			ramp = 0.4 * T * abs(level - self.v_base) / self.vmax
 			vectors += [
-				(pulse_width, self._positive_level() if sign > 0 else self._negative_level()),
-				(pulse_width, self.base_voltage),
-				(gap, self.base_voltage),
+				(ramp, level),
+				(ramp, self.v_base),
+				(gap, self.v_base),
 			]
 		vectors[-1] = (edge, self._idle_voltage())
 		return vectors
 
 	def _build_triangular_pn_vectors(self, frequency):
-		"""Triangular PN pulses with idle only before and after the PN pair."""
+		"""Triangular PN pulses with idle only before and after the PN pair.
+
+		The tallest pulse ramps for 0.5T each way; shorter pulses ramp at the same speed.
+		"""
 		T = 1.0 / frequency
 		edge = 0.1 * T
-		half_period = 0.5 / frequency
-		vectors = [(edge, self.base_voltage)]
-		for level in (self._positive_level(), self._negative_level()):
-			vectors.append((half_period, level))
-			vectors.append((half_period, self.base_voltage))
+		vectors = [(edge, self.v_base)]
+		for level in (self.v_pos, self.v_neg):
+			ramp = 0.5 * T * abs(level - self.v_base) / self.vmax
+			vectors.append((ramp, level))
+			vectors.append((ramp, self.v_base))
 		vectors.append((edge, self._idle_voltage()))
 		return vectors
 
@@ -383,10 +392,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				                         legend_label=series_label, show_in_legend=show))
 				source_map[read_idx][phase_key] = (v_source, i_source, iv_source, qv_source)
 
-		max_abs_v = abs(self.vmax)
-		v_margin = max(max_abs_v * 0.1, 0.1)
-		y_min = min(0.0, self.base_voltage - max_abs_v) - v_margin
-		y_max = max(0.0, self.base_voltage + max_abs_v) + v_margin
+		v_margin = max(self.vmax * 0.1, 0.1)
+		y_min = min(0.0, self.v_pos, self.v_neg, self.v_base) - v_margin
+		y_max = max(0.0, self.v_pos, self.v_neg, self.v_base) + v_margin
 
 		self.runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', [
 			PlotDef("pund_fat", row=0, col=0, colspan=2,
@@ -447,7 +455,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self.log(f"Starting PUND Fatigue on {device.name}")
 		self.log(
 			f"  {self.fatigue_count_int:.2e} {self.fatigue_pulse_type} fatigue cycles, "
-			f"Vmax={self.vmax:g} V, reads={len(read_cycles)}"
+			f"Vpos={self.v_pos:g} V, Vbase={self.v_base:g} V, Vneg={self.v_neg:g} V, reads={len(read_cycles)}"
 		)
 		self.log(
 			f"  Fatigue duration/cycle: {fatigue_duration:.6g} s, "
