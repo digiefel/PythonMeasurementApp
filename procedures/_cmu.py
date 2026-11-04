@@ -1,0 +1,105 @@
+"""Shared helpers for CMU (impedance) procedures: CVSweep and CfSweep."""
+
+import math
+
+from instrumentio.constants import B1500_CMU_CHANNELS
+from instrumentio.descriptors import describe_status_bits
+from si_utils import format_si_value
+
+
+def freq_label(freq_hz):
+    return f"{format_si_value(freq_hz)}Hz"
+
+
+def freq_key(freq_hz) -> str:
+    # Use stable text keys for calibration JSON; raw float strings can differ by representation.
+    return f"{float(freq_hz):.12g}"
+
+
+def resolve_cmu_channel(settings, channel, log=None) -> int:
+    """Return the CMU slot to use: the requested one if installed, else the first installed CMU.
+
+    `settings['b1500']['module_inventory']` lists installed modules when the
+    instrument has been discovered; without it, -1 (auto) maps to the first known CMU slot.
+    """
+    discovered = []
+    b1500_cfg = settings.get("b1500", {}) or {}
+    for module in b1500_cfg.get("module_inventory") or []:
+        if not isinstance(module, dict) or module.get("kind") != "CMU":
+            continue
+        try:
+            discovered.append(int(module.get("channel", module.get("slot"))))
+        except (TypeError, ValueError):
+            continue
+
+    replacement = None
+    if discovered and channel not in discovered:
+        replacement = sorted(set(discovered))[0]
+    elif channel == -1 and B1500_CMU_CHANNELS:
+        replacement = int(B1500_CMU_CHANNELS[0][0])
+
+    if replacement is None:
+        return channel
+    if replacement != channel and log is not None:
+        log(f"CMU channel auto -> slot {replacement} (was {channel})")
+    return replacement
+
+
+def calibrated_frequencies(cmu_calibration, channel) -> dict[str, list[float]]:
+    """Return the sorted frequencies with stored open/short/load correction data on a channel."""
+    channel_data = (cmu_calibration or {}).get(str(channel), {})
+    result = {}
+    for corr_type in ("open", "short", "load"):
+        entry = channel_data.get(corr_type, {})
+        freqs = set()
+        if isinstance(entry, dict):
+            # Calibration data can be stored as a per-frequency map or as an older single-frequency entry.
+            by_freq = entry.get("results_by_frequency", {})
+            raw = list(by_freq.keys()) if isinstance(by_freq, dict) and by_freq else [entry.get("frequency_hz")]
+            for value in raw:
+                try:
+                    freqs.add(float(value))
+                except (TypeError, ValueError):
+                    continue
+        result[corr_type] = sorted(freqs)
+    return result
+
+
+def phase_compensated(cmu_calibration, channel) -> bool:
+    entry = (cmu_calibration or {}).get(str(channel), {}).get("phase")
+    if not isinstance(entry, dict):
+        return False
+    result = entry.get("result")
+    if isinstance(result, dict):
+        try:
+            # Newer phase entries store the instrument return code under result.result; zero means OK.
+            return int(result.get("result", 0)) == 0
+        except Exception:
+            return False
+    return bool(result)
+
+
+def rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
+    """Compute parallel-RC equivalent from impedance magnitude and phase angle.
+
+    Returns (Rp, Cp) in Ohm and Farad respectively, or (nan, nan) on degenerate input.
+    """
+    theta_rad = math.radians(theta) if is_degrees else theta
+    omega = 2.0 * math.pi * freq
+    cos_t = math.cos(theta_rad)
+    sin_t = math.sin(theta_rad)
+    if abs(cos_t) < 1e-15 or abs(Z) < 1e-30 or omega < 1e-15:
+        return float('nan'), float('nan')
+    # Convert the series-like Z/theta stream into the parallel RC values users usually inspect.
+    return Z / cos_t, -sin_t / (omega * Z)
+
+
+def report_cmu_status(runner, channel, seen, s1, s2):
+    # CMU streaming reports para1/para2 status separately; report each unique status once to the UI.
+    for data_type, status in ((8, s1), (9, s2)):
+        if status and (channel, data_type, status) not in seen:
+            seen.add((channel, data_type, status))
+            runner.report_status({
+                "channel": channel, "data_type": data_type, "status": status,
+                "desc": describe_status_bits(status),
+            })

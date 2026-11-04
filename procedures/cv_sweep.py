@@ -20,12 +20,20 @@ from instrumentio.codes import (
     B1500_SWP_VF_SGLLIN,
 )
 from instrumentio.descriptors import (
-    describe_status_bits,
     format_cmu_component_label,
     get_cmu_mode_components,
     get_cmu_mode_name,
 )
-from si_utils import parse_si_list, format_si_value
+from procedures._cmu import (
+    calibrated_frequencies,
+    freq_key,
+    freq_label,
+    phase_compensated,
+    report_cmu_status,
+    resolve_cmu_channel,
+    rp_cp_from_z_theta,
+)
+from si_utils import parse_si_list
 
 
 CV_SWEEP_TYPES = (
@@ -92,91 +100,24 @@ class CVSweepProcedure(MeasurementProcedure):
         if 'frequencies' not in settings and 'frequency_hz' in settings:
             settings['frequencies'] = str(settings['frequency_hz'])
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
-        self._resolve_default_cmu_channel()
+        self.cmu_channel = resolve_cmu_channel(
+            self.settings, self.cmu_channel, self.log if runner is not None else None)
+        self.settings['cmu_channel'] = self.cmu_channel
         self.frequencies = self._parse_frequencies(self.settings.get('frequencies', '100k'))
         self.ac_level = self.ac_level_mv / 1000.0
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
         self._validate_settings()
 
-    def _resolve_default_cmu_channel(self):
-        discovered = []
-        b1500_cfg = self.settings.get("b1500", {}) or {}
-        for module in b1500_cfg.get("module_inventory") or []:
-            if not isinstance(module, dict) or module.get("kind") != "CMU":
-                continue
-            try:
-                discovered.append(int(module.get("channel", module.get("slot"))))
-            except (TypeError, ValueError):
-                continue
-
-        replacement = None
-        if discovered and self.cmu_channel not in discovered:
-            replacement = sorted(set(discovered))[0]
-        elif self.cmu_channel == -1 and B1500_CMU_CHANNELS:
-            replacement = int(B1500_CMU_CHANNELS[0][0])
-
-        if replacement is not None:
-            old_channel = self.cmu_channel
-            self.cmu_channel = replacement
-            self.settings['cmu_channel'] = replacement
-            if old_channel != replacement and self.runner is not None:
-                self.log(f"CMU channel auto -> slot {replacement} (was {old_channel})")
-
-    @staticmethod
-    def _freq_key(freq_hz: float) -> str:
-        # Use stable text keys for calibration JSON; raw float strings can differ by representation.
-        return f"{float(freq_hz):.12g}"
-
-    def _entry_freq_keys(self, entry: dict) -> set[str]:
-        if not isinstance(entry, dict):
-            return set()
-        # Calibration data can be stored as a per-frequency map or as an older single-frequency entry.
-        by_freq = entry.get("results_by_frequency", {})
-        if isinstance(by_freq, dict) and by_freq:
-            keys = set()
-            for fk in by_freq.keys():
-                try:
-                    keys.add(self._freq_key(float(fk)))
-                except Exception:
-                    continue
-            return keys
-        freq_hz = entry.get("frequency_hz")
-        if freq_hz is None:
-            return set()
-        try:
-            return {self._freq_key(float(freq_hz))}
-        except Exception:
-            return set()
-
-    def _phase_entry_valid(self, entry: dict) -> bool:
-        if not isinstance(entry, dict):
-            return False
-        result = entry.get("result")
-        if isinstance(result, dict):
-            try:
-                # Newer phase entries store the instrument return code under result.result; zero means OK.
-                return int(result.get("result", 0)) == 0
-            except Exception:
-                return False
-        return bool(result)
-
     def _calibration_gaps(self):
         """Return missing calibration coverage by type for current channel/frequencies."""
-        channel_data = self.cmu_calibration.get(str(self.cmu_channel), {})
         # Coverage is checked per selected frequency because CMU open/short/load corrections are frequency-specific.
-        selected_keys = {self._freq_key(f) for f in self.frequencies}
-
+        selected_keys = {freq_key(f) for f in self.frequencies}
+        calibrated = calibrated_frequencies(self.cmu_calibration, self.cmu_channel)
         missing = {
-            "open": set(selected_keys),
-            "short": set(selected_keys),
-            "load": set(selected_keys),
-            "phase": not self._phase_entry_valid(channel_data.get("phase")),
+            corr_type: selected_keys - {freq_key(f) for f in calibrated[corr_type]}
+            for corr_type in ("open", "short", "load")
         }
-
-        for corr_type in ("open", "short", "load"):
-            present = self._entry_freq_keys(channel_data.get(corr_type, {}))
-            missing[corr_type] = selected_keys - present
-
+        missing["phase"] = not phase_compensated(self.cmu_calibration, self.cmu_channel)
         return missing
 
     def _report_calibration_coverage(self):
@@ -187,7 +128,7 @@ class CVSweepProcedure(MeasurementProcedure):
             if not miss:
                 continue
             freq_list = sorted(float(k) for k in miss)
-            labels = ", ".join(self._freq_label(f) for f in freq_list)
+            labels = ", ".join(freq_label(f) for f in freq_list)
             msgs.append(f"{corr_type}: [{labels}]")
         if missing["phase"]:
             msgs.append("phase: missing")
@@ -214,10 +155,6 @@ class CVSweepProcedure(MeasurementProcedure):
             if not (1e3 <= f <= 5e6):
                 raise ValueError(f"Frequency {f:.6g} Hz out of range [1 kHz, 5 MHz].")
         return freqs
-
-    @staticmethod
-    def _freq_label(freq_hz):
-        return f"{format_si_value(freq_hz)}Hz"
 
     def _validate_settings(self):
         if self.sweep_type not in ('single', 'double', 'butterfly'):
@@ -270,21 +207,6 @@ class CVSweepProcedure(MeasurementProcedure):
     def _is_z_theta_mode(self) -> bool:
         return self.cmu_mode in (B1500_CMUM_Z_TDEG, B1500_CMUM_Z_TRAD)
 
-    @staticmethod
-    def _rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
-        """Compute parallel-RC equivalent from impedance magnitude and phase angle.
-
-        Returns (Rp, Cp) in Ohm and Farad respectively, or (nan, nan) on degenerate input.
-        """
-        theta_rad = math.radians(theta) if is_degrees else theta
-        omega = 2.0 * math.pi * freq
-        cos_t = math.cos(theta_rad)
-        sin_t = math.sin(theta_rad)
-        if abs(cos_t) < 1e-15 or abs(Z) < 1e-30 or omega < 1e-15:
-            return float('nan'), float('nan')
-        # Convert the series-like Z/theta stream into the parallel RC values users usually inspect.
-        return Z / cos_t, -sin_t / (omega * Z)
-
     def measure(self, device):
         b1500 = self.b1500
         self._report_calibration_coverage()
@@ -292,7 +214,7 @@ class CVSweepProcedure(MeasurementProcedure):
         primary_label = format_cmu_component_label(primary_name)
         monitor_label = format_cmu_component_label(monitor_name)
 
-        freq_str = ", ".join(self._freq_label(f) for f in self.frequencies)
+        freq_str = ", ".join(freq_label(f) for f in self.frequencies)
         self.log(f"Starting C-V sweep on {device.name}")
         self.log(
             f"CMU setup: channel={self.cmu_channel}, output={get_cmu_mode_name(self.cmu_mode)}, "
@@ -350,7 +272,7 @@ class CVSweepProcedure(MeasurementProcedure):
             elements_z, elements_theta, elements_rp, elements_cp = [], [], [], []
             for i, freq in enumerate(self.frequencies):
                 color = f'C{i % 10}'
-                tag = self._freq_label(freq)
+                tag = freq_label(freq)
                 elements_z.append(    Curve(f"z_{tag}",     color=color, legend_label=f"Z @ {tag}"))
                 elements_theta.append(Curve(f"theta_{tag}", color=color, legend_label=f"θ @ {tag}"))
                 elements_rp.append(   Curve(f"rp_{tag}",    color=color, legend_label=f"Rp @ {tag}"))
@@ -373,7 +295,7 @@ class CVSweepProcedure(MeasurementProcedure):
             elements = []
             for i, freq in enumerate(self.frequencies):
                 color = f'C{i % 10}'
-                tag = self._freq_label(freq)
+                tag = freq_label(freq)
                 elements.append(Curve(f"p_{tag}", color=color, line_style="solid",
                                       legend_label=f"{primary_label} @ {tag}"))
                 elements.append(Curve(f"m_{tag}", color=color, line_style="dash", yaxis=1,
@@ -398,7 +320,7 @@ class CVSweepProcedure(MeasurementProcedure):
             for index, freq in enumerate(self.frequencies, start=1):
                 self.check_stop(b1500)
                 b1500.set_cmu_freq(self.cmu_channel, freq)
-                tag = self._freq_label(freq)
+                tag = freq_label(freq)
 
                 # Plot source names are frequency-tagged so multiple frequency sweeps can share one figure.
                 if is_z_theta:
@@ -478,10 +400,10 @@ class CVSweepProcedure(MeasurementProcedure):
             self.check_stop(b1500)
             self.runner.plot.append_point(p_source, source_v, para1)
             self.runner.plot.append_point(m_source, source_v, para2)
-            self._report_status(nonzero_statuses, s1, s2)
+            report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
             if rp_source is not None:
                 # Only Z-theta sweeps have derived Rp/Cp columns and plot traces.
-                rp, cp = self._rp_cp_from_z_theta(para1, para2, freq, is_degrees)
+                rp, cp = rp_cp_from_z_theta(para1, para2, freq, is_degrees)
                 if math.isfinite(rp):
                     self.runner.plot.append_point(rp_source, source_v, rp)
                 if math.isfinite(cp):
@@ -519,9 +441,9 @@ class CVSweepProcedure(MeasurementProcedure):
                 self.check_stop(b1500)
                 self.runner.plot.append_point(p_source, source_v, para1)
                 self.runner.plot.append_point(m_source, source_v, para2)
-                self._report_status(nonzero_statuses, s1, s2)
+                report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
                 if rp_source is not None:
-                    rp, cp = self._rp_cp_from_z_theta(para1, para2, freq, is_degrees)
+                    rp, cp = rp_cp_from_z_theta(para1, para2, freq, is_degrees)
                     if math.isfinite(rp):
                         self.runner.plot.append_point(rp_source, source_v, rp)
                     if math.isfinite(cp):
@@ -533,18 +455,3 @@ class CVSweepProcedure(MeasurementProcedure):
             b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, npts, on_point)
 
         return rows
-
-    def _report_status(self, seen, s1, s2):
-        # CMU streaming reports para1/para2 status separately; report each unique status once to the UI.
-        if s1 and (self.cmu_channel, 8, s1) not in seen:
-            seen.add((self.cmu_channel, 8, s1))
-            self.runner.report_status({
-                "channel": self.cmu_channel, "data_type": 8, "status": s1,
-                "desc": describe_status_bits(s1),
-            })
-        if s2 and (self.cmu_channel, 9, s2) not in seen:
-            seen.add((self.cmu_channel, 9, s2))
-            self.runner.report_status({
-                "channel": self.cmu_channel, "data_type": 9, "status": s2,
-                "desc": describe_status_bits(s2),
-            })
