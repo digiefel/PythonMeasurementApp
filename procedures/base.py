@@ -185,6 +185,10 @@ class MeasurementProcedure(ABC):
 
     @classmethod
     def ui_actions(cls) -> tuple[ProcedureAction, ...]:
+        # Every WGFMU procedure can draw the patterns it would send, without changes of its own.
+        if any(param.kind is WGFMUChannel for param in cls.PARAMETERS):
+            return (*cls.UI_ACTIONS, action("Preview Waveform", "_on_preview_wgfmu",
+                                            tooltip="Draw the WGFMU patterns these settings send"))
         return cls.UI_ACTIONS
 
     def _apply_declared_settings(self):

@@ -15,6 +15,7 @@ from ui_device_selection import DeviceSelectionDialog
 from ui_site_selection import SiteSelectionDialog
 from ui_light_settings import show_light_settings
 from ui_list_builder import show_list_builder
+from ui_wgfmu_preview import show_wgfmu_preview
 from data_management import selection_annotations
 
 from config import Config
@@ -1529,6 +1530,13 @@ class MainUI:
         self._run_thread = None
         self._set_running_state(False)
         self._set_cv_calibration_buttons_enabled(True)
+
+    def _on_preview_wgfmu(self):
+        # The preview takes over the plot window, so it would hide a running measurement's plot.
+        if self._is_running():
+            messagebox.showwarning("Waveform Preview", "A run is in progress. Stop the run before previewing.")
+            return
+        show_wgfmu_preview(self)
 
     def _on_cv_calibration_button(self, cal_type: str):
         if self._connection_busy or not self._b1500_available():

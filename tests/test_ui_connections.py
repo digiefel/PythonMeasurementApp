@@ -20,6 +20,7 @@ def load_ui():
         'ui_site_selection': SimpleNamespace(SiteSelectionDialog=Mock()),
         'ui_light_settings': SimpleNamespace(show_light_settings=Mock()),
         'ui_list_builder': SimpleNamespace(show_list_builder=Mock()),
+        'ui_wgfmu_preview': SimpleNamespace(show_wgfmu_preview=Mock()),
         'tooltip_helper': SimpleNamespace(attach_tooltip=Mock()),
         'prober': SimpleNamespace(ProberController=Mock()),
         'plotting': SimpleNamespace(PlotBridge=Mock()),
