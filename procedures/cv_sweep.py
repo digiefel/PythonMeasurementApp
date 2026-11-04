@@ -244,7 +244,8 @@ class CVSweepProcedure(MeasurementProcedure):
         labels = [freq_label(freq) for freq in self.frequencies]
         if self._is_z_theta_mode():
             self.runner.configure_plot(f"C-V Sweep - {device.name}",
-                                       z_theta_plots(labels, "Bias (V)", "linear",
+                                       z_theta_plots(labels, [f"C{i % 10}" for i in range(len(labels))],
+                                                     "Bias (V)", "linear",
                                                      self.cmu_mode == B1500_CMUM_Z_TDEG))
         else:
             # Other CMU modes stream two named parameters directly from the B1500 descriptor table.

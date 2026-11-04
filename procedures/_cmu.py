@@ -103,15 +103,18 @@ def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict
     }
 
 
-def z_theta_plots(labels, xlabel, xscale, is_degrees) -> list[PlotDef]:
+def z_theta_plots(labels, colors, xlabel, xscale, is_degrees) -> list[PlotDef]:
     """Plot layout for Z-theta sweeps, with one curve per entry of labels in every panel.
+
+    colors[i] is curve i's colour; an empty labels[i] leaves curve i out of the legend.
 
     Rows: |Z|-Theta (measured), the Nyquist plot (-Z'' against Z', one wide panel),
     then Rp-Cp, Rs-Cs and G-B (from z_theta_pairs). All panels except the Nyquist
     plot share the sweep variable as x axis (xlabel, xscale).
     """
     def curves(plot_id):
-        return [Curve(f"{plot_id}_{i}", color=f"C{i % 10}", legend_label=label) for i, label in enumerate(labels)]
+        return [Curve(f"{plot_id}_{i}", color=color, legend_label=label, show_in_legend=bool(label))
+                for i, (label, color) in enumerate(zip(labels, colors))]
 
     def vs_sweep(plot_id, row, col, ylabel, yscale):
         return PlotDef(plot_id, row=row, col=col, xlabel=xlabel, ylabels=(ylabel,), xscale=xscale,

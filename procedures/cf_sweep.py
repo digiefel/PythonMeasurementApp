@@ -1,3 +1,5 @@
+from matplotlib import colormaps
+
 from plotting import PlotDef, Curve
 from procedures.base import Choice, MeasurementProcedure, ValueList, parameter
 from procedures._cmu import (
@@ -53,8 +55,9 @@ class CfSweepProcedure(MeasurementProcedure):
     then the Rp-Cp, Rs-Cs and G-B pairs against frequency (calculated at the
     measured frequency). The CSV holds only
     the measured values; every pair can be recalculated from Z and Theta.
-    Legends number the sweeps in bias-list order, so a repeated bias is still
-    distinguishable.
+    Curves are coloured by bias on the viridis colour map, from dark purple
+    (lowest bias) to green (highest bias); the legend names only those two.
+    A repeated bias gets the same colour as its first sweep.
 
     Open/short/load correction uses the calibration stored for the channel (for
     example by the CVSweep calibration buttons). The instrument interpolates
@@ -137,17 +140,23 @@ class CfSweepProcedure(MeasurementProcedure):
         )
 
         # Curves are named by position in the bias list, so a repeated bias (e.g. '0, 1, 0') gets its own curve.
-        labels = [f"{i + 1}: {self._bias_label(bias)}" for i, bias in enumerate(self.bias_list)]
+        # Colour follows the bias value. Viridis stops short of its pale yellow, which fades on the white background.
+        low, high = min(self.bias_list), max(self.bias_list)
+        colors = [colormaps["viridis"](0.8 * (bias - low) / (high - low) if high > low else 0.0)[:3]
+                  for bias in self.bias_list]
+        # Only the lowest and highest bias are in the legend, as the key to the colours.
+        key = {self.bias_list.index(low), self.bias_list.index(high)}
+        labels = [self._bias_label(bias) if i in key else "" for i, bias in enumerate(self.bias_list)]
         xscale = "log" if self.spacing == 'log' else "linear"
         if is_z_theta:
             self.runner.configure_plot(f"C-f Sweep - {device.name}",
-                                       z_theta_plots(labels, "Frequency (Hz)", xscale, is_degrees))
+                                       z_theta_plots(labels, colors, "Frequency (Hz)", xscale, is_degrees))
         else:
             elements = []
-            for i, label in enumerate(labels):
-                elements.append(Curve(f"p_{i}", color=f'C{i % 10}', line_style="solid",
+            for i, (label, color) in enumerate(zip(labels, colors)):
+                elements.append(Curve(f"p_{i}", color=color, line_style="solid", show_in_legend=bool(label),
                                       legend_label=f"{primary_label} @ {label}"))
-                elements.append(Curve(f"m_{i}", color=f'C{i % 10}', line_style="dash", yaxis=1,
+                elements.append(Curve(f"m_{i}", color=color, line_style="dash", yaxis=1, show_in_legend=bool(label),
                                       legend_label=f"{monitor_label} @ {label}"))
             self.runner.configure_plot(f"C-f Sweep - {device.name}", [
                 PlotDef("cf", xlabel="Frequency (Hz)", ylabels=(primary_label, monitor_label),
