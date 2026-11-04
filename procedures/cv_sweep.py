@@ -101,7 +101,7 @@ class CVSweepProcedure(MeasurementProcedure):
             settings['frequencies'] = str(settings['frequency_hz'])
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
         self.cmu_channel = resolve_cmu_channel(
-            self.settings, self.cmu_channel, self.log if runner is not None else None)
+            self.settings, self.cmu_channel, self.log)
         self.settings['cmu_channel'] = self.cmu_channel
         self.frequencies = self._parse_frequencies(self.settings.get('frequencies', '100k'))
         self.ac_level = self.ac_level_mv / 1000.0

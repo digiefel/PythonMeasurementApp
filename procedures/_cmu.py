@@ -18,7 +18,7 @@ def freq_key(freq_hz) -> str:
     return f"{float(freq_hz):.12g}"
 
 
-def resolve_cmu_channel(settings, channel, log=None) -> int:
+def resolve_cmu_channel(settings, channel, log) -> int:
     """Return the CMU slot to use: the requested one if installed, else the first installed CMU.
 
     `settings['b1500']['module_inventory']` lists installed modules when the
@@ -42,7 +42,7 @@ def resolve_cmu_channel(settings, channel, log=None) -> int:
 
     if replacement is None:
         return channel
-    if replacement != channel and log is not None:
+    if replacement != channel:
         log(f"CMU channel auto -> slot {replacement} (was {channel})")
     return replacement
 
@@ -97,7 +97,7 @@ def rp_cp_from_z_theta(Z: float, theta: float, freq: float, is_degrees: bool):
 
 
 def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict[str, float]:
-    """Equivalent-circuit pairs from |Z| and phase: Z' and -Z'' ("zre", "zim"), Rp-Cp, Rs-Cs, G-B.
+    """Equivalent-circuit pairs from |Z| and phase: Z'-Z'' ("zre", "zim"), Rp-Cp, Rs-Cs, G-B.
 
     Series view: Z = Z' + jZ'' (Rs = Z', Cs = -1/(ω Z'')).
     Parallel view: Y = 1/Z = G + jB (Rp = 1/G, Cp = B/ω).
@@ -107,7 +107,7 @@ def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict
     omega = 2.0 * math.pi * freq
     return {
         "zre": z.real,
-        "zim": -z.imag,
+        "zim": z.imag,
         "rp": 1 / y.real,
         "cp": y.imag / omega,
         "rs": z.real,
@@ -118,37 +118,32 @@ def z_theta_pairs(Z: float, theta: float, freq: float, is_degrees: bool) -> dict
     }
 
 
-# Z-theta figure panels: (plot id, row, col, y label, y scale), all against the sweep variable.
-# Row 1 holds the Nyquist plot instead. "z" and "theta" are measured; the rest come from z_theta_pairs.
-Z_THETA_PANELS = (
-    ("z", 0, 0, "|Z| (Ohm)", "log"),
-    ("theta", 0, 1, "Theta", "linear"),
-    ("rp", 2, 0, "Rp (Ohm)", "log"),
-    ("cp", 2, 1, "Cp (F)", "linear"),
-    ("rs", 3, 0, "Rs (Ohm)", "log"),
-    ("cs", 3, 1, "Cs (F)", "linear"),
-    ("g", 4, 0, "G (S)", "log"),
-    ("b", 4, 1, "B (S)", "log"),
-)
-
-
 def z_theta_plots(labels, xlabel, xscale, is_degrees) -> list[PlotDef]:
     """Plot layout for Z-theta sweeps, with one curve per entry of labels in every panel.
 
-    Rows: |Z|-Theta, the Nyquist plot (-Z'' against Z', one wide panel), Rp-Cp, Rs-Cs and G-B.
-    All panels except the Nyquist plot share the sweep variable as x axis (xlabel, xscale).
+    Rows: |Z|-Theta (measured), the Nyquist plot (-Z'' against Z', one wide panel),
+    then Rp-Cp, Rs-Cs and G-B (from z_theta_pairs). All panels except the Nyquist
+    plot share the sweep variable as x axis (xlabel, xscale).
     """
     def curves(plot_id):
         return [Curve(f"{plot_id}_{i}", color=f"C{i % 10}", legend_label=label) for i, label in enumerate(labels)]
 
-    plots = [PlotDef("nyquist", row=1, col=0, colspan=2, xlabel="Z' (Ohm)", ylabels=("-Z'' (Ohm)",),
-                     elements=curves("nyquist"))]
-    for plot_id, row, col, ylabel, yscale in Z_THETA_PANELS:
-        if plot_id == "theta":
-            ylabel = f"Theta ({'deg' if is_degrees else 'rad'})"
-        plots.append(PlotDef(plot_id, row=row, col=col, xlabel=xlabel, ylabels=(ylabel,), xscale=xscale,
-                             yscales=(yscale,), xlink="" if plot_id == "z" else "z", elements=curves(plot_id)))
-    return plots
+    def vs_sweep(plot_id, row, col, ylabel, yscale):
+        return PlotDef(plot_id, row=row, col=col, xlabel=xlabel, ylabels=(ylabel,), xscale=xscale,
+                       yscales=(yscale,), xlink="" if plot_id == "z" else "z", elements=curves(plot_id))
+
+    return [
+        vs_sweep("z", 0, 0, "|Z| (Ohm)", "log"),
+        vs_sweep("theta", 0, 1, f"Theta ({'deg' if is_degrees else 'rad'})", "linear"),
+        PlotDef("nyquist", row=1, col=0, colspan=2, xlabel="Z' (Ohm)", ylabels=("-Z'' (Ohm)",),
+                elements=curves("nyquist")),
+        vs_sweep("rp", 2, 0, "Rp (Ohm)", "log"),
+        vs_sweep("cp", 2, 1, "Cp (F)", "linear"),
+        vs_sweep("rs", 3, 0, "Rs (Ohm)", "log"),
+        vs_sweep("cs", 3, 1, "Cs (F)", "linear"),
+        vs_sweep("g", 4, 0, "G (S)", "log"),
+        vs_sweep("b", 4, 1, "B (S)", "log"),
+    ]
 
 
 def append_z_theta_point(plot, i, x, Z, theta, freq, is_degrees):
@@ -156,7 +151,7 @@ def append_z_theta_point(plot, i, x, Z, theta, freq, is_degrees):
     pairs = z_theta_pairs(Z, theta, freq, is_degrees)
     plot.append_point(f"z_{i}", x, Z)
     plot.append_point(f"theta_{i}", x, theta)
-    plot.append_point(f"nyquist_{i}", pairs["zre"], pairs["zim"])
+    plot.append_point(f"nyquist_{i}", pairs["zre"], -pairs["zim"])
     for plot_id in ("rp", "cp", "rs", "cs", "g", "b"):
         # Plots cannot show nan, e.g. Cs of a purely resistive reading.
         if math.isfinite(pairs[plot_id]):

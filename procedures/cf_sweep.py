@@ -86,7 +86,7 @@ class CfSweepProcedure(MeasurementProcedure):
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
         self.cmu_channel = resolve_cmu_channel(
-            self.settings, self.cmu_channel, self.log if runner is not None else None)
+            self.settings, self.cmu_channel, self.log)
         self.settings['cmu_channel'] = self.cmu_channel
         self.bias_list = parse_si_list(str(self.biases))
         self.start_hz = parse_si_value(str(self.start_frequency))
