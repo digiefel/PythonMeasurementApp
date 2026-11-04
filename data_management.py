@@ -134,7 +134,8 @@ class Measurement:
 def measurement_base(path):
     stem = path.stem
     if path.suffix.lower() == '.png':
-        return stem.removesuffix('_plot')
+        # Plots are saved as _plot.png; PUND-family runs saved before November 2026 used _overlay.png.
+        return re.sub(r'_(plot|overlay)$', '', stem)
     # Several CSVs share one plot: WGFMU sampling combinations (_c003) and FORC fatigue reads (_c100_PUND).
     return re.sub(r'_c\d+(_[A-Z]+)?$', '', stem)
 

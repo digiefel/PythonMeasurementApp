@@ -616,7 +616,6 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				"PUND_Fatigue",
 				device,
 				["Cycle", "Time_s", "Voltage_V", "Current_A"],
-				plot_suffix="_overlay.png",
 				save_plot=bool(all_rows),
 			)
 

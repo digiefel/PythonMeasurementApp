@@ -342,7 +342,6 @@ class PUNDProcedure(MeasurementProcedure):
 				"PUND",
 				device,
 				["Time_s", "Current_A", "Voltage_V"],
-				plot_suffix="_overlay.png",
 			)
 			self.log(f"PUND complete: {len(data)} points")
 		finally:

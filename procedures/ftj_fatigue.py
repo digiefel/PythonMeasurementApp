@@ -213,7 +213,7 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 			               add_timestamp=False)
 			self.save_measurement_outputs(pund_rows, "FTJ_Fatigue_PUND", device,
 			                              ["Cycle", "Time_s", "Voltage_V", "Current_A"],
-			                              plot_suffix="_overlay.png", save_plot=bool(pund_rows))
+			                              save_plot=bool(pund_rows))
 			try:
 				wgfmu.clear()
 				wgfmu.disconnect(self.channel_1)

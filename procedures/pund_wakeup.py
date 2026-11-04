@@ -500,7 +500,6 @@ class PUNDWakeUpProcedure(MeasurementProcedure):
                 "PUND_Wakeup",
                 device,
                 ["Vmax_V", "Time_s", "Voltage_V", "Current_A"],
-                plot_suffix="_overlay.png",
                 save_plot=bool(all_rows),
             )
             self.log(f"PUND Wakeup complete: {len(self.vmax_values)} read trace(s), {len(all_rows)} samples")

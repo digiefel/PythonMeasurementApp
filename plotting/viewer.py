@@ -443,6 +443,11 @@ class PlotViewer:
     def _handle_save_png(self, req_id: str, payload: dict) -> None:
         path: str = payload["path"]
         try:
+            # The bridge flushes the last data right before this request, so both arrive in one
+            # poll_queue() call. Fit axes to that data now: capture_framebuffer renders frames
+            # itself, skipping the main loop's fitting step.
+            self._update_live_fits()
+            self._propagate_xlinks()
             capture_framebuffer(path)
             _ack(self._rsp_queue, req_id, {"path": path})
         except Exception as exc:

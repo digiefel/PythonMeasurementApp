@@ -449,7 +449,6 @@ class MeasurementProcedure(ABC):
         device,
         headers: list,
         *,
-        plot_suffix: str = "_plot.png",
         save_plot: bool = True,
     ):
         """Save the standard CSV plus matching plot PNG for a procedure."""
@@ -458,7 +457,7 @@ class MeasurementProcedure(ABC):
         csv_path = self.save_data(data, f"{base}.csv", headers, add_timestamp=False)
         plot_path = None
         if save_plot:
-            plot_path = self.save_plot_png(f"{base}{plot_suffix}")
+            plot_path = self.save_plot_png(f"{base}_plot.png")
         return csv_path, plot_path
 
     def format_filename(self, procedure_tag: str, device_name: str):

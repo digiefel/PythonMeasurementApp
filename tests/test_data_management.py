@@ -61,6 +61,15 @@ class DataManagementTests(unittest.TestCase):
         self.assertEqual(set(items[0].data_files), set(reads))
         self.assertEqual(items[0].plot_files, (png,))
 
+    def test_scan_groups_overlay_plot_with_its_csv(self):
+        csv, png = self.measurement(tag='PUND')
+        overlay = png.with_name(png.name.replace('_plot.png', '_overlay.png'))
+        png.rename(overlay)
+        items = self.scan()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].data_files, (csv,))
+        self.assertEqual(items[0].plot_files, (overlay,))
+
     def test_scan_reports_directory_header_mismatch_and_missing_metadata(self):
         wrong = data.Identity('Wrong', 'Elsewhere', 'Other', 'D')
         self.measurement(header_identity=wrong)
