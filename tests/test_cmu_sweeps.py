@@ -78,6 +78,10 @@ def run(cls, settings):
     return runner, instrument, rows
 
 
+def panel(runner, plot_id):
+    return next(p for p in runner.plots if p.id == plot_id)
+
+
 class CfSweepTests(unittest.TestCase):
     def test_one_frequency_sweep_per_bias_in_typed_order(self):
         runner, instrument, rows = run(CfSweepProcedure, {
@@ -90,17 +94,21 @@ class CfSweepTests(unittest.TestCase):
         self.assertEqual(instrument.calls[-2:], [('zero_output', (B1500_CH_ALL,), {}),
                                                  ('set_switch', (B1500_CH_ALL, False), {})])
         self.assertEqual(len(runner.plot.sources['cp_0'][0]), 4)
-        self.assertEqual(runner.plots[0].xscale, 'log')
+        self.assertEqual(panel(runner, 'z').xscale, 'log')
 
     def test_pair_panels_match_the_parallel_rc_and_csv_holds_measured_values(self):
         runner, _, rows = run(CfSweepProcedure, {'start_frequency': '1k', 'stop_frequency': '1M', 'points': 4})
         self.assertEqual(list(rows[0]), ['Bias_V', 'Frequency_Hz', 'Z (Ohm)', 'Theta_deg (deg)', 'Bias_Monitor_V',
                                          'Time_sec', 'Status_Z', 'Status_Theta_deg', 'Status_Combined'])
-        self.assertEqual([p.id for p in runner.plots], ['z', 'theta', 'zre', 'zim', 'rp', 'cp', 'rs', 'cs', 'g', 'b'])
+        self.assertEqual(sorted(p.id for p in runner.plots),
+                         sorted(['z', 'theta', 'nyquist', 'rp', 'cp', 'rs', 'cs', 'g', 'b']))
+        nyquist_x, nyquist_y = runner.plot.sources['nyquist_0']
         for step, row in enumerate(rows):
             omega = 2 * math.pi * float(row['Frequency_Hz'])
             z = 1 / (1 / R_DUT + 1j * omega * C_DUT)
-            expected = {'zre': z.real, 'zim': -z.imag, 'rp': R_DUT, 'cp': C_DUT, 'rs': z.real,
+            self.assertAlmostEqual(nyquist_x[step] / z.real, 1.0)
+            self.assertAlmostEqual(nyquist_y[step] / -z.imag, 1.0)
+            expected = {'rp': R_DUT, 'cp': C_DUT, 'rs': z.real,
                         'cs': -1 / (omega * z.imag), 'g': 1 / R_DUT, 'b': omega * C_DUT}
             for plot_id, value in expected.items():
                 self.assertAlmostEqual(runner.plot.sources[f'{plot_id}_0'][1][step] / value, 1.0, msg=plot_id)
@@ -110,13 +118,13 @@ class CfSweepTests(unittest.TestCase):
         self.assertEqual(len(rows), 9)
         for i in range(3):
             self.assertEqual(len(runner.plot.sources[f'z_{i}'][0]), 3)
-        self.assertEqual([c.legend_label for c in runner.plots[0].elements], ['1: +0V', '2: +1V', '3: +0V'])
+        self.assertEqual([c.legend_label for c in panel(runner, 'z').elements], ['1: +0V', '2: +1V', '3: +0V'])
 
     def test_linear_spacing(self):
         runner, instrument, rows = run(CfSweepProcedure, {
             'biases': '0', 'start_frequency': '1M', 'stop_frequency': '2M', 'points': 3, 'spacing': 'linear'})
         self.assertEqual([float(r['Frequency_Hz']) for r in rows], [1e6, 1.5e6, 2e6])
-        self.assertEqual(runner.plots[0].xscale, 'linear')
+        self.assertEqual(panel(runner, 'z').xscale, 'linear')
 
     def test_calibration_must_span_the_sweep_range(self):
         calibration = {'7': {kind: {'results_by_frequency': {'10000': {}, '100000': {}}}
