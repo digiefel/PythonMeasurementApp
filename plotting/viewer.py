@@ -742,7 +742,7 @@ class PlotViewer:
             plot_tag=plot_tag,
             x_axis_tag=x_axis,
             y_axis_tags=yaxis_tags,
-            x_fit=None if plot_def.xlim is not None else _AxisFitState(x_axis, axis_role="x", scale_name="linear"),
+            x_fit=None if plot_def.xlim is not None else _AxisFitState(x_axis, axis_role="x", scale_name=plot_def.xscale),
             y_fits=[
                 None
                 if ((ylims[idx] if idx < len(ylims) else None) is not None)
@@ -1055,8 +1055,14 @@ class PlotViewer:
             ds = self._sources.get(state.element.source)
             if ds is None:
                 continue
-            values.extend(val for val in ds.x if np.isfinite(val))
-        limits = self._fit_linear_axis(fit_state.axis_tag, values, axis_role="x")
+            if fit_state.scale_name.lower() in ("log", "log10"):
+                values.extend(val for val in ds.x if np.isfinite(val) and val > 0)
+            else:
+                values.extend(val for val in ds.x if np.isfinite(val))
+        if fit_state.scale_name.lower() in ("log", "log10"):
+            limits = self._fit_log_axis(fit_state.axis_tag, values)
+        else:
+            limits = self._fit_linear_axis(fit_state.axis_tag, values, axis_role="x")
         if limits is None:
             return False
         fit_state.last_limits = limits
