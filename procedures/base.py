@@ -125,7 +125,8 @@ class ProcedureParameter:
     heading that opens and closes; use it for settings that rarely change.
     ``enabled_when=(key, value)`` greys the field out unless the field ``key``
     holds ``value`` (or one of several values, given as a tuple). A greyed-out
-    field keeps its value; the procedure still receives it and decides what to do.
+    field keeps its value in the form and in saved settings, but the procedure
+    receives the default instead, so a value that no longer applies can't break a run.
     """
     key: str
     label: str
@@ -170,7 +171,8 @@ class MeasurementProcedure(ABC):
         output_relative: chip/site/subsite/device relative path
         fallback_root: base directory for fallback saves
         """
-        self.settings = settings
+        # A copy: the procedure changes values, and the caller's dict is what the app saves.
+        self.settings = dict(settings)
         self.output_root = output_root
         self.output_relative = output_relative
         self.fallback_root = fallback_root or self.SAFE_FALLBACK_DIR
@@ -212,6 +214,17 @@ class MeasurementProcedure(ABC):
             value = self._coerce_parameter_value(raw_value, param.kind)
             self.settings[param.key] = value
             setattr(self, param.attr or param.key, value)
+        # Greyed-out fields fall back to their default (see ProcedureParameter).
+        for param in self.PARAMETERS:
+            if param.enabled_when is None:
+                continue
+            controller, allowed = param.enabled_when
+            if not isinstance(allowed, tuple):
+                allowed = (allowed,)
+            if self.settings.get(controller) not in allowed:
+                value = self._coerce_parameter_value(param.default, param.kind)
+                self.settings[param.key] = value
+                setattr(self, param.attr or param.key, value)
         # Preserve runner/UI extras so older procedure logic can still use implicit self.<setting> access.
         for key, value in self.settings.items():
             if key == "cmu_calibration" or not isinstance(key, str) or not key.isidentifier():
