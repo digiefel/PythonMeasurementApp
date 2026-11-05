@@ -1141,6 +1141,22 @@ class MainUI:
             else:
                 widget.grid_remove()
 
+    @staticmethod
+    def _enabled_condition(param, fields):
+        """Return the controlling key, the values that enable ``param``, and a sentence saying so for the tooltip."""
+        controller_key, allowed = param.enabled_when
+        allowed = allowed if isinstance(allowed, tuple) else (allowed,)
+        controller = next((field for field in fields if field.key == controller_key), None)
+        if controller is None:
+            return controller_key, allowed, ""
+        if isinstance(controller.kind, Choice):
+            names = [controller.kind.display_value(value) for value in allowed]
+        elif controller.kind is bool:
+            names = ["checked" if value else "unchecked" for value in allowed]
+        else:
+            names = [str(value) for value in allowed]
+        return controller_key, allowed, f"Used only when {controller.label} is {' or '.join(names)}."
+
     def _fit_params_frame(self):
         """Keep the scrolling area in step with the form: the form fills the view's width and scrolls over its own height."""
         canvas, form = self.params_canvas, self.params_frame
@@ -1180,6 +1196,7 @@ class MainUI:
         # Sections start closed and stay as you leave them while the app runs.
         section_sizes = collections.Counter(param.section for param in fields if param.section)
         section_widgets = collections.defaultdict(list)
+        dependents = []
         current_section = None
         idx = 0
         for param in fields:
@@ -1249,8 +1266,13 @@ class MainUI:
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
 
-            if param.help:
-                attach_tooltip(field_label, param.help)
+            help_text = param.help
+            if param.enabled_when:
+                controller_key, allowed, condition = self._enabled_condition(param, fields)
+                dependents.append((controller_key, allowed, field_label, widget))
+                help_text = f"{help_text} {condition}" if help_text else condition
+            if help_text:
+                attach_tooltip(field_label, help_text)
             if isinstance(widget, ttk.Combobox):
                 # A turning wheel would otherwise change the value under the pointer while scrolling the form.
                 widget.bind("<MouseWheel>", self._scroll_params)
@@ -1261,6 +1283,18 @@ class MainUI:
         self._param_section_widgets = dict(section_widgets)
         for section in self._param_section_headers:
             self._show_param_section(section)
+
+        # Grey out fields whose controlling field doesn't hold the value they need, and re-check when it changes.
+        def refresh_enabled(*_args):
+            settings = self.collect_settings()
+            for controller_key, allowed, field_label, widget in dependents:
+                enabled = controller_key not in settings or settings[controller_key] in allowed
+                for part in (field_label, widget, *widget.winfo_children()):
+                    part.state(["!disabled"] if enabled else ["disabled"])
+        for controller_key in {dependent[0] for dependent in dependents}:
+            if controller_key in self.param_vars:
+                self.param_vars[controller_key][0].trace_add("write", refresh_enabled)
+        refresh_enabled()
 
         self._bind_current_range_filter(proc_name)
 

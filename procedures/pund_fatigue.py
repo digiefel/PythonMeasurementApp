@@ -92,12 +92,14 @@ class PUNDFatigueProcedure(MeasurementProcedure):
                   Choice((('pund', 'PUND'), ('pn', 'PN'), ('both', 'PN+PUND')))),
 		parameter('read_spacing', 'Read Spacing', 'log',
 		          Choice((('log', 'Log (per decade)'), ('linear', 'Linear')))),
-		parameter('reads_per_decade', 'Read Cycles per Decade (Log)', 10, int,
-		          help='Log spacing only. One read before any fatigue, then reads at equal steps inside each decade: '
-		               '10 gives cycles 0, 1, 2, ..., 10, 20, ..., 100, ...'),
-		parameter('linear_read_count', 'Read Cycles in Total (Linear)', 10, int,
-		          help='Linear spacing only. One read before any fatigue, then this many at equal steps over the whole run: '
-		               '10 over 1e6 cycles gives cycles 0, 1e5, 2e5, ..., 1e6.'),
+		parameter('reads_per_decade', 'Read Cycles per Decade', 10, int,
+		          help='One read before any fatigue, then reads at equal steps inside each decade: '
+		               '10 gives cycles 0, 1, 2, ..., 10, 20, ..., 100, ...',
+		          enabled_when=('read_spacing', 'log')),
+		parameter('linear_read_count', 'Read Cycles in Total', 10, int,
+		          help='One read before any fatigue, then this many at equal steps over the whole run: '
+		               '10 over 1e6 cycles gives cycles 0, 1e5, 2e5, ..., 1e6.',
+		          enabled_when=('read_spacing', 'linear')),
         parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                   Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
         parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0],

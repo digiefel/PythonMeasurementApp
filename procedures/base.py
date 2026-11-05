@@ -123,6 +123,9 @@ class ProcedureParameter:
     method docstrings explain behavior and implementation directly in the source.
     Consecutive fields with the same ``section`` appear in the form under one
     heading that opens and closes; use it for settings that rarely change.
+    ``enabled_when=(key, value)`` greys the field out unless the field ``key``
+    holds ``value`` (or one of several values, given as a tuple). A greyed-out
+    field keeps its value; the procedure still receives it and decides what to do.
     """
     key: str
     label: str
@@ -131,6 +134,7 @@ class ProcedureParameter:
     attr: str | None = None
     help: str | None = None
     section: str | None = None
+    enabled_when: tuple[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -147,8 +151,10 @@ def action(label: str, callback: str | Callable, *args, section: str | None = No
 
 
 def parameter(key: str, label: str, default: Any = "", kind: Any = str, attr: str | None = None, *,
-              help: str | None = None, section: str | None = None) -> ProcedureParameter:
-    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr, help=help, section=section)
+              help: str | None = None, section: str | None = None,
+              enabled_when: tuple[str, Any] | None = None) -> ProcedureParameter:
+    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr, help=help,
+                              section=section, enabled_when=enabled_when)
 
 
 class MeasurementProcedure(ABC):
