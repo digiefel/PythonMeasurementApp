@@ -23,8 +23,8 @@ value of every field that has more than one, e.g. ``<base>_003_twait100u.csv``. 
 rows are the Write, P and U samples, each from one Baseline before its rising edge to
 one Baseline after its falling edge. The baseline samples show the offset of the
 voltage and current at rest. Time_s counts from the start of the rising edge, so
-samples before it have negative times. With Raw 5 ns Samples on, each row is one
-sample of the converter instead of an average over one Sample Interval.
+samples before it have negative times. With a 5 ns Sample Interval, each row is one
+raw sample of the converter instead of a 10 ns average.
 """
 import itertools
 import time
@@ -76,10 +76,8 @@ class PulseSwitchingProcedure(MeasurementProcedure):
         parameter('edge_time', 'Edge Time (s)', 70e-9, float,
                   help="Rise and fall time of every pulse. At least 10 ns; around 70 ns limits overshoot."),
         parameter('sample_interval', 'Sample Interval (s)', 10e-9, float,
-                  help="Time between samples during the write, P and U. At least 10 ns."),
-        parameter('raw_samples', 'Raw 5 ns Samples', False, bool,
-                  help="Save every 5 ns sample of the converter instead of one average per Sample Interval. "
-                       "Each value is noisier, and there are two or more per interval."),
+                  help="Time between samples during the write, P and U. 5 ns, or 10 ns and up in 10 ns steps. "
+                       "5 ns saves every raw converter sample instead of 10 ns averages."),
         parameter('baseline', 'Baseline (s)', 200e-9, float,
                   help="Time also sampled before and after every pulse, to read the offset at rest. "
                        "At most half the shortest Wait Time and Gap."),
@@ -103,10 +101,15 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                 # Times run on the 10 ns grid of the WGFMU.
                 values = [round(v / RESOLUTION) * RESOLUTION for v in values]
             lists[key] = values
-        if self.edge_time < RESOLUTION or self.sample_interval < RESOLUTION:
-            raise ValueError("Edge Time and Sample Interval must be at least 10 ns")
+        if self.edge_time < RESOLUTION:
+            raise ValueError(f"Edge Time must be at least 10 ns, not {format_si_compact(self.edge_time, 3)}s")
+        # 5 ns is the converter's own rate: 10 ns windows in raw mode return every sample.
+        self.raw_samples = round(self.sample_interval * 1e9) == 5
+        if self.sample_interval < RESOLUTION and not self.raw_samples:
+            raise ValueError(f"Sample Interval must be 5 ns or at least 10 ns, "
+                             f"not {format_si_compact(self.sample_interval, 3)}s")
         self.edge = round(self.edge_time / RESOLUTION) * RESOLUTION
-        self.interval = round(self.sample_interval / RESOLUTION) * RESOLUTION
+        self.interval = max(RESOLUTION, round(self.sample_interval / RESOLUTION) * RESOLUTION)
         self.baseline_s = round(self.baseline / RESOLUTION) * RESOLUTION
         # Measurement windows must not overlap: the WGFMU would overwrite the earlier one.
         if self.baseline_s < 0 or 2 * self.baseline_s > min(lists['wait_time'] + lists['gap']):
