@@ -197,9 +197,9 @@ class VanDerPauwProcedure(MeasurementProcedure):
         parameter('current_measurement_range', 'Current Range (Source / Meas)', 1e-9, Choice(B1500_CURRENT_RANGES, float), help='Controls both source and measurement ranges. Auto ≥ sets a lower bound; the source always uses one range covering ±Ibias. Auto leaves range selection unrestricted. Note: ranges below 1nA can be slow.'),
         parameter('current_compliance', 'Return Current Compliance (A)', 0.01, float),
         *ACQUISITION_PARAMETERS,
-        parameter('hold_time', 'Hold Time (s)', 0.0, float, help='Wait at the beginning of each sweep, before the first step delay.'),
-        parameter('delay_time', 'Delay Time (s)', 0.0, float, help='Wait after setting each step output and before measurement. Zero does not disable automatic settling.'),
-        parameter('second_delay', 'Second Delay (s)', 0.0, float, help='Step delay from measurement start to the next output step. The instrument also waits for measurement completion if that takes longer.'),
+        parameter('hold_time', 'Hold Time (s)', 0.0, float, help='Wait at the beginning of each sweep, before the first step delay.', section='Timing'),
+        parameter('delay_time', 'Delay Time (s)', 0.0, float, help='Wait after setting each step output and before measurement. Zero does not disable automatic settling.', section='Timing'),
+        parameter('second_delay', 'Second Delay (s)', 0.0, float, help='Step delay from measurement start to the next output step. The instrument also waits for measurement completion if that takes longer.', section='Timing'),
     )
 
     def smu_numbers(self, contact_sweep):

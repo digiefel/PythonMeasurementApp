@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import sys
 import threading
 from datetime import datetime
 import time
@@ -700,10 +701,25 @@ class MainUI:
         tk.Frame(self.procedure_settings_frame, background="#3b82f6", height=2).grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
         # Only this body is rebuilt when the selected procedure changes.
-        self.params_frame = ttk.Frame(self.procedure_settings_frame)
-        self.params_frame.grid(row=2, column=0, sticky="nsew")
+        # It sits in a canvas so long forms scroll instead of running off the window.
+        params_area = ttk.Frame(self.procedure_settings_frame)
+        params_area.grid(row=2, column=0, sticky="nsew")
+        params_area.grid_columnconfigure(0, weight=1)
+        params_area.grid_rowconfigure(0, weight=1)
+        self.params_canvas = tk.Canvas(params_area, highlightthickness=0, borderwidth=0)
+        self.params_canvas.grid(row=0, column=0, sticky="nsew")
+        self.params_scrollbar = ttk.Scrollbar(params_area, orient="vertical", command=self.params_canvas.yview)
+        self.params_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.params_canvas.configure(yscrollcommand=self.params_scrollbar.set)
+        self.params_frame = ttk.Frame(self.params_canvas)
         self.params_frame.grid_columnconfigure(0, weight=1)
         self.params_frame.grid_columnconfigure(1, weight=1)
+        self._params_window = self.params_canvas.create_window(0, 0, window=self.params_frame, anchor="nw")
+        # The form's height follows its contents, so refit whenever either side changes size.
+        self.params_canvas.bind("<Configure>", lambda _event: self._fit_params_frame())
+        self.params_frame.bind("<Configure>", lambda _event: self._fit_params_frame())
+        self.root.bind_all("<MouseWheel>", self._scroll_params, add="+")
+        self._open_param_sections = set()
 
         # Prober controls (bottom left)
         self.prober_enable_cb = ttk.Checkbutton(self.root, text="Prober Control", variable=self.prober_enabled_var, command=self._toggle_prober_control)
@@ -1110,12 +1126,46 @@ class MainUI:
     def on_proc_change(self, event=None):
         self.render_param_form(self.proc_var.get())
 
+    def _toggle_param_section(self, section):
+        self._open_param_sections ^= {section}
+        self._show_param_section(section)
+
+    def _show_param_section(self, section):
+        is_open = section in self._open_param_sections
+        header, size = self._param_section_headers[section]
+        # TODO: mark the heading when a closed section holds values other than the defaults.
+        header.configure(text=f"{'▾' if is_open else '▸'} {section} ({size})")
+        for widget in self._param_section_widgets.get(section, ()):
+            if is_open:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _fit_params_frame(self):
+        """Keep the scrolling area in step with the form: the form fills the view's width and scrolls over its own height."""
+        canvas, form = self.params_canvas, self.params_frame
+        canvas.configure(width=form.winfo_reqwidth())
+        canvas.itemconfigure(self._params_window, width=canvas.winfo_width())
+        canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), form.winfo_reqheight()))
+
+    def _scroll_params(self, event):
+        """Scroll the settings form when the wheel turns over it; leave every other widget alone."""
+        under = self.root.winfo_containing(event.x_root, event.y_root)
+        if under is None or not str(under).startswith(str(self.params_canvas)):
+            return None
+        steps = -event.delta if sys.platform == "darwin" else -int(event.delta / 120)
+        self.params_canvas.yview_scroll(steps, "units")
+        return "break"
+
     def render_param_form(self, proc_name):
         # Clear previous widgets
         for child in self.params_frame.winfo_children():
             child.destroy()
         self.param_vars = {}
         self._cv_calib_buttons = {}
+        self._param_section_headers = {}
+        self._param_section_widgets = {}
+        self.params_canvas.yview_moveto(0)
 
         fields = self.procedure_fields.get(proc_name, [])
         if not fields:
@@ -1126,8 +1176,22 @@ class MainUI:
             return
 
         settings = self.config.get_procedure_settings(proc_name)
-        for idx, param in enumerate(fields):
+        # Fields that share a section sit under one heading that opens and closes.
+        # Sections start closed and stay as you leave them while the app runs.
+        section_sizes = collections.Counter(param.section for param in fields if param.section)
+        section_widgets = collections.defaultdict(list)
+        current_section = None
+        idx = 0
+        for param in fields:
             key, label, kind = param.key, param.label, param.kind
+            if param.section != current_section:
+                current_section = param.section
+                if current_section:
+                    header = ttk.Button(self.params_frame, style="Toolbutton",
+                                        command=lambda s=current_section: self._toggle_param_section(s))
+                    header.grid(row=idx, column=0, columnspan=2, sticky="w", padx=4, pady=(8, 2))
+                    self._param_section_headers[current_section] = (header, section_sizes[current_section])
+                    idx += 1
             field_label = ttk.Label(self.params_frame, text=label)
             field_label.grid(row=idx, column=0, sticky="w", padx=4, pady=2)
             default_val = self.procedure_defaults.get(proc_name, {}).get(key, "")
@@ -1137,8 +1201,8 @@ class MainUI:
                 if isinstance(val, str):
                     bool_val = val.strip().lower() in ("1", "true", "yes", "on")
                 var = tk.BooleanVar(value=bool(bool_val))
-                chk = ttk.Checkbutton(self.params_frame, variable=var)
-                chk.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
+                widget = ttk.Checkbutton(self.params_frame, variable=var)
+                widget.grid(row=idx, column=1, sticky="w", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
             elif kind in (SMU, OptionalSMU, SMUOrGNDU, WGFMUChannel):
                 label_val = kind.display_value(val)
@@ -1150,18 +1214,18 @@ class MainUI:
                     values.append("GNDU")
                 if label_val not in values:
                     values = [label_val] + values
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                widget = ttk.Combobox(self.params_frame, textvariable=var, values=values, state="readonly")
+                widget.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
             elif kind is ValueList:
                 # Typed lists stay editable; the button fills the field with evenly spaced values.
                 var = tk.StringVar(value=str(val))
-                list_frame = ttk.Frame(self.params_frame)
-                list_frame.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
-                list_frame.grid_columnconfigure(0, weight=1)
-                ttk.Entry(list_frame, textvariable=var).grid(row=0, column=0, sticky="ew")
+                widget = ttk.Frame(self.params_frame)
+                widget.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                widget.grid_columnconfigure(0, weight=1)
+                ttk.Entry(widget, textvariable=var).grid(row=0, column=0, sticky="ew")
                 build_button = ttk.Button(
-                    list_frame, text="…", width=2,
+                    widget, text="…", width=2,
                     command=lambda v=var, title=label: show_list_builder(self.root, v, title),
                 )
                 build_button.grid(row=0, column=1, padx=(4, 0))
@@ -1175,18 +1239,28 @@ class MainUI:
                 labels = [label for _, label in options]
                 if label_val not in labels:
                     labels = [label_val] + labels
-                combo = ttk.Combobox(self.params_frame, textvariable=var, values=labels, state="readonly")
-                combo.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                widget = ttk.Combobox(self.params_frame, textvariable=var, values=labels, state="readonly")
+                widget.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.param_vars[key] = (var, param)
             else:
                 var = tk.StringVar(value=str(val))
-                entry = ttk.Entry(self.params_frame, textvariable=var)
-                entry.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
+                widget = ttk.Entry(self.params_frame, textvariable=var)
+                widget.grid(row=idx, column=1, sticky="ew", padx=4, pady=2)
                 self.params_frame.grid_columnconfigure(1, weight=1)
                 self.param_vars[key] = (var, param)
 
             if param.help:
                 attach_tooltip(field_label, param.help)
+            if isinstance(widget, ttk.Combobox):
+                # A turning wheel would otherwise change the value under the pointer while scrolling the form.
+                widget.bind("<MouseWheel>", self._scroll_params)
+            if param.section:
+                section_widgets[param.section] += (field_label, widget)
+            idx += 1
+
+        self._param_section_widgets = dict(section_widgets)
+        for section in self._param_section_headers:
+            self._show_param_section(section)
 
         self._bind_current_range_filter(proc_name)
 
@@ -1195,16 +1269,11 @@ class MainUI:
         if calibration_actions:
             self._cv_calibration_store = self.config.get_cmu_calibration()
             self._bind_cv_range_filter()
-            # Bottom-anchor the calibration box: expandable spacer consumes extra height.
-            spacer_row = 999
-            calib_row = 1000
-            self.params_frame.grid_rowconfigure(spacer_row, weight=1)
-            spacer = ttk.Frame(self.params_frame)
-            spacer.grid(row=spacer_row, column=0, columnspan=2, sticky="nsew")
-            self._render_cv_calibration_section(calib_row, calibration_actions)
+            # After the fields and the procedure's buttons.
+            self._render_cv_calibration_section(1000, calibration_actions)
             self._refresh_cv_calibration_readout()
 
-        self._render_procedure_actions(proc_name, start_row=len(fields))
+        self._render_procedure_actions(proc_name, start_row=idx)
         address_item = self.param_vars.get('gpib_address')
         if address_item:
             address_item[0].trace_add('write', lambda *_: self._refresh_connection_controls())

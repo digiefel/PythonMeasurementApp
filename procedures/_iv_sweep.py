@@ -33,10 +33,10 @@ SWEEP_PARAMETERS = (
     parameter('show_fit', 'Show R Fit', True, bool,
               help='Fits V=R*I+b across all finite points, including flagged points and return branches. Disable for nonlinear/hysteretic devices. Fit results are saved in the header, not extra columns.'),
     *ACQUISITION_PARAMETERS,
-    parameter('hold_time', 'Hold Time (s)', 0.0, float, help='At the start of each hardware segment.'),
-    parameter('delay_time', 'Delay Time (s)', 0.0, float, help='After setting each step; automatic settling remains active.'),
+    parameter('hold_time', 'Hold Time (s)', 0.0, float, help='At the start of each hardware segment.', section='Timing'),
+    parameter('delay_time', 'Delay Time (s)', 0.0, float, help='After setting each step; automatic settling remains active.', section='Timing'),
     parameter('second_delay', 'Second Delay (s)', 0.0, float,
-              help='Hardware step delay from measurement start; also waits for measurement completion.'),
+              help='Hardware step delay from measurement start; also waits for measurement completion.', section='Timing'),
 )
 
 

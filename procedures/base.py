@@ -121,6 +121,8 @@ class ProcedureParameter:
 
     Keep tooltip explanations in ``help`` beside the declaration. Procedure and
     method docstrings explain behavior and implementation directly in the source.
+    Consecutive fields with the same ``section`` appear in the form under one
+    heading that opens and closes; use it for settings that rarely change.
     """
     key: str
     label: str
@@ -128,6 +130,7 @@ class ProcedureParameter:
     kind: Any = str
     attr: str | None = None
     help: str | None = None
+    section: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,8 +146,9 @@ def action(label: str, callback: str | Callable, *args, section: str | None = No
     return ProcedureAction(label=label, callback=callback, args=tuple(args), section=section, tooltip=tooltip)
 
 
-def parameter(key: str, label: str, default: Any = "", kind: Any = str, attr: str | None = None, *, help: str | None = None) -> ProcedureParameter:
-    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr, help=help)
+def parameter(key: str, label: str, default: Any = "", kind: Any = str, attr: str | None = None, *,
+              help: str | None = None, section: str | None = None) -> ProcedureParameter:
+    return ProcedureParameter(key=key, label=label, default=default, kind=kind, attr=attr, help=help, section=section)
 
 
 class MeasurementProcedure(ABC):
