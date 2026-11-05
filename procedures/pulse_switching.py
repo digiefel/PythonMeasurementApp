@@ -23,7 +23,8 @@ value of every field that has more than one, e.g. ``<base>_003_twait100u.csv``. 
 rows are the Write, P and U samples, each from one Baseline before its rising edge to
 one Baseline after its falling edge. The baseline samples show the offset of the
 voltage and current at rest. Time_s counts from the start of the rising edge, so
-samples before it have negative times.
+samples before it have negative times. With Raw 5 ns Samples on, each row is one
+sample of the converter instead of an average over one Sample Interval.
 """
 import itertools
 import time
@@ -33,7 +34,7 @@ import numpy as np
 from plotting import PlotDef, Curve
 from procedures.base import Choice, MeasurementProcedure, ValueList, WGFMUChannel, parameter
 from procedures.pund_fatigue import PUNDFatigueProcedure
-from instrumentio.codes import WGFMU_MEASURE_EVENT_DATA_AVERAGED
+from instrumentio.codes import WGFMU_MEASURE_EVENT_DATA_AVERAGED, WGFMU_MEASURE_EVENT_DATA_RAW
 from instrumentio.constants import WGFMU_MEASURE_CURRENT_RANGES, WGFMU_MEASURE_VOLTAGE_RANGES
 from si_utils import format_si_compact, parse_si_list
 
@@ -76,6 +77,9 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                   help="Rise and fall time of every pulse. At least 10 ns; around 70 ns limits overshoot."),
         parameter('sample_interval', 'Sample Interval (s)', 10e-9, float,
                   help="Time between samples during the write, P and U. At least 10 ns."),
+        parameter('raw_samples', 'Raw 5 ns Samples', False, bool,
+                  help="Save every 5 ns sample of the converter instead of one average per Sample Interval. "
+                       "Each value is noisier, and there are two or more per interval."),
         parameter('baseline', 'Baseline (s)', 200e-9, float,
                   help="Time also sampled before and after every pulse, to read the offset at rest. "
                        "At most half the shortest Wait Time and Gap."),
@@ -140,8 +144,8 @@ class PulseSwitchingProcedure(MeasurementProcedure):
 
         built = [self._build_combination(c) for c in self.combinations]
         pattern_starts = np.cumsum([0.0] + [duration + SEQUENCE_DELAY_S for _, _, duration in built])
-        sample_ends = np.cumsum([sum(n for _, n in segments.values()) for _, segments, _ in built])
-        expected_total = int(sample_ends[-1])
+        # Measurement points; raw mode returns several values per point, counted after execute().
+        point_ends = np.cumsum([sum(n for _, n in segments.values()) for _, segments, _ in built])
 
         reads, switching = [], []
         for index, c in enumerate(self.combinations):
@@ -159,7 +163,7 @@ class PulseSwitchingProcedure(MeasurementProcedure):
         ])
         self.report_progress(0, len(built), "Combinations measured")
         self.log(f"Starting Pulse Switching on {device.name}: {len(built)} combinations, "
-                 f"{expected_total} samples, about {format_si_compact(pattern_starts[-1], 3)}s of pulses")
+                 f"{int(point_ends[-1])} points, about {format_si_compact(pattern_starts[-1], 3)}s of pulses")
 
         ts = self.get_run_timestamp()
         base = self.format_filename("PulseSwitching", device.name)
@@ -178,11 +182,22 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                     for segment, (start, points) in segments.items():
                         wgfmu.set_measure_event(name, segment, start - self.baseline_s, points,
                                                 self.interval, self.interval,
-                                                WGFMU_MEASURE_EVENT_DATA_AVERAGED)
+                                                WGFMU_MEASURE_EVENT_DATA_RAW if self.raw_samples
+                                                else WGFMU_MEASURE_EVENT_DATA_AVERAGED)
                     wgfmu.add_sequence(channel, name, 1.0)
 
             self.check_stop(b1500)
             wgfmu.execute()
+
+            # The guide's count of raw values per point is ambiguous, so take it from the instrument.
+            _, total = wgfmu.get_measure_value_size(self.channel_2)
+            per_point, leftover = divmod(total, int(point_ends[-1]))
+            if leftover or not per_point:
+                raise RuntimeError(f"WGFMU will return {total} values for {int(point_ends[-1])} points")
+            sample_ends = point_ends * per_point
+            expected_total = int(sample_ends[-1])
+            if self.raw_samples:
+                self.log(f"Raw mode: {per_point} values per point, {expected_total} in total")
 
             samples_v, samples_i = [], []  # every sample of the run, in order
             done = 0  # combinations already plotted and saved
@@ -201,17 +216,18 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                 while done < len(built) and sample_ends[done] <= len(samples_v):
                     _, segments, _ = built[done]
                     rows, currents = [], {}
-                    first = int(sample_ends[done]) - sum(n for _, n in segments.values())
+                    first = int(sample_ends[done]) - per_point * sum(n for _, n in segments.values())
                     for segment, (segment_start, points) in segments.items():
-                        span = slice(first, first + points)
-                        first += points
+                        span = slice(first, first + per_point * points)
+                        first += per_point * points
                         t0 = pattern_starts[done] + segment_start
                         rows += [[segment, t - t0, v, cur] for (t, v), (_, cur) in zip(samples_v[span], samples_i[span])]
                         currents[segment] = np.array([cur for _, cur in samples_i[span]])
+                        if segment == 'P':
+                            t_us = np.array([t - t0 for t, _ in samples_i[span]]) * 1e6
                     tags = "".join(f"_{tag}{format_si_compact(self.combinations[done][key], 4)}" for key, tag in self.swept)
                     self.save_data(rows, f"{base}_{done:03d}{tags}.csv", HEADERS, add_timestamp=False)
 
-                    t_us = (np.arange(len(currents['P'])) * self.interval - self.baseline_s) * 1e6
                     self.runner.plot.append_batch({
                         f"P_{done}": list(zip(t_us, currents['P'] * 1e3)),
                         f"U_{done}": list(zip(t_us, currents['U'] * 1e3)),
