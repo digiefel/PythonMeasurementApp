@@ -20,8 +20,10 @@ top of it. Wait and Gap run from the end of one edge to the start of the next.
 
 Each combination is saved as its own CSV, numbered in run order and named after the
 value of every field that has more than one, e.g. ``<base>_003_twait100u.csv``. Its
-rows are the Write, P and U samples, each from the start of its rising edge to the
-end of its falling edge. Time_s counts from the start of that rising edge.
+rows are the Write, P and U samples, each from one Baseline before its rising edge to
+one Baseline after its falling edge. The baseline samples show the offset of the
+voltage and current at rest. Time_s counts from the start of the rising edge, so
+samples before it have negative times.
 """
 import itertools
 import time
@@ -40,6 +42,8 @@ RESOLUTION = 1e-8  # WGFMU timing resolution and shortest sample interval
 MAX_VECTOR_S = 1e4
 # 0 V before each write and after each U, so every combination starts and ends at rest.
 REST_S = 1e-6
+# The WGFMU inserts 50 ns between consecutive sequences on a channel (WGFMU guide, WGFMU_addSequence).
+SEQUENCE_DELAY_S = 50e-9
 STATUS_COMPLETED = 10000
 SEGMENTS = ("Write", "P", "U")
 HEADERS = ["Segment", "Time_s", "Voltage_V", "Current_A"]
@@ -72,6 +76,9 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                   help="Rise and fall time of every pulse. At least 10 ns; around 70 ns limits overshoot."),
         parameter('sample_interval', 'Sample Interval (s)', 10e-9, float,
                   help="Time between samples during the write, P and U. At least 10 ns."),
+        parameter('baseline', 'Baseline (s)', 200e-9, float,
+                  help="Time also sampled before and after every pulse, to read the offset at rest. "
+                       "At most half the shortest Wait Time and Gap."),
         parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                   Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
         parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[-1][0],
@@ -96,21 +103,27 @@ class PulseSwitchingProcedure(MeasurementProcedure):
             raise ValueError("Edge Time and Sample Interval must be at least 10 ns")
         self.edge = round(self.edge_time / RESOLUTION) * RESOLUTION
         self.interval = round(self.sample_interval / RESOLUTION) * RESOLUTION
+        self.baseline_s = round(self.baseline / RESOLUTION) * RESOLUTION
+        # Measurement windows must not overlap: the WGFMU would overwrite the earlier one.
+        if self.baseline_s < 0 or 2 * self.baseline_s > min(lists['wait_time'] + lists['gap']):
+            raise ValueError("Baseline must be between 0 and half the shortest Wait Time and Gap")
+        self.rest = max(REST_S, self.baseline_s)
         self.combinations = [dict(zip(lists, values)) for values in itertools.product(*lists.values())]
         self.swept = [(key, tag) for key, tag in SWEPT if len(lists[key]) > 1]
 
     def _build_combination(self, c):
-        """Channel-1 vectors of one combination, plus each pulse's (start, sample count)."""
+        """Channel-1 vectors of one combination, plus each pulse's (rising edge start, sample count)."""
         edge = self.edge
-        vectors, segments, t = [(REST_S, 0.0)], {}, REST_S
+        vectors, segments, t = [(self.rest, 0.0)], {}, self.rest
         for name, level, width, after, rest in (
             ('Write', c['write_voltage'], c['write_width'], c['hold_voltage'], c['wait_time']),
             ('P', c['read_voltage'], c['read_width'], 0.0, c['gap']),
-            ('U', c['read_voltage'], c['read_width'], 0.0, REST_S),
+            ('U', c['read_voltage'], c['read_width'], 0.0, self.rest),
         ):
-            # Rising edge, flat top, falling edge to the level that follows; all three are sampled.
+            # Rising edge, flat top, falling edge to the level that follows; all three are sampled,
+            # plus one baseline on either side.
             window = 2 * edge + width
-            segments[name] = (t, max(1, round(window / self.interval)))
+            segments[name] = (t, max(1, round((window + 2 * self.baseline_s) / self.interval)))
             vectors += [(edge, level), (width, level), (edge, after)]
             for piece_start in np.arange(0.0, rest, MAX_VECTOR_S):
                 vectors.append((min(MAX_VECTOR_S, rest - piece_start), after))
@@ -126,7 +139,7 @@ class PulseSwitchingProcedure(MeasurementProcedure):
         self.check_stop(b1500)
 
         built = [self._build_combination(c) for c in self.combinations]
-        pattern_starts = np.cumsum([0.0] + [duration for _, _, duration in built])
+        pattern_starts = np.cumsum([0.0] + [duration + SEQUENCE_DELAY_S for _, _, duration in built])
         sample_ends = np.cumsum([sum(n for _, n in segments.values()) for _, segments, _ in built])
         expected_total = int(sample_ends[-1])
 
@@ -163,7 +176,8 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                         if dt > 0:
                             wgfmu.add_vector(name, dt, level)
                     for segment, (start, points) in segments.items():
-                        wgfmu.set_measure_event(name, segment, start, points, self.interval, self.interval,
+                        wgfmu.set_measure_event(name, segment, start - self.baseline_s, points,
+                                                self.interval, self.interval,
                                                 WGFMU_MEASURE_EVENT_DATA_AVERAGED)
                     wgfmu.add_sequence(channel, name, 1.0)
 
@@ -197,7 +211,7 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                     tags = "".join(f"_{tag}{format_si_compact(self.combinations[done][key], 4)}" for key, tag in self.swept)
                     self.save_data(rows, f"{base}_{done:03d}{tags}.csv", HEADERS, add_timestamp=False)
 
-                    t_us = np.arange(len(currents['P'])) * self.interval * 1e6
+                    t_us = (np.arange(len(currents['P'])) * self.interval - self.baseline_s) * 1e6
                     self.runner.plot.append_batch({
                         f"P_{done}": list(zip(t_us, currents['P'] * 1e3)),
                         f"U_{done}": list(zip(t_us, currents['U'] * 1e3)),
