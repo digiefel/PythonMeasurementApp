@@ -81,7 +81,8 @@ class CVSweepProcedure(MeasurementProcedure):
         parameter('ac_level_mv', 'AC Level (mV)', 30.0, float, help='AC excitation superimposed on the swept DC bias for impedance measurement.'),
         parameter('frequencies', 'Frequencies', '100k', ValueList, help="Comma-separated frequencies in Hz; SI prefixes are accepted, e.g. '10k, 100k, 1M'. One sweep per frequency."),
         parameter('integration_mode', 'Integration Mode', 0, Choice(B1500_CMU_INTEGRATION_MODES, int)),
-        parameter('integration_value', 'Integration (manual/PLC)', 1, int, help='In PLC mode, integration lasts this many power line cycles. One PLC is 20 ms at 50 Hz.'),
+        parameter('integration_value', 'Integration Coefficient (N)', 1, int, help="Auto: the CMU averages N times the number of samples the B1500 picks itself, N from 1 to 1023 "
+                  "(the B1500's own default is 2). PLC: averaging lasts N power line cycles, 20 ms each at 50 Hz, N from 1 to 100."),
         parameter('hold_time', 'Hold Time (s)', 0.0, float),
         parameter('delay_time', 'Delay Time (s)', 0.0, float),
         parameter('second_delay', 'Second Delay (s)', 0.0, float),

@@ -79,7 +79,8 @@ class CfSweepProcedure(MeasurementProcedure):
         parameter('measurement_range', 'MFCMU Meas Range', B1500_AUTO_RANGE, Choice(B1500_CMU_SWEEP_RANGES, float)),
         parameter('ac_level_mv', 'AC Level (mV)', 30.0, float, help='AC excitation superimposed on the constant DC bias.'),
         parameter('integration_mode', 'Integration Mode', 0, Choice(B1500_CMU_INTEGRATION_MODES, int)),
-        parameter('integration_value', 'Integration (manual/PLC)', 1, int, help='In PLC mode, integration lasts this many power line cycles. One PLC is 20 ms at 50 Hz.'),
+        parameter('integration_value', 'Integration Coefficient (N)', 1, int, help="Auto: the CMU averages N times the number of samples the B1500 picks itself, N from 1 to 1023 "
+                  "(the B1500's own default is 2). PLC: averaging lasts N power line cycles, 20 ms each at 50 Hz, N from 1 to 100."),
         parameter('hold_time', 'Hold Time (s)', 0.0, float, help='Wait at each new bias before the first frequency point. 0 to 655.35 s.'),
         parameter('delay_time', 'Delay Time (s)', 0.0, float, help='Wait after each frequency step before measuring. 0 to 655.35 s.'),
         parameter('step_delay', 'Step Delay (s)', 0.0, float, help='Minimum time from the start of one measurement to the next frequency step. 0 to 1 s.'),
