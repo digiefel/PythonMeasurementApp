@@ -7,12 +7,18 @@ curves, frequency) runs on the pristine device at cycle 0 and after each fatigue
 cycle count listed in "FORC at Cycles". Cycle 0 also gets a PUND read. Where a
 cycle has both, the FORC comes first, so the cycle-0 FORC sees a pristine device.
 
+With "Also measure inverse polarity" on, every FORC is followed right away by the same
+FORC with Vstart and Vend negated, so the reversal curves start from the other
+saturation. No fatigue cycles run in between.
+
 Every read is saved as its own CSV as soon as it is measured:
-``<base>_c<cycle>_PUND.csv`` and ``<base>_c<cycle>_FORC.csv``.
+``<base>_c<cycle>_PUND.csv``, ``<base>_c<cycle>_FORC.csv`` and, with the option on,
+``<base>_c<cycle>_FORC_inversepolarity.csv``.
 
 The live plot shows the Q-V curve of every PUND read and every FORC, coloured by
 cycle, and the I(Vr, V) map of a few FORCs spread over the run, including the
-first and last.
+first and last. Inverse-polarity FORCs are drawn in green, with their maps in a
+second row.
 """
 import time
 import numpy as np
@@ -26,6 +32,8 @@ MAX_MAPS = 6
 # PUND Q-V: the current offset is the mean of the first samples, as in PUNDFatigue.
 PUND_BASELINE_POINTS = 50
 HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
+# Voltage sign of each FORC read: the inverse-polarity one is the same waveform negated.
+FORC_SIGNS = {'FORC': 1, 'FORC_inversepolarity': -1}
 
 _PUND_FATIGUE_PARAMETERS = PUNDFatigueProcedure.PARAMETERS
 _FORC_PARAMETERS = {p.key: p for p in FORCProcedure.PARAMETERS}
@@ -43,6 +51,9 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 		parameter('forc_cycles', 'FORC at Cycles', '1e2, 1e4, 1e6', str,
 		          help="Comma-separated fatigue cycle counts that get a FORC, besides the pristine one "
 		               "at cycle 0. Each must be between 1 and the fatigue cycle count."),
+		parameter('forc_inverse', 'Also measure inverse polarity', False, bool,
+		          help="Right after each FORC, run it again with Vstart and Vend negated, "
+		               "and save it in its own file ending in _FORC_inversepolarity.csv."),
 		*_PUND_FATIGUE_PARAMETERS[-2:],  # measurement ranges
 	)
 	# TODO: the inherited "Preview Sequence" shows the PUND reads only, not cycle 0 or the FORCs.
@@ -60,45 +71,56 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 
 	def _configure_plot(self, device, reads, map_reads, map_axes):
 		log_max = np.log10(max(reads[-1][0], 1))
-		curves = {'PUND': [], 'FORC': []}
-		indices = {kind: [i for i, (_, k) in enumerate(reads) if k == kind] for kind in curves}
+		curves = {'PUND': [], 'FORC': []}  # inverse-polarity FORCs share the FORC plot
+		indices = {kind: [i for i, (_, k) in enumerate(reads) if k == kind] for _, kind in reads}
 		for read_idx, (cycle, kind) in enumerate(reads):
 			intensity = 0.2 + 0.7 * (np.log10(max(cycle, 1)) / max(log_max, 1))
-			# Orange for PUND reads, blue for FORCs, darker for later cycles.
-			color = self._phase_color('pund' if kind == 'PUND' else 'pn', intensity)
-			curves[kind].append(Curve(f"QV_{read_idx}", color=color, legend_label=f"cycle {cycle}",
-			                          show_in_legend=read_idx in (indices[kind][0], indices[kind][-1])))
+			# Orange for PUND reads, blue for FORCs, green for inverse-polarity FORCs, darker for later cycles.
+			if kind == 'FORC_inversepolarity':
+				shade = 0.45 + 0.55 * intensity
+				color, label = (0.17 * shade, 0.63 * shade, 0.17 * shade), f"cycle {cycle}, inverse polarity"
+			else:
+				color, label = self._phase_color('pund' if kind == 'PUND' else 'pn', intensity), f"cycle {cycle}"
+			curves['PUND' if kind == 'PUND' else 'FORC'].append(
+				Curve(f"QV_{read_idx}", color=color, legend_label=label,
+				      show_in_legend=read_idx in (indices[kind][0], indices[kind][-1])))
 
-		_, _, bounds_min, bounds_max = map_axes
-		columns = max(2, len(map_reads))
+		columns = max(2, sum(1 for i in map_reads if reads[i][1] == 'FORC'))
 		plots = [
 			PlotDef("pund_qv", row=0, col=0, colspan=columns // 2, title="PUND reads",
 			        xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=curves['PUND']),
 			PlotDef("forc_qv", row=0, col=columns // 2, colspan=columns - columns // 2, title="FORC",
 			        xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=curves['FORC']),
 		]
-		for col, read_idx in enumerate(map_reads):
-			plots.append(PlotDef(f"map_{read_idx}", row=1, col=col,
-			                     title=f"cycle {self._format_cycle_count(reads[read_idx][0])}",
-			                     xlabel="Vr (V)", ylabels=("V (V)",),
-			                     xlim=(bounds_min[0], bounds_max[0]), ylims=((bounds_min[1], bounds_max[1]),),
-			                     elements=[Heatmap(f"MAP_{read_idx}", rows=self.forc_count + 1, cols=self.forc_count,
-			                                       bounds_min=bounds_min, bounds_max=bounds_max,
-			                                       show_in_legend=False)]))
-		self.runner.configure_plot(f'FORC Fatigue - {device.name}', plots, row_ratios=[1.5, 1.0])
+		# One row of maps per FORC polarity that runs.
+		map_kinds = [kind for kind in FORC_SIGNS if any(reads[i][1] == kind for i in map_reads)]
+		for row, kind in enumerate(map_kinds, start=1):
+			_, _, bounds_min, bounds_max = map_axes[kind]
+			suffix = ", inverse polarity" if kind == 'FORC_inversepolarity' else ""
+			for col, read_idx in enumerate(i for i in map_reads if reads[i][1] == kind):
+				plots.append(PlotDef(f"map_{read_idx}", row=row, col=col,
+				                     title=f"cycle {self._format_cycle_count(reads[read_idx][0])}{suffix}",
+				                     xlabel="Vr (V)", ylabels=("V (V)",),
+				                     xlim=(bounds_min[0], bounds_max[0]), ylims=((bounds_min[1], bounds_max[1]),),
+				                     elements=[Heatmap(f"MAP_{read_idx}", rows=self.forc_count + 1, cols=self.forc_count,
+				                                       bounds_min=bounds_min, bounds_max=bounds_max,
+				                                       show_in_legend=False)]))
+		self.runner.configure_plot(f'FORC Fatigue - {device.name}', plots, row_ratios=[1.5] + [1.0] * len(map_kinds))
 
 	def measure(self, device):
 		b1500 = self.b1500
 		wgfmu = b1500.wgfmu
 		self.check_stop(b1500)
 
-		# Every read as (cycle, 'PUND' or 'FORC'), in the order the WGFMU runs them.
+		# Every read as (cycle, 'PUND', 'FORC' or 'FORC_inversepolarity'), in the order the WGFMU runs them.
 		forc_cycles = {0, *self.forc_cycle_list}
 		pund_cycles = self._read_cycles()
 		reads = []
 		for cycle in sorted({0, *pund_cycles, *forc_cycles}):
 			if cycle in forc_cycles:
 				reads.append((cycle, 'FORC'))
+				if self.forc_inverse:
+					reads.append((cycle, 'FORC_inversepolarity'))
 			reads.append((cycle, 'PUND'))
 
 		initial_pg = self._idle_voltage()
@@ -115,19 +137,24 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 			'FORC': (forc_interval, int(sum(dt for dt, _ in forc_vectors) / forc_interval),
 			         max(1, int(hold / forc_interval))),
 		}
+		sampling['FORC_inversepolarity'] = sampling['FORC']
 		read_ends = np.cumsum([sampling[kind][1] for _, kind in reads])
 		expected_total = int(read_ends[-1])
 
-		map_axes = forc_map_axes(self.vstart, self.vend, self.forc_count)
-		v_grid, vr_grid, _, _ = map_axes
+		map_axes = {kind: forc_map_axes(sign * self.vstart, sign * self.vend, self.forc_count)
+		            for kind, sign in FORC_SIGNS.items()}
 		forc_reads = [i for i, (_, kind) in enumerate(reads) if kind == 'FORC']
 		map_reads = [forc_reads[k] for k in
 		             sorted({int(round(k)) for k in np.linspace(0, len(forc_reads) - 1, min(MAX_MAPS, len(forc_reads)))})]
+		if self.forc_inverse:
+			# The inverse-polarity FORC runs right after its FORC, so it is the next read.
+			map_reads += [i + 1 for i in map_reads]
 		self._configure_plot(device, reads, map_reads, map_axes)
 		self._report_fatigue_progress(0)
 		self.log(f"Starting FORC Fatigue on {device.name}: {self.fatigue_count_int:.2e} "
-		         f"{self.fatigue_pulse_type} fatigue cycles, {len(reads) - len(forc_reads)} PUND reads, "
-		         f"{len(forc_reads)} FORCs of {self.forc_count} curves at cycles {sorted(forc_cycles)}")
+		         f"{self.fatigue_pulse_type} fatigue cycles, {sum(kind == 'PUND' for _, kind in reads)} PUND reads, "
+		         f"{len(forc_reads)} FORCs of {self.forc_count} curves at cycles {sorted(forc_cycles)}"
+		         f"{', each followed by its inverse polarity' if self.forc_inverse else ''}")
 
 		ts = self.get_run_timestamp()
 		base = self.format_filename("FORC_Fatigue", device.name)
@@ -143,11 +170,17 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 			                          [(settle_duration, initial_pg), *pund_vectors],
 			                          measure_points=sampling['PUND'][1], sample_interval=pund_interval,
 			                          measure_start=settle_duration)
+			if self.forc_inverse:
+				patterns['FORC_inversepolarity'] = (f"FORCFAT_FORCINV_PG_{ts}", f"FORCFAT_FORCINV_IV_{ts}")
 			# The FORC waveform starts and ends at 0 V; settle from and return to the fatigue idle voltage.
-			self._create_pattern_pair(wgfmu, *patterns['FORC'], initial_pg,
-			                          [(settle_duration, 0.0), *forc_vectors, (0.1 * settle_duration, initial_pg)],
-			                          measure_points=sampling['FORC'][1], sample_interval=forc_interval,
-			                          measure_start=settle_duration)
+			for kind, sign in FORC_SIGNS.items():
+				if kind not in patterns:
+					continue
+				self._create_pattern_pair(wgfmu, *patterns[kind], initial_pg,
+				                          [(settle_duration, 0.0), *[(dt, sign * v) for dt, v in forc_vectors],
+				                           (0.1 * settle_duration, initial_pg)],
+				                          measure_points=sampling[kind][1], sample_interval=forc_interval,
+				                          measure_start=settle_duration)
 			prev_cycle = 0
 			for cycle, kind in reads:
 				if cycle > prev_cycle:
@@ -194,7 +227,10 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 							t_read = np.arange(len(v)) * interval
 							samples = np.column_stack((v, cur))
 							forc_samples = [samples[(t_read >= t0) & (t_read <= t1)].tolist() for t0, t1, _ in forcs]
-							grid = forc_map_grid(self.vstart, forcs, forc_samples, v_grid, vr_grid)
+							sign = FORC_SIGNS[kind]
+							v_grid, vr_grid, _, _ = map_axes[kind]
+							grid = forc_map_grid(sign * self.vstart, [(t0, t1, sign * vr) for t0, t1, vr in forcs],
+							                     forc_samples, v_grid, vr_grid)
 							self.runner.plot.replace_source(f"MAP_{done}", [0.0] * grid.size, grid.ravel().tolist())
 						self._report_fatigue_progress(cycle)
 						done += 1
