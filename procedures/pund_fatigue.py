@@ -31,8 +31,14 @@ def _preview_sequence(ui):
 		settings = ui.collect_settings()
 		cycle_count = float(settings['fatigue_count'])
 		frequency = float(settings['fatigue_freq'])
-		ppd = int(float(settings['reads_per_decade']))
-		preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, ppd)
+		spacing = settings['read_spacing']
+		if spacing == 'linear':
+			read_count = int(float(settings['linear_read_count']))
+			read_line = f"Linear Reads: {read_count} (plus cycle 1)"
+		else:
+			read_count = int(float(settings['reads_per_decade']))
+			read_line = f"Reads per Decade: {read_count}"
+		preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, spacing, read_count)
 	except (TypeError, ValueError) as exc:
 		messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {exc}", parent=ui.root)
 		return
@@ -45,7 +51,7 @@ def _preview_sequence(ui):
 		duration = f"{total_sec / 3600:.2f} h"
 	lines = [
 		f"Cycle Count: {cycle_count:.2e}", f"Frequency: {frequency:.0f} Hz",
-		f"Reads per Decade: {ppd}", f"Decades: {preview['decades']:.1f}", "",
+		read_line, f"Decades: {preview['decades']:.1f}", "",
 		f"Total Measurements: {preview['total_measurements']}",
 		f"Estimated Duration: {duration}", "", "Measurement at cycles:",
 	]
@@ -84,7 +90,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
                   help='Sets the ramp speed of the read pulses; the tallest pulse lasts as long as at this frequency.'),
         parameter('read_pulse_type', 'Type of Read Cycle', 'pund',
                   Choice((('pund', 'PUND'), ('pn', 'PN'), ('both', 'PN+PUND')))),
-		parameter('reads_per_decade', 'Read Cycles per Decade', 10, int),
+		parameter('read_spacing', 'Read Spacing', 'log',
+		          Choice((('log', 'Log (per decade)'), ('linear', 'Linear')))),
+		parameter('reads_per_decade', 'Read Cycles per Decade (Log)', 10, int,
+		          help='Log spacing only. Reads at equal steps inside each decade: 10 gives cycles 1, 2, ..., 10, 20, ..., 100, ...'),
+		parameter('linear_read_count', 'Read Cycles in Total (Linear)', 10, int,
+		          help='Linear spacing only. Reads at equal steps over the whole run, plus one at cycle 1: '
+		               '10 reads over 1e6 cycles gives cycles 1, 1e5, 2e5, ..., 1e6.'),
         parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                   Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
         parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0],
@@ -119,8 +131,12 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			raise ValueError("fatigue_delay must be >= 0")
 		if self.fatigue_count_int < 1:
 			raise ValueError("fatigue_count must be >= 1")
+		if self.read_spacing not in ('log', 'linear'):
+			raise ValueError(f"Invalid read_spacing: {self.read_spacing!r}")
 		if self.reads_per_decade <= 0:
 			raise ValueError("reads_per_decade must be > 0")
+		if self.linear_read_count <= 0:
+			raise ValueError("linear_read_count must be > 0")
 		if self.fatigue_pulse_type not in ('square', 'triangle', 'pund'):
 			raise ValueError(f"Invalid fatigue_pulse_type: {self.fatigue_pulse_type!r}")
 		if self.read_pulse_type not in ('pund', 'pn', 'both'):
@@ -262,27 +278,37 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		return max(sample_interval, self.MIN_INTERVAL)
 
 	@staticmethod
-	def _compute_read_cycles(cycle_count: int, reads_per_decade: int) -> list[int]:
-		"""Return read cycles spaced linearly within each decade, with cycle 1 and the final cycle always included.
+	def _compute_read_cycles(cycle_count: int, spacing: str, read_count: int) -> list[int]:
+		"""Return the cycles to read at, with cycle 1 and the final cycle always included.
 
-		Decade 10^d to 10^(d+1) gets its N reads at the multiples of 10^(d+1)/N above 10^d,
-		rounded to whole cycles: N = 2 gives 1, 5, 10, 50, 100, ...; N = 10 gives
-		1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer than N reads when N > 9.
+		'log': each decade 10^d to 10^(d+1) gets read_count reads at the multiples of
+		10^(d+1)/read_count above 10^d, rounded to whole cycles: 2 gives 1, 5, 10, 50, 100, ...;
+		10 gives 1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer reads when read_count > 9.
+
+		'linear': read_count reads at equal steps of cycle_count/read_count, plus cycle 1:
+		10 over 1e6 cycles gives 1, 1e5, 2e5, ..., 1e6.
 		"""
 		n = int(cycle_count)
-		ppd = int(reads_per_decade)
-		if ppd <= 0 or n < 1:
+		count = int(read_count)
+		if count <= 0 or n < 1:
 			return []
 		cycles = {1, n}
+		if spacing == 'linear':
+			cycles.update(int(round(k * n / count)) for k in range(1, count + 1))
+			return sorted(c for c in cycles if c >= 1)
 		decade = 0
 		while 10 ** decade < n:
-			step = 10 ** (decade + 1) / ppd
-			for k in range(1, ppd + 1):
+			step = 10 ** (decade + 1) / count
+			for k in range(1, count + 1):
 				cycle = int(round(k * step))
 				if 10 ** decade < cycle <= n:
 					cycles.add(cycle)
 			decade += 1
 		return sorted(cycles)
+
+	def _read_cycles(self):
+		read_count = self.linear_read_count if self.read_spacing == 'linear' else self.reads_per_decade
+		return self._compute_read_cycles(self.fatigue_count_int, self.read_spacing, read_count)
 
 	def _configure_wgfmu(self, wgfmu):
 		wgfmu.clear()
@@ -373,8 +399,11 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 		for read_idx in plot_indices:
 			cycle_num = read_cycles[read_idx]
-			log_cycle = np.log10(max(cycle_num, 1))
-			intensity = 0.2 + 0.7 * (log_cycle / max(log_max, 1))
+			if self.read_spacing == 'linear':
+				progress = cycle_num / max_cycle
+			else:
+				progress = np.log10(max(cycle_num, 1)) / max(log_max, 1)
+			intensity = 0.2 + 0.7 * progress
 			show = read_idx == 0 or read_idx == len(read_cycles) - 1
 			label = f"cycle {cycle_num}"
 			source_map[read_idx] = {}
@@ -416,8 +445,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		return source_map
 
 	@staticmethod
-	def get_preview_info(cycle_count: float, frequency: float, reads_per_decade: int) -> dict:
-		read_cycles = PUNDFatigueProcedure._compute_read_cycles(int(cycle_count), int(reads_per_decade))
+	def get_preview_info(cycle_count: float, frequency: float, spacing: str, read_count: int) -> dict:
+		read_cycles = PUNDFatigueProcedure._compute_read_cycles(int(cycle_count), spacing, int(read_count))
 		return {
 			'measure_cycles': read_cycles,
 			'total_measurements': len(read_cycles),
@@ -431,7 +460,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		wgfmu = b1500.wgfmu
 		self.check_stop(b1500)
 
-		read_cycles = self._compute_read_cycles(self.fatigue_count_int, self.reads_per_decade)
+		read_cycles = self._read_cycles()
 		if not read_cycles:
 			raise ValueError("No read cycles were generated.")
 

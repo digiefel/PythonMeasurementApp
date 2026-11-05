@@ -169,7 +169,7 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 		wgfmu = b1500.wgfmu
 		self.check_stop(b1500)
 
-		read_cycles = self._compute_read_cycles(self.fatigue_count_int, self.reads_per_decade)
+		read_cycles = self._read_cycles()
 		fatigue_vectors = self._build_fatigue_vectors()
 		read_vectors = self._build_read_vectors()
 		read_duration = sum(dt for dt, _ in read_vectors)

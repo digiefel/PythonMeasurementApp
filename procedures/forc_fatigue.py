@@ -1,7 +1,7 @@
 """
 FORC Fatigue Procedure - PUND reads during fatigue, with a full FORC at chosen cycles.
 
-Same fatigue cycles and per-decade PUND reads as PUNDFatigue, all in one WGFMU
+Same fatigue cycles and PUND read schedule as PUNDFatigue, all in one WGFMU
 run. A FORC (the waveform of the FORC procedure: Vstart, Vend, number of reversal
 curves, frequency) runs on the pristine device at cycle 0 and after each fatigue
 cycle count listed in "FORC at Cycles". Cycle 0 also gets a PUND read. Where a
@@ -94,7 +94,7 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 
 		# Every read as (cycle, 'PUND' or 'FORC'), in the order the WGFMU runs them.
 		forc_cycles = {0, *self.forc_cycle_list}
-		pund_cycles = self._compute_read_cycles(self.fatigue_count_int, self.reads_per_decade)
+		pund_cycles = self._read_cycles()
 		reads = []
 		for cycle in sorted({0, *pund_cycles, *forc_cycles}):
 			if cycle in forc_cycles:
