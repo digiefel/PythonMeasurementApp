@@ -50,10 +50,10 @@ Default configs live in `saved_configs`. The checked-in `global_config.json` use
 - `fallback_output_dir`: `output` resolves to the same local folder
 
 ## How to Run
-1. Prepare one or more device CSV files. See `docs/devices_csv.md` for the full format.
+1. Optionally, prepare one or more device CSV files. See `docs/devices_csv.md` for the full format.
 2. Double-click `Run Measurement App.cmd` to launch the GUI.
-3. In the Selection panel, choose a `Devices CSV` source (dropdown or `Browse...`).
-4. Select site/subsite/device/procedure.
+3. In the Selection panel, choose a `Devices CSV` source (dropdown or `Browse...`), if you have one.
+4. Select or type site/subsite/device, and select a procedure.
 5. Click "Run" to execute (logs to GUI, saves data).
 
 ## Documentation

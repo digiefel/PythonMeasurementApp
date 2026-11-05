@@ -19,7 +19,7 @@ from ui_wgfmu_preview import show_wgfmu_preview
 from data_management import selection_annotations
 
 from config import Config
-from models import has_position
+from models import Device, Site, Subsite, has_position
 from window_layout import center_popup, tile_main_window
 from instrumentio.codes import B1500_CH_ALL, B1500_CH_NOCH
 from instrumentio.constants import (
@@ -140,6 +140,9 @@ class MainUI:
         self.build_layout()
         for error in procedure_errors:
             self.log(error)
+        if self.config.devices_csv_error:
+            self.log(f"No devices CSV loaded; type site, subsite and device names by hand.\n"
+                     f"{self.config.devices_csv_error}")
         # Apply after Tk has calculated widget requests so they cannot resize it.
         tile_main_window(self.root)
         self._refresh_devices_csv_options()
@@ -572,24 +575,28 @@ class MainUI:
 
         site_label = ttk.Label(self.selection_frame, text="Site")
         site_label.grid(row=3, column=0, sticky="w")
-        self.site_cb = ttk.Combobox(self.selection_frame, state='readonly', values=[s.name for s in self.config.sites])
+        self.site_cb = ttk.Combobox(self.selection_frame, values=[s.name for s in self.config.sites])
         self.site_cb.grid(row=3, column=1, sticky="ew", pady=2)
         self.site_cb.bind('<<ComboboxSelected>>', self.on_site_selected)
-        attach_tooltip(site_label, "Select a single site here, or multiple sites in Site Selection. The chosen subsite and device names are measured at each site; motion uses the first available selected device.")
+        attach_tooltip(site_label, "Select or type a site, or select multiple sites in Site Selection. Separate typed sites with commas. The chosen subsite and device names are measured at each site; motion uses the first available selected device.")
 
         subsite_label = ttk.Label(self.selection_frame, text="Subsite")
         subsite_label.grid(row=4, column=0, sticky="w")
         self.subsite_cb = ttk.Combobox(self.selection_frame, textvariable=self.subsite_var)
         self.subsite_cb.grid(row=4, column=1, sticky="ew", pady=2)
         self.subsite_cb.bind('<<ComboboxSelected>>', self.update_devices)
-        attach_tooltip(subsite_label, "Select the subsite to measure within the chosen site.")
+        attach_tooltip(subsite_label, "Select or type the subsite to measure within the chosen site.")
 
         device_label = ttk.Label(self.selection_frame, text="Device")
         device_label.grid(row=5, column=0, sticky="w")
-        self.device_cb = ttk.Combobox(self.selection_frame, state='readonly')
+        self.device_cb = ttk.Combobox(self.selection_frame)
         self.device_cb.grid(row=5, column=1, sticky="ew", pady=2)
         self.device_cb.bind('<<ComboboxSelected>>', self.on_device_selected)
-        attach_tooltip(device_label, "Select a single device here, or multiple devices in Device Selection. Motion and coordinate alignment use the first selected device.")
+        attach_tooltip(device_label, "Select or type a device, or select multiple devices in Device Selection. Separate typed devices with commas. Names missing from the devices CSV have an unknown position. Motion and coordinate alignment use the first selected device.")
+        # Typed names apply on Enter or when the field loses focus.
+        for field in (self.site_cb, self.subsite_cb, self.device_cb):
+            field.bind('<Return>', self.apply_typed_names)
+            field.bind('<FocusOut>', self.apply_typed_names)
 
         # Device selection button and label
         device_sel_frame = ttk.Frame(self.selection_frame)
@@ -866,8 +873,11 @@ class MainUI:
         return self._selected_sites[0] if self._selected_sites else None
 
     def _set_selected_sites(self, names):
-        names = set(names)
-        self._selected_sites = tuple(site for site in self.config.sites if site.name in names)
+        """Select sites in devices CSV order, then sites the CSV lacks in the order given."""
+        names = tuple(dict.fromkeys(name for name in names if name))
+        listed = [site for site in self.config.sites if site.name in names]
+        listed_names = {site.name for site in listed}
+        self._selected_sites = tuple(listed + [Site(name) for name in names if name not in listed_names])
         self.site_cb.set(', '.join(self.selected_site_names))
         count = len(self._selected_sites)
         self.selected_sites_label.config(text=f"✓ {count} site{'s' if count != 1 else ''} selected" if count else '')
@@ -882,7 +892,8 @@ class MainUI:
 
     def open_site_selection(self):
         if not self.config.sites:
-            messagebox.showwarning("No Sites", "Please load a devices CSV with sites first.")
+            messagebox.showwarning("No Sites", "Site Selection lists the sites in the devices CSV, and none are loaded.\n\n"
+                                   "Type site names in the Site field instead, separated by commas.")
             return
 
         def read_position():
@@ -908,33 +919,40 @@ class MainUI:
             self.log(f"Selected {len(self._selected_sites)} site(s): {', '.join(self.selected_site_names)}")
 
     def update_subsites(self, event=None):
-        if not self._selected_sites:
-            self.subsite_cb['values'] = []
-            self.device_cb['values'] = []
-            self.subsite_var.set('')
-            self._set_selected_devices(())
-            return
+        previous = set(self.root.tk.splitlist(self.subsite_cb['values']))
         subsite_names = list(dict.fromkeys(sub.name for site in self._selected_sites for sub in site.subsites))
         self.subsite_cb['values'] = subsite_names
-        if not subsite_names:
-            self.device_cb['values'] = []
-            self.subsite_var.set('')
-            self._set_selected_devices(())
-            return
-        current = self.subsite_var.get()
-        self.subsite_var.set(current if current in subsite_names else subsite_names[0])
+        current = self.subsite_var.get().strip()
+        # A name picked from the previous list follows the new sites; a typed name stays.
+        if not current or (current in previous and current not in subsite_names):
+            current = subsite_names[0] if subsite_names else ''
+        self.subsite_var.set(current)
         self.update_devices()
 
     def update_devices(self, event=None):
-        choices = self._device_choices()
-        if not choices:
-            self.device_cb['values'] = []
-            self._set_selected_devices(())
-            return
-        device_names = [d.name for d in choices]
+        previous = set(self.root.tk.splitlist(self.device_cb['values']))
+        device_names = [d.name for d in self._device_choices()]
         self.device_cb['values'] = device_names
-        current = [name for name in self.selected_device_names if name in device_names]
-        self._set_selected_devices(current or device_names[:1])
+        # Names picked from the previous list follow the new subsite; typed names stay.
+        kept = [name for name in self.selected_device_names if name in device_names or name not in previous]
+        self._set_selected_devices(kept or device_names[:1])
+
+    def apply_typed_names(self, event=None):
+        """Apply what is written in the Site, Subsite and Device fields.
+
+        Several sites or devices are separated by commas. A name the devices CSV
+        lacks is measured with an unknown position.
+        """
+        sites = [name.strip() for name in self.site_cb.get().split(',') if name.strip()]
+        devices = [name.strip() for name in self.device_cb.get().split(',') if name.strip()]
+        # Read the device field first: refreshing the sites or subsite rewrites it.
+        typed_devices = devices != list(self.selected_device_names)
+        if sites != list(self.selected_site_names):
+            self._set_selected_sites(sites)
+        else:
+            self.update_devices()
+        if typed_devices:
+            self._set_selected_devices(devices)
 
     @property
     def selected_device_names(self):
@@ -957,9 +975,14 @@ class MainUI:
         return next((sub for sub in subsites if device in sub.devices), subsites[0] if subsites else None)
 
     def _set_selected_devices(self, names):
-        """Set the selection in site/subsite order and render all selection controls."""
-        names = set(names)
-        self._selected_devices = tuple(d for d in self._device_choices() if d.name in names)
+        """Select devices in subsite order, then devices the subsite lacks in the order given.
+
+        Renders all selection controls.
+        """
+        names = tuple(dict.fromkeys(name for name in names if name))
+        listed = [d for d in self._device_choices() if d.name in names]
+        listed_names = {d.name for d in listed}
+        self._selected_devices = tuple(listed + [Device(name, None, None) for name in names if name not in listed_names])
         self.device_cb.set(', '.join(self.selected_device_names))
         self._update_selected_devices_label()
         multiple = len(self._selected_devices) > 1
@@ -990,7 +1013,8 @@ class MainUI:
         subsite = self._selection_subsite()
         devices = self._device_choices()
         if not subsite or not devices:
-            messagebox.showwarning("No Devices", "Please select a subsite with devices first.")
+            messagebox.showwarning("No Devices", "Device Selection lists the devices in the devices CSV, and this subsite has none.\n\n"
+                                   "Type device names in the Device field instead, separated by commas.")
             return
         
         # Get currently selected device (used for origin if "set subsite origin" is checked)
@@ -1775,19 +1799,32 @@ class MainUI:
         self.log(f'Saved settings to {path}')
 
     def _build_measurement_queue(self):
-        """Resolve selected device names at every site and report missing entries."""
+        """Resolve the selected names at every site and report missing entries.
+
+        A name that no selected site lists in the devices CSV is measured with an
+        unknown position. A name that only some of the selected sites list is
+        reported as missing at the others.
+        """
+        subsite_name = self.subsite_var.get().strip()
+        listed_subsites = {sub.name for site in self._selected_sites for sub in site.subsites}
+        listed_devices = {device.name for device in self._device_choices()}
         queue, missing = [], []
         for site in self._selected_sites:
-            subsite = next((sub for sub in site.subsites if sub.name == self.subsite_var.get()), None)
-            if subsite is None:
-                missing.append(f"{site.name}: subsite '{self.subsite_var.get()}' is missing")
+            # A site missing from the devices CSV accepts every name.
+            in_csv = site in self.config.sites
+            subsite = next((sub for sub in site.subsites if sub.name == subsite_name), None)
+            if subsite is None and in_csv and subsite_name in listed_subsites:
+                missing.append(f"{site.name}: subsite '{subsite_name}' is missing")
                 continue
+            subsite = subsite or Subsite(subsite_name, x=None, y=None)
             devices = {device.name: device for device in subsite.devices}
             for name in self.selected_device_names:
                 if name in devices:
                     queue.append((site, subsite, devices[name]))
-                else:
+                elif in_csv and name in listed_devices:
                     missing.append(f"{site.name}/{subsite.name}: device '{name}' is missing")
+                else:
+                    queue.append((site, subsite, Device(name, None, None)))
         return queue, missing
 
     def _confirm_skip_missing(self, missing):
@@ -1847,19 +1884,11 @@ class MainUI:
         if not chip_id:
             messagebox.showerror("Missing Chip ID", "Please enter a Chip ID before running.")
             return
-        site = self._first_selected_site()
-        if site is None:
-            self.log("Select a valid site before running.")
-            return
-        subsite = self._selection_subsite()
-        if subsite is None:
-            self.log("Select a valid subsite before running.")
+        self.apply_typed_names()
+        if not self._selected_sites or not self.subsite_var.get().strip() or not self._selected_devices:
+            self.log("Enter a site, subsite and device before running.")
             return
         devices_to_run = list(self._selected_devices)
-        device = self._first_selected_device()
-        if device is None:
-            self.log("Select a valid device before running.")
-            return
         measurement_queue, missing = self._build_measurement_queue()
         if missing:
             if not self._confirm_skip_missing(missing):
@@ -2496,33 +2525,26 @@ class MainUI:
             self.render_param_form(saved_proc)
         elif saved_proc:
             self.log(f"Saved procedure '{saved_proc}' is unavailable; using '{self.proc_var.get() or 'none'}'.")
-        site_names = [s.name for s in self.config.sites]
-        if site_names:
-            preferred_site = last_sel.get('site')
-            if last_sel.get('selected_sites'):
-                self._set_selected_sites(last_sel['selected_sites'])
-            elif preferred_site in site_names:
-                self._set_selected_sites((preferred_site,))
-            elif 'selected_sites' in last_sel and not preferred_site:
-                self._set_selected_sites(())
-            else:
-                self._set_selected_sites(site_names[:1])
-            sub_names = list(dict.fromkeys(sub.name for site in self._selected_sites for sub in site.subsites))
-            if sub_names:
-                preferred_sub = last_sel.get('subsite')
-                self.subsite_var.set(preferred_sub if preferred_sub in sub_names else sub_names[0])
-                self.update_devices()
-                dev_names = [d.name for d in self._device_choices()]
-                if dev_names:
-                    preferred_dev = last_sel.get('device')
-                    if last_sel.get('selected_devices'):
-                        self._set_selected_devices(last_sel['selected_devices'])
-                    elif preferred_dev in dev_names:
-                        self._set_selected_devices((preferred_dev,))
-                    elif 'selected_devices' in last_sel and not preferred_dev:
-                        self._set_selected_devices(())
-                    else:
-                        self._set_selected_devices((dev_names[0],))
+        # Saved names are restored as written, including names the devices CSV lacks.
+        preferred_site = last_sel.get('site')
+        if last_sel.get('selected_sites'):
+            self._set_selected_sites(last_sel['selected_sites'])
+        elif preferred_site:
+            self._set_selected_sites((preferred_site,))
+        elif 'selected_sites' in last_sel:
+            self._set_selected_sites(())
+        else:
+            self._set_selected_sites([s.name for s in self.config.sites][:1])
+        if last_sel.get('subsite'):
+            self.subsite_var.set(last_sel['subsite'])
+            self.update_devices()
+        preferred_dev = last_sel.get('device')
+        if last_sel.get('selected_devices'):
+            self._set_selected_devices(last_sel['selected_devices'])
+        elif preferred_dev:
+            self._set_selected_devices((preferred_dev,))
+        elif 'selected_devices' in last_sel:
+            self._set_selected_devices(())
         if 'set_home_before_run' in last_sel:
             self.set_home_var.set(bool(last_sel['set_home_before_run']))
         if 'auto_separation_after_measurement' in last_sel:

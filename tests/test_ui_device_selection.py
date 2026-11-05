@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from models import Device, Site, Subsite
+from models import Device, Site, Subsite, has_position
 from tests.test_ui_connections import load_ui
 
 
@@ -20,6 +20,9 @@ class Value:
 
     def __setitem__(self, key, value):
         setattr(self, key, value)
+
+    def __getitem__(self, key):
+        return getattr(self, key, ())
 
 
 class DeviceSelectionTests(unittest.TestCase):
@@ -56,12 +59,16 @@ class DeviceSelectionTests(unittest.TestCase):
         ui.temp_ui = Mock()
         ui.temp_ui.build_last_selection_fragment.return_value = {}
         ui._apply_temp_comp = Mock()
+        ui.root.tk.splitlist = tuple
+        # Fill the fields and dropdown lists as the app does at startup.
+        ui._set_selected_sites(['site'])
 
     def test_multi_selection_display_order_and_first_device_agree(self):
-        self.ui._set_selected_devices({'A', 'B', 'missing'})
-        self.assertEqual(self.ui.selected_device_names, ('B', 'A'))
-        self.assertEqual(self.ui.device_cb.get(), 'B, A')
+        self.ui._set_selected_devices({'A', 'B', 'typed'})
+        self.assertEqual(self.ui.selected_device_names, ('B', 'A', 'typed'))
+        self.assertEqual(self.ui.device_cb.get(), 'B, A, typed')
         self.assertIs(self.ui._first_selected_device(), self.devices[0])
+        self.assertFalse(has_position(self.ui._selected_devices[2]))
         self.ui.go_to_device_button.configure.assert_called_with(text='Go To 1st Device')
         self.ui.set_reference_button.configure.assert_called_with(text='Set X,Y To 1st Device')
 

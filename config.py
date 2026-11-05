@@ -3,7 +3,7 @@ import os
 from copy import deepcopy
 from typing import Optional
 from instrumentio.constants import DEFAULT_SMU_CHANNEL_MAP
-from models import load_devices_csv
+from models import DeviceCsvError, load_devices_csv
 
 DEFAULT_CONFIG = {
     'gpib_address': 'GPIB0::17::INSTR',
@@ -54,7 +54,12 @@ class Config:
         self.devices_csv_path = self._resolve_csv_path(configured_csv or self.default_devices_csv_path)
         self.data['devices_csv_path'] = self.devices_csv_path
         self.sites = []
-        self.reload_devices()
+        # Without a usable devices CSV the app still starts; names are then typed by hand.
+        self.devices_csv_error = None
+        try:
+            self.reload_devices()
+        except DeviceCsvError as exc:
+            self.devices_csv_error = str(exc)
 
     def _resolve_config_path(self, path: str) -> str:
         return path if os.path.isabs(path) else os.path.join(self.config_root, path)

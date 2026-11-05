@@ -7,6 +7,10 @@ move. The GUI shows it as a tree:
 Site -> Subsite -> Device
 ```
 
+The devices CSV is optional. Without one, or for a target the CSV does not list,
+type the names into the **Site**, **Subsite**, and **Device** fields; see
+[Typing Names](#typing-names).
+
 The required columns are:
 
 ```csv
@@ -264,6 +268,27 @@ S01,FeCapBD,A1A2,50,0,breakdown;oxide
 
 Tags are saved on the loaded objects for future use. The current GUI does not
 filter or run by tag yet.
+
+## Typing Names
+
+The **Site**, **Subsite**, and **Device** fields accept any name, whether or not
+the devices CSV lists it. Separate several sites or devices with commas, for
+example `A1, A2, A3`. A typed name takes effect when you press Enter, leave the
+field, or click **Run**.
+
+A typed name the CSV does not list has an unknown position, so it is measured as
+described in [Omitting Coordinates](#omitting-coordinates). Results are saved
+under the typed names in the same way as for listed devices.
+
+When you pick a different site from the list, names you picked from the
+previous lists change to match the new site. Names you typed stay as they are.
+
+When several sites are selected, a subsite or device that only some of them list
+is reported as missing at the others. You can then skip those entries or cancel
+the run.
+
+If the app cannot load the devices CSV at startup, it starts with an empty list
+and writes the reason in the log.
 
 ## Rules To Remember
 
