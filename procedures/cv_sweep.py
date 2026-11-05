@@ -175,12 +175,6 @@ class CVSweepProcedure(MeasurementProcedure):
         if self.integration_value < 1:
             raise ValueError("Integration Value must be >= 1.")
 
-    def _expected_points(self):
-        if self.sweep_type == 'double':
-            # Double sweep reuses the turnaround endpoint, so the streamed point count is N forward + N-1 back.
-            return max(1, (2 * self.points) - 1)
-        return self.points
-
     def _compute_butterfly_segments(self):
         """Split 0 → Vmax → Vmin → 0 into 3 (start, stop, npoints) legs.
 
@@ -318,7 +312,6 @@ class CVSweepProcedure(MeasurementProcedure):
     def _run_standard_sweep(self, b1500, curve, freq, nonzero_statuses):
         """Single or double linear sweep with per-point live SCPI streaming."""
         mode = B1500_SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500_SWP_VF_SGLLIN
-        expected = self._expected_points()
         rows = []
 
         b1500.reset_timestamp()
@@ -335,7 +328,7 @@ class CVSweepProcedure(MeasurementProcedure):
             report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
             rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 
-        b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, expected, on_point)
+        b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, on_point)
         return rows
 
     def _run_butterfly_sweep(self, b1500, curve, freq, nonzero_statuses):
@@ -365,6 +358,6 @@ class CVSweepProcedure(MeasurementProcedure):
                 report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
                 rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
 
-            b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, npts, on_point)
+            b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, on_point)
 
         return rows

@@ -675,16 +675,23 @@ class B1500Session:
         return ret, eod.value, data_type.value, value.value, status.value, channel.value
 
     @_measurement_io
-    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback):
+    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, callback):
         """Execute a CV sweep via raw SCPI with per-point streaming.
 
-        Uses FMT 5,0 (comma terminator) + XE and reads five FMT5 tokens per point:
-        Time, Para1, Para2, OscLevel, DCBias.
+        Uses FMT 11,0 + XE and reads five tokens per point: Time, Para1, Para2,
+        OscLevel, DCBias. Reads until the instrument's end of data, so the caller
+        does not need to know how many points the sweep returns.
+
+        FMT 11 is ASCII with a header and 13-digit values (7 significant digits).
+        Every item ends with a comma except the last one of the sweep, which ends
+        with CR/LF^EOI; that marks the end of data (Programming Guide, FMT, Table
+        4-24, and "Data Output Format", p. 1-25). VISA reads stop at each comma,
+        so points still arrive one at a time.
 
         Setup still uses the CMU driver wrappers. The bulk sweepCv wrapper waits
         for *OPC? before returning data; this path reads after XE as each step
-        arrives. FMT 5,0 omits source data, so there are five tokens, not the six
-        produced by FMT 5,1. IMP determines Para1/Para2 (see descriptors.py).
+        arrives. FMT 11,0 omits source data, so there are five tokens, not the six
+        produced by FMT 11,1. IMP determines Para1/Para2 (see descriptors.py).
         Query errors only outside acquisition; always restore newline termination.
         Reference: docs/B1500 Programmers Guide 9018-01851.pdf, printed p. 1-19,
         FMT pp. 4-118 onward and CV sweep example Table 3-21.
@@ -693,12 +700,15 @@ class B1500Session:
             cmu_channel: CMU channel number.
             cmu_mode: IMP mode code (e.g. 100 for Cp-G).
             meas_range: Measurement range (0 = auto).
-            expected_points: Number of sweep steps to read.
             callback: Called as callback(step, dc_bias_v, para1, para2, time_s, s1, s2)
                       after each step completes.
         """
-        # Set comma-terminated format, timestamp, monitor
-        self._visa_write("FMT 5,0\n")
+        # Set ASCII format with an end-of-data terminator, timestamp, monitor
+        # TODO(speed): reading can dominate fast sweeps: each point costs five viRead calls of ~17 ASCII bytes.
+        #   An 8-byte binary format (FMT 13/14; the 4-byte FMT 3/4 drops time stamps) with fewer, larger reads
+        #   would cut that. It needs a new parser for binary items ("Binary Data Output Format", p. 1-36) and an
+        #   end-of-data check from EOI, since binary data have no comma to stop each read.
+        self._visa_write("FMT 11,0\n")
         self._visa_write("TSC 1\n")
         self._visa_write("LMN 1\n")
         # Measurement mode = CV DC bias sweep
@@ -715,16 +725,14 @@ class B1500Session:
         try:
             self._visa_write("XE\n")
 
-            def _read_token():
-                return parse_fmt5_item(self._visa_read(64))
-
-            for step in range(expected_points):
+            step = 0
+            while True:
                 # MM18 + LMN1 order: Time, Para1, Para2, Osc, DCBias.
-                _ts, _tc, time_type, time_s = _read_token()
-                p1_status, _c1, _t1, para1 = _read_token()
-                p2_status, _c2, _t2, para2 = _read_token()
-                _os, _oc, _ot, _ov = _read_token()
-                _ds, _dc, _dt, dc_bias_v = _read_token()
+                raw = [self._visa_read(64) for _ in range(5)]
+                _ts, _tc, time_type, time_s = parse_fmt5_item(raw[0])
+                p1_status, _c1, _t1, para1 = parse_fmt5_item(raw[1])
+                p2_status, _c2, _t2, para2 = parse_fmt5_item(raw[2])
+                _ds, _dc, _dt, dc_bias_v = parse_fmt5_item(raw[4])
 
                 if time_type != 'T':
                     raise RuntimeError(
@@ -740,6 +748,10 @@ class B1500Session:
                     parse_scpi_status(p1_status),
                     parse_scpi_status(p2_status),
                 )
+                # Only the last item of the sweep lacks the comma: that point was the last one.
+                if not raw[4].endswith(","):
+                    break
+                step += 1
         finally:
             # Restore normal termination (newline)
             self._visa_set_termchar(10, True)

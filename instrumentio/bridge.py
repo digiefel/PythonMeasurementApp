@@ -137,10 +137,10 @@ class RemoteB1500Session(_Proxy):
         """Keep a sequence of calls together; cancellation remains independent."""
         return self._calls
 
-    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, expected_points, callback, timeout_s=None):
+    def stream_cv_sweep(self, cmu_channel, cmu_mode, meas_range, callback, timeout_s=None):
         # Preserve the existing public timeout argument; execution is generic.
         return super().__getattr__("stream_cv_sweep")(
-            cmu_channel, cmu_mode, meas_range, expected_points, callback, _timeout_s=timeout_s,
+            cmu_channel, cmu_mode, meas_range, callback, _timeout_s=timeout_s,
         )
 
     def _check_open(self):
