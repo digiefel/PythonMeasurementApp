@@ -201,6 +201,9 @@ class PulseSwitchingProcedure(MeasurementProcedure):
 
             samples_v, samples_i = [], []  # every sample of the run, in order
             done = 0  # combinations already plotted and saved
+            # Wall-clock split of the run, logged at the end to see where offload time goes.
+            run_start = time.perf_counter()
+            read_s = save_s = 0.0
             while True:
                 self.check_stop(b1500)
                 status, _, _ = wgfmu.get_status()
@@ -209,10 +212,13 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                 available = min(measured_1, measured_2, expected_total)
                 if available > len(samples_v):
                     start = len(samples_v)
+                    tic = time.perf_counter()
                     samples_v += wgfmu.read_chunk(self.channel_1, start, available - start)
                     samples_i += wgfmu.read_chunk(self.channel_2, start, available - start)
+                    read_s += time.perf_counter() - tic
 
                 # Plot and save every combination that is now complete.
+                tic = time.perf_counter()
                 while done < len(built) and sample_ends[done] <= len(samples_v):
                     _, segments, _ = built[done]
                     rows, currents = [], {}
@@ -238,6 +244,7 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                     #  checks against 2 Pr A.
                     done += 1
                     self.report_progress(done, len(built), "Combinations measured")
+                save_s += time.perf_counter() - tic
 
                 # Status was read before fetching, so a completed run has no samples left to read.
                 if status == STATUS_COMPLETED:
@@ -250,6 +257,11 @@ class PulseSwitchingProcedure(MeasurementProcedure):
                 self.log(f"Warning: only {done} of {len(built)} combinations were measured "
                          f"({len(samples_v)}/{expected_total} samples).")
             self.log(f"Pulse Switching complete: {done} combinations saved as separate files")
+            self.log(f"Timing: {format_si_compact(pattern_starts[-1], 3)}s of pulses; "
+                     f"{time.perf_counter() - run_start:.2f} s from execute to last file, of which "
+                     f"{read_s:.2f} s reading {2 * len(samples_v)} values "
+                     f"({2 * len(samples_v) / max(read_s, 1e-9) / 1e3:.0f} k/s) and "
+                     f"{save_s:.2f} s saving and plotting")
         finally:
             try:
                 wgfmu.clear()
