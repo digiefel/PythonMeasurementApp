@@ -34,7 +34,7 @@ def _preview_sequence(ui):
 		spacing = settings['read_spacing']
 		if spacing == 'linear':
 			read_count = int(float(settings['linear_read_count']))
-			read_line = f"Linear Reads: {read_count} (plus cycle 1)"
+			read_line = f"Linear Reads: {read_count} (plus cycle 0)"
 		else:
 			read_count = int(float(settings['reads_per_decade']))
 			read_line = f"Reads per Decade: {read_count}"
@@ -93,10 +93,11 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		parameter('read_spacing', 'Read Spacing', 'log',
 		          Choice((('log', 'Log (per decade)'), ('linear', 'Linear')))),
 		parameter('reads_per_decade', 'Read Cycles per Decade (Log)', 10, int,
-		          help='Log spacing only. Reads at equal steps inside each decade: 10 gives cycles 1, 2, ..., 10, 20, ..., 100, ...'),
+		          help='Log spacing only. One read before any fatigue, then reads at equal steps inside each decade: '
+		               '10 gives cycles 0, 1, 2, ..., 10, 20, ..., 100, ...'),
 		parameter('linear_read_count', 'Read Cycles in Total (Linear)', 10, int,
-		          help='Linear spacing only. Reads at equal steps over the whole run, plus one at cycle 1: '
-		               '10 reads over 1e6 cycles gives cycles 1, 1e5, 2e5, ..., 1e6.'),
+		          help='Linear spacing only. One read before any fatigue, then this many at equal steps over the whole run: '
+		               '10 over 1e6 cycles gives cycles 0, 1e5, 2e5, ..., 1e6.'),
         parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                   Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
         parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0],
@@ -279,29 +280,31 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 	@staticmethod
 	def _compute_read_cycles(cycle_count: int, spacing: str, read_count: int) -> list[int]:
-		"""Return the cycles to read at, with cycle 1 and the final cycle always included.
+		"""Return the cycles to read at: a read at cycle N comes after N fatigue cycles.
+
+		Cycle 0 (before any fatigue) and the final cycle are always included.
 
 		'log': each decade 10^d to 10^(d+1) gets read_count reads at the multiples of
-		10^(d+1)/read_count above 10^d, rounded to whole cycles: 2 gives 1, 5, 10, 50, 100, ...;
-		10 gives 1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer reads when read_count > 9.
+		10^(d+1)/read_count from 10^d on, rounded to whole cycles: 2 gives 0, 5, 10, 50, 100, ...;
+		10 gives 0, 1, 2, ..., 10, 20, ..., 100, ... The first decade has fewer reads when read_count > 10.
 
-		'linear': read_count reads at equal steps of cycle_count/read_count, plus cycle 1:
-		10 over 1e6 cycles gives 1, 1e5, 2e5, ..., 1e6.
+		'linear': read_count reads at equal steps of cycle_count/read_count, after the one at cycle 0:
+		10 over 1e6 cycles gives 0, 1e5, 2e5, ..., 1e6.
 		"""
 		n = int(cycle_count)
 		count = int(read_count)
 		if count <= 0 or n < 1:
 			return []
-		cycles = {1, n}
+		cycles = {0, n}
 		if spacing == 'linear':
 			cycles.update(int(round(k * n / count)) for k in range(1, count + 1))
-			return sorted(c for c in cycles if c >= 1)
+			return sorted(cycles)
 		decade = 0
 		while 10 ** decade < n:
 			step = 10 ** (decade + 1) / count
 			for k in range(1, count + 1):
 				cycle = int(round(k * step))
-				if 10 ** decade < cycle <= n:
+				if 10 ** decade <= cycle <= n:
 					cycles.add(cycle)
 			decade += 1
 		return sorted(cycles)
