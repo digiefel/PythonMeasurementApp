@@ -230,23 +230,25 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 	def _build_triangle_fatigue_vectors(self):
 		"""Triangular PN fatigue pulses, then optional idle delay."""
-		vectors = self._build_triangular_pn_vectors(self.fatigue_freq)
+		vectors = self._build_triangular_pn_vectors(self.fatigue_freq, self.v_pos, self.v_neg)
 		self._append_idle_hold(vectors, self.fatigue_delay)
 		return vectors
 
-	def _build_triangular_pulse_vectors(self, frequency, signs):
+	def _build_triangular_pulse_vectors(self, frequency, signs, v_pos, v_neg):
 		"""Triangular PUND timing: ramp out, ramp back, base hold of pund_gap periods.
 
+		Sign +1 pulses go to v_pos, -1 pulses to v_neg.
 		The tallest pulse ramps for 0.5T each way, as in PN; shorter pulses ramp at the same speed.
 		"""
 		T = 1.0 / frequency
 		gap = self.pund_gap * T
 		edge = 0.1 * T
+		vmax = max(abs(v_pos - self.v_base), abs(v_neg - self.v_base))
 
 		vectors = [(edge, self.v_base)]
 		for sign in signs:
-			level = self.v_pos if sign > 0 else self.v_neg
-			ramp = 0.5 * T * abs(level - self.v_base) / self.vmax
+			level = v_pos if sign > 0 else v_neg
+			ramp = 0.5 * T * abs(level - self.v_base) / vmax
 			vectors += [
 				(ramp, level),
 				(ramp, self.v_base),
@@ -255,16 +257,17 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		vectors[-1] = (edge, self._idle_voltage())
 		return vectors
 
-	def _build_triangular_pn_vectors(self, frequency):
-		"""Triangular PN pulses with idle only before and after the PN pair.
+	def _build_triangular_pn_vectors(self, frequency, v_pos, v_neg):
+		"""Triangular PN pulses, to v_pos then v_neg, with idle only before and after the pair.
 
 		The tallest pulse ramps for 0.5T each way; shorter pulses ramp at the same speed.
 		"""
 		T = 1.0 / frequency
 		edge = 0.1 * T
+		vmax = max(abs(v_pos - self.v_base), abs(v_neg - self.v_base))
 		vectors = [(edge, self.v_base)]
-		for level in (self.v_pos, self.v_neg):
-			ramp = 0.5 * T * abs(level - self.v_base) / self.vmax
+		for level in (v_pos, v_neg):
+			ramp = 0.5 * T * abs(level - self.v_base) / vmax
 			vectors.append((ramp, level))
 			vectors.append((ramp, self.v_base))
 		vectors.append((edge, self._idle_voltage()))
@@ -275,14 +278,18 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			return self._build_square_fatigue_vectors()
 		if self.fatigue_pulse_type == 'triangle':
 			return self._build_triangle_fatigue_vectors()
-		vectors = self._build_triangular_pulse_vectors(self.fatigue_freq, self.PUND_SIGNS)
+		vectors = self._build_triangular_pulse_vectors(self.fatigue_freq, self.PUND_SIGNS, self.v_pos, self.v_neg)
 		self._append_idle_hold(vectors, self.fatigue_delay)
 		return vectors
 
+	def _read_levels(self):
+		"""Voltages of the read pulses: (P and U level, N and D level). Here the same as fatigue."""
+		return self.v_pos, self.v_neg
+
 	def _build_read_kind_vectors(self, frequency, kind):
 		if kind == 'PN':
-			return self._build_triangular_pn_vectors(frequency)
-		return self._build_triangular_pulse_vectors(frequency, self.PUND_SIGNS)
+			return self._build_triangular_pn_vectors(frequency, *self._read_levels())
+		return self._build_triangular_pulse_vectors(frequency, self.PUND_SIGNS, *self._read_levels())
 
 	def _build_read_vectors(self, frequency):
 		"""One read as a single waveform, as FORCFatigue and FTJFatigue run it: PN and/or PUND,

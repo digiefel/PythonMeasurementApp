@@ -2,7 +2,9 @@
 FORC Fatigue Procedure - PUND reads during fatigue, with a full FORC at chosen cycles.
 
 Same fatigue cycles and PUND read schedule as PUNDFatigue, all in one WGFMU
-run. A FORC (the waveform of the FORC procedure: Vstart, Vend, number of reversal
+run. The fatigue cycles have their own voltages, Fatigue Vpos and Vneg. The reads
+use Vstart and Vend: the PUND preset, N and D go to Vend, P and U to Vstart. Between
+pulses everything rests at 0 V. A FORC (the waveform of the FORC procedure: Vstart, Vend, number of reversal
 curves, frequency) runs on the pristine device at cycle 0 and after each fatigue
 cycle count listed in "FORC at Cycles". Cycle 0 also gets a PUND read. Where a
 cycle has both, the FORC comes first, so the cycle-0 FORC sees a pristine device.
@@ -21,6 +23,7 @@ first and last. Inverse-polarity FORCs are drawn in green, with their maps in a
 second row.
 """
 import time
+from dataclasses import replace
 import numpy as np
 from plotting import PlotDef, Curve, Heatmap
 from procedures.base import parameter
@@ -35,16 +38,28 @@ HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
 # Voltage sign of each FORC read: the inverse-polarity one is the same waveform negated.
 FORC_SIGNS = {'FORC': 1, 'FORC_inversepolarity': -1}
 
-_PUND_FATIGUE_PARAMETERS = PUNDFatigueProcedure.PARAMETERS
+_PUND_FATIGUE_PARAMETERS = {p.key: p for p in PUNDFatigueProcedure.PARAMETERS}
 _FORC_PARAMETERS = {p.key: p for p in FORCProcedure.PARAMETERS}
 
 
 class FORCFatigueProcedure(PUNDFatigueProcedure):
 	NAME = "FORCFatigue"
 	PARAMETERS = (
-		*_PUND_FATIGUE_PARAMETERS[:-2],
-		_FORC_PARAMETERS['vstart'],
-		_FORC_PARAMETERS['vend'],
+		*(_PUND_FATIGUE_PARAMETERS[key] for key in ('gpib_address', 'channel_1', 'channel_2')),
+		replace(_PUND_FATIGUE_PARAMETERS['v_pos'], label='Fatigue Vpos (V)',
+		        help='Peak voltage of the positive fatigue pulses.'),
+		replace(_PUND_FATIGUE_PARAMETERS['v_neg'], label='Fatigue Vneg (V)',
+		        help='Peak voltage of the negative fatigue pulses.'),
+		*(_PUND_FATIGUE_PARAMETERS[key] for key in
+		  ('fatigue_freq', 'fatigue_delay', 'fatigue_count', 'fatigue_pulse_type')),
+		replace(_FORC_PARAMETERS['vstart'],
+		        help="FORC saturation voltage: every reversal curve starts and ends here. "
+		             "Also the P and U level of the PUND reads."),
+		replace(_FORC_PARAMETERS['vend'],
+		        help="Last FORC reversal voltage. Also the preset, N and D level of the PUND reads."),
+		*(_PUND_FATIGUE_PARAMETERS[key] for key in
+		  ('read_pulse_freq', 'read_pulse_type', 'read_delay', 'pund_gap',
+		   'read_spacing', 'reads_per_decade', 'linear_read_count')),
 		_FORC_PARAMETERS['forc_count'],
 		# Renamed: this form already has a fatigue and a read frequency.
 		parameter('frequency', 'FORC Frequency (Hz)', 1e3, float, help=_FORC_PARAMETERS['frequency'].help),
@@ -54,10 +69,16 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 		parameter('forc_inverse', 'Also measure inverse polarity', False, bool,
 		          help="Right after each FORC, run it again with Vstart and Vend negated, "
 		               "and save it in its own file ending in _FORC_inversepolarity.csv."),
-		*_PUND_FATIGUE_PARAMETERS[-2:],  # measurement ranges
+		*(_PUND_FATIGUE_PARAMETERS[key] for key in ('meas_range_1', 'current_ranges')),
 	)
+	# Everything rests at 0 V: the FORC starts and ends there, so a base voltage would never apply to it.
+	v_base = 0.0
+	hold_base = False
 	# TODO: the inherited "Preview Sequence" shows the PUND reads only, not cycle 0 or the FORCs.
 	# TODO: the inherited Read Delay field is not used yet; reads here still start after one read period.
+
+	def _read_levels(self):
+		return self.vstart, self.vend
 
 	def _validate_settings(self):
 		super()._validate_settings()
