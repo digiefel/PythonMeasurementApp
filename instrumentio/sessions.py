@@ -566,6 +566,21 @@ class B1500Session:
             count,
         )
 
+    def release_outputs(self):
+        """Disconnect every measurement terminal from the instrument.
+
+        CL opens the output switch of every channel, SMU and CMU alike
+        (Programming Guide 1-15). *RST then restores the initial settings,
+        which also open the SCUU path (2-87, Tables 2-10 and 2-11). Finally,
+        the WGFMU channels are reset and disabled, which returns each RSU to
+        its SMU input, now switched off.
+        """
+        _attempt_all(
+            lambda: self.set_switch(B1500_CH_ALL, False),
+            self.reset,
+            lambda: self._wgfmu.release() if self._wgfmu is not None else None,
+        )
+
     def zero_output(self, channel):
         """Return channel to zero output state."""
         ret = dll_b1500.agb1500_zeroOutput(self.session, channel)
@@ -1110,13 +1125,22 @@ class WGFMUSession:
             else:
                 warnings.warn(f"{context}: warning code {ret}", RuntimeWarning)
 
-    def close(self):
+    def release(self):
+        """Reset every channel and disable the connected ones; the session stays open.
+
+        A disabled channel's RSU returns to its SMU input (B1530A Guide 1-7).
+        """
         # abort retains the instantaneous voltage; closing VISA alone does not
         # disable channels. B1530A Guide 4-9, 4-21, 4-50; example 3-24.
         _attempt_all(
             self.initialize,
             *(lambda channel=channel: self.disconnect(channel)
               for channel in sorted(self._connected_channels)),
+        )
+
+    def close(self):
+        _attempt_all(
+            self.release,
             lambda: self._check_ret(dll_wgfmu.WGFMU_closeSession(), "WGFMU close session"),
         )
 

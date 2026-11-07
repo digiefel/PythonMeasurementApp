@@ -535,6 +535,7 @@ class MeasurementRunner:
             b1500 = self.get_b1500(address)
             with b1500.exclusive():
                 test.execute(b1500, None)
+                b1500.release_outputs()
             return test.results, test.path
         except InstrumentCancelled as exc:
             self._stop_instrument()
@@ -596,6 +597,8 @@ class MeasurementRunner:
             self.log(f'Connected to B1500 at {gpib_address}')
             with b1500.exclusive():
                 proc.execute(b1500, device)
+                # Leave the terminals open for the probes; errors and aborts get there through _stop_instrument.
+                b1500.release_outputs()
         except InstrumentCancelled as exc:
             self._stop_instrument()
             if self.stop_event.is_set():
