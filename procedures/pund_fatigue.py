@@ -12,8 +12,8 @@ Every read is saved as its own CSV as soon as it is measured:
 for example ``<base>_PUND_10kHz_c100.csv``.
 
 The live plot has one row per read frequency: voltage (grey) and current vs time,
-and beside it the I-V and Q-V loops. PN current is blue and PN charge green;
-PUND current is orange and PUND charge purple. Early cycles are darker, later ones brighter.
+then the I-V and Q-V loops. PN reads are blue, PUND reads red, darker for early
+cycles and brighter for later ones.
 """
 import time
 import numpy as np
@@ -37,12 +37,8 @@ from instrumentio.codes import (
 from instrumentio.constants import WGFMU_MEASURE_VOLTAGE_RANGES
 
 HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
-# The current offset of a read is the mean of its first samples, taken at Vbase before the first pulse.
-BASELINE_POINTS = 50
 VOLTAGE_COLOR = (0.55, 0.55, 0.55)
-# Base colour of each read type's current, and of its charge on the Q-V plot.
-PHASE_COLORS = {'pn': (0.12, 0.47, 0.71), 'pund': (1.0, 0.5, 0.05),
-                'pn_charge': (0.17, 0.63, 0.17), 'pund_charge': (0.58, 0.40, 0.74)}
+PHASE_COLORS = {'pn': (0.12, 0.47, 0.71), 'pund': (0.84, 0.15, 0.16)}
 
 
 def _preview_sequence(ui):
@@ -295,7 +291,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 	@staticmethod
 	def _phase_color(phase_key, intensity):
-		"""Colour of a read: phase_key is 'pn' or 'pund', with '_charge' for its Q-V curve."""
+		"""Colour of a read: phase_key is 'pn' or 'pund'."""
 		shade = 0.45 + 0.55 * intensity
 		return tuple(c * shade for c in PHASE_COLORS[phase_key])
 
@@ -427,7 +423,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			)
 
 	def _configure_plot(self, device, reads, plotted, time_spans):
-		"""One row per read frequency: V and I vs time, then I-V and Q-V on one plot.
+		"""One row per read frequency: V and I vs time, I-V, then Q-V.
 
 		The time plot gets 2/3 of the width, or half with a single frequency.
 		Read r of `reads` draws into sources V_r, I_r, IV_r and QV_r.
@@ -435,8 +431,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		read_cycles = sorted({cycle for cycle, _, _ in reads})
 		max_cycle = max(read_cycles[-1], 1)
 		log_max = np.log10(max_cycle)
-		first_frequency = self.read_frequencies[0]
-		panels = {(frequency, panel): [] for frequency in self.read_frequencies for panel in ('time', 'loop')}
+		panels = {(frequency, panel): [] for frequency in self.read_frequencies for panel in ('time', 'iv', 'qv')}
 		for read_idx in sorted(plotted):
 			cycle, frequency, kind = reads[read_idx]
 			if self.read_spacing == 'linear':
@@ -444,19 +439,13 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			else:
 				progress = np.log10(max(cycle, 1)) / max(log_max, 1)
 			color = self._phase_color(kind.lower(), 0.2 + 0.7 * progress)
-			# One legend for the whole figure, on the first loop plot: first and last read cycle.
-			show = frequency == first_frequency and cycle in (read_cycles[0], read_cycles[-1])
-			label = f"{kind} cycle {cycle}"
 			panels[frequency, 'time'] += [
 				# The applied voltage is the same at every cycle, so only the current carries the cycle colour.
 				Curve(f"V_{read_idx}", color=VOLTAGE_COLOR, yaxis=0, show_in_legend=False),
 				Curve(f"I_{read_idx}", color=color, yaxis=1, show_in_legend=False),
 			]
-			panels[frequency, 'loop'] += [
-				Curve(f"IV_{read_idx}", color=color, yaxis=0, legend_label=f"I, {label}", show_in_legend=show),
-				Curve(f"QV_{read_idx}", color=self._phase_color(f"{kind.lower()}_charge", 0.2 + 0.7 * progress),
-				      yaxis=1, legend_label=f"Q, {label}", show_in_legend=show),
-			]
+			panels[frequency, 'iv'].append(Curve(f"IV_{read_idx}", color=color, show_in_legend=False))
+			panels[frequency, 'qv'].append(Curve(f"QV_{read_idx}", color=color, show_in_legend=False))
 
 		v_margin = max(self.vmax * 0.1, 0.1)
 		y_min = min(0.0, self.v_pos, self.v_neg, self.v_base) - v_margin
@@ -464,18 +453,21 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		plots = []
 		for row, frequency in enumerate(self.read_frequencies):
 			name = f"{format_si_compact(frequency)}Hz"
+			# No legend, as it covers the data; the first title explains the colours instead.
+			key = "   PN blue, PUND red, brighter = later cycle" if row == 0 else ""
 			plots += [
-				PlotDef(f"time_{row}", row=row, col=0, title=name,
+				PlotDef(f"time_{row}", row=row, col=0, title=name + key,
 				        xlabel="Time (s)", ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=(0, time_spans[frequency]), ylims=((y_min, y_max), None),
 				        elements=panels[frequency, 'time']),
-				PlotDef(f"loop_{row}", row=row, col=1, title=f"{name} I-V, Q-V",
-				        xlabel="Voltage (V)", ylabels=("Current (uA)", "Charge (nC)"),
-				        elements=panels[frequency, 'loop']),
+				PlotDef(f"iv_{row}", row=row, col=1, title=f"{name} I-V",
+				        xlabel="Voltage (V)", ylabels=("Current (uA)",), elements=panels[frequency, 'iv']),
+				PlotDef(f"qv_{row}", row=row, col=2, title=f"{name} Q-V",
+				        xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=panels[frequency, 'qv']),
 			]
 		# TODO: past about 5 frequencies the rows get too thin; wrap them into a second column then.
 		self.runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', plots,
-		                           column_ratios=[1.0, 1.0] if len(self.read_frequencies) == 1 else [2.0, 1.0])
+		                           column_ratios=[2.0, 1.0, 1.0] if len(self.read_frequencies) == 1 else [4.0, 1.0, 1.0])
 
 	def measure(self, device):
 		b1500 = self.b1500
@@ -609,14 +601,16 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 						if done in plotted:
 							v, cur = np.array(voltages[span]), np.array(currents[span])
 							t_plot = plot_start + np.arange(len(v)) * interval
+							# The current offset is the mean over the read's first 0.1 period, at Vbase before the first pulse.
+							n_base = max(1, int(0.1 / frequency / interval))
 							# Switching current: offset removed and negated, as channel 2 sits on the 0 V side.
-							i_switch = -(cur - cur[:BASELINE_POINTS].mean())
-							charge = np.cumsum(i_switch[BASELINE_POINTS:]) * interval
+							i_switch = -(cur - cur[:n_base].mean())
+							charge = np.cumsum(i_switch[n_base:]) * interval
 							self.runner.plot.append_batch({
 								f"V_{done}": list(zip(t_plot, v)),
 								f"I_{done}": list(zip(t_plot, cur * 1e6)),
-								f"IV_{done}": list(zip(v[BASELINE_POINTS:], i_switch[BASELINE_POINTS:] * 1e6)),
-								f"QV_{done}": list(zip(v[BASELINE_POINTS:], charge * 1e9)),
+								f"IV_{done}": list(zip(v[n_base:], i_switch[n_base:] * 1e6)),
+								f"QV_{done}": list(zip(v[n_base:], charge * 1e9)),
 							})
 						done += 1
 
