@@ -11,9 +11,9 @@ Every read is saved as its own CSV as soon as it is measured:
 ``<base>_PN_<frequency>Hz_c<cycle>.csv`` and ``<base>_PUND_<frequency>Hz_c<cycle>.csv``,
 for example ``<base>_PUND_10kHz_c100.csv``.
 
-The live plot has, per read frequency, a voltage and current vs time plot over the
-full width, and below those an I-V and a Q-V plot per frequency. PN reads are blue,
-PUND reads orange, darker for early cycles and brighter for later ones.
+The live plot has one row per read frequency: voltage (grey) and current vs time,
+and beside it the I-V and Q-V (lighter) loops. PN reads are blue, PUND reads
+orange, darker for early cycles and brighter for later ones.
 """
 import time
 import numpy as np
@@ -39,6 +39,7 @@ from instrumentio.constants import WGFMU_MEASURE_VOLTAGE_RANGES
 HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
 # The current offset of a read is the mean of its first samples, taken at Vbase before the first pulse.
 BASELINE_POINTS = 50
+VOLTAGE_COLOR = (0.55, 0.55, 0.55)
 
 
 def _preview_sequence(ui):
@@ -424,14 +425,16 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			)
 
 	def _configure_plot(self, device, reads, plotted, time_spans):
-		"""Per frequency: V and I vs time over the full width, then a row with I-V and Q-V.
+		"""One row per read frequency: V and I vs time, then I-V and Q-V on one plot.
 
+		The time plot gets 2/3 of the width, or half with a single frequency.
 		Read r of `reads` draws into sources V_r, I_r, IV_r and QV_r.
 		"""
 		read_cycles = sorted({cycle for cycle, _, _ in reads})
 		max_cycle = max(read_cycles[-1], 1)
 		log_max = np.log10(max_cycle)
-		panels = {(frequency, panel): [] for frequency in self.read_frequencies for panel in ('time', 'iv', 'qv')}
+		first_frequency = self.read_frequencies[0]
+		panels = {(frequency, panel): [] for frequency in self.read_frequencies for panel in ('time', 'loop')}
 		for read_idx in sorted(plotted):
 			cycle, frequency, kind = reads[read_idx]
 			if self.read_spacing == 'linear':
@@ -439,34 +442,38 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			else:
 				progress = np.log10(max(cycle, 1)) / max(log_max, 1)
 			color = self._phase_color(kind.lower(), 0.2 + 0.7 * progress)
-			show = cycle in (read_cycles[0], read_cycles[-1])
+			# One legend for the whole figure, on the first loop plot: first and last read cycle.
+			show = frequency == first_frequency and cycle in (read_cycles[0], read_cycles[-1])
 			label = f"{kind} cycle {cycle}"
 			panels[frequency, 'time'] += [
-				Curve(f"V_{read_idx}", color=color, yaxis=0, legend_label=f"V ({label})", show_in_legend=show),
-				Curve(f"I_{read_idx}", color=color, yaxis=1, legend_label=f"I ({label})", show_in_legend=show),
+				# The applied voltage is the same at every cycle, so only the current carries the cycle colour.
+				Curve(f"V_{read_idx}", color=VOLTAGE_COLOR, yaxis=0, show_in_legend=False),
+				Curve(f"I_{read_idx}", color=color, yaxis=1, show_in_legend=False),
 			]
-			panels[frequency, 'iv'].append(Curve(f"IV_{read_idx}", color=color, legend_label=label, show_in_legend=show))
-			panels[frequency, 'qv'].append(Curve(f"QV_{read_idx}", color=color, legend_label=label, show_in_legend=show))
+			panels[frequency, 'loop'] += [
+				Curve(f"IV_{read_idx}", color=color, yaxis=0, legend_label=label, show_in_legend=show),
+				# The viewer draws no dashed lines, so charge is the same colour mixed halfway to white.
+				Curve(f"QV_{read_idx}", color=tuple(0.5 + 0.5 * c for c in color), yaxis=1, show_in_legend=False),
+			]
 
 		v_margin = max(self.vmax * 0.1, 0.1)
 		y_min = min(0.0, self.v_pos, self.v_neg, self.v_base) - v_margin
 		y_max = max(0.0, self.v_pos, self.v_neg, self.v_base) + v_margin
-		count = len(self.read_frequencies)
 		plots = []
 		for row, frequency in enumerate(self.read_frequencies):
 			name = f"{format_si_compact(frequency)}Hz"
 			plots += [
-				PlotDef(f"time_{row}", row=row, col=0, colspan=2, title=name,
+				PlotDef(f"time_{row}", row=row, col=0, title=name,
 				        xlabel="Time (s)", ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=(0, time_spans[frequency]), ylims=((y_min, y_max), None),
 				        elements=panels[frequency, 'time']),
-				PlotDef(f"iv_{row}", row=count + row, col=0, title=f"{name} I-V",
-				        xlabel="Voltage (V)", ylabels=("Current (uA)",), elements=panels[frequency, 'iv']),
-				PlotDef(f"qv_{row}", row=count + row, col=1, title=f"{name} Q-V",
-				        xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=panels[frequency, 'qv']),
+				PlotDef(f"loop_{row}", row=row, col=1, title=f"{name} I-V, Q-V (lighter)",
+				        xlabel="Voltage (V)", ylabels=("Current (uA)", "Charge (nC)"),
+				        elements=panels[frequency, 'loop']),
 			]
+		# TODO: past about 5 frequencies the rows get too thin; wrap them into a second column then.
 		self.runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', plots,
-		                           row_ratios=[2.0] * count + [1.0] * count)
+		                           column_ratios=[1.0, 1.0] if len(self.read_frequencies) == 1 else [2.0, 1.0])
 
 	def measure(self, device):
 		b1500 = self.b1500
