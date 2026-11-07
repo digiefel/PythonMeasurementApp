@@ -12,8 +12,8 @@ Every read is saved as its own CSV as soon as it is measured:
 for example ``<base>_PUND_10kHz_c100.csv``.
 
 The live plot has one row per read frequency: voltage (grey) and current vs time,
-and beside it the I-V and Q-V (lighter) loops. PN reads are blue, PUND reads
-orange, darker for early cycles and brighter for later ones.
+and beside it the I-V and Q-V loops. PN current is blue and PN charge green;
+PUND current is orange and PUND charge purple. Early cycles are darker, later ones brighter.
 """
 import time
 import numpy as np
@@ -40,6 +40,9 @@ HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
 # The current offset of a read is the mean of its first samples, taken at Vbase before the first pulse.
 BASELINE_POINTS = 50
 VOLTAGE_COLOR = (0.55, 0.55, 0.55)
+# Base colour of each read type's current, and of its charge on the Q-V plot.
+PHASE_COLORS = {'pn': (0.12, 0.47, 0.71), 'pund': (1.0, 0.5, 0.05),
+                'pn_charge': (0.17, 0.63, 0.17), 'pund_charge': (0.58, 0.40, 0.74)}
 
 
 def _preview_sequence(ui):
@@ -292,10 +295,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 
 	@staticmethod
 	def _phase_color(phase_key, intensity):
+		"""Colour of a read: phase_key is 'pn' or 'pund', with '_charge' for its Q-V curve."""
 		shade = 0.45 + 0.55 * intensity
-		if phase_key == 'pn':
-			return (0.12 * shade, 0.47 * shade, 0.71 * shade)
-		return (1.0 * shade, 0.5 * shade, 0.05 * shade)
+		return tuple(c * shade for c in PHASE_COLORS[phase_key])
 
 	def _iv_vectors_for(self, vectors):
 		# Channel 2 always stays at 0 V; all PG/base/fatigue/read voltage is applied only on channel 1.
@@ -451,9 +453,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				Curve(f"I_{read_idx}", color=color, yaxis=1, show_in_legend=False),
 			]
 			panels[frequency, 'loop'] += [
-				Curve(f"IV_{read_idx}", color=color, yaxis=0, legend_label=label, show_in_legend=show),
-				# The viewer draws no dashed lines, so charge is the same colour mixed halfway to white.
-				Curve(f"QV_{read_idx}", color=tuple(0.5 + 0.5 * c for c in color), yaxis=1, show_in_legend=False),
+				Curve(f"IV_{read_idx}", color=color, yaxis=0, legend_label=f"I, {label}", show_in_legend=show),
+				Curve(f"QV_{read_idx}", color=self._phase_color(f"{kind.lower()}_charge", 0.2 + 0.7 * progress),
+				      yaxis=1, legend_label=f"Q, {label}", show_in_legend=show),
 			]
 
 		v_margin = max(self.vmax * 0.1, 0.1)
@@ -467,7 +469,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				        xlabel="Time (s)", ylabels=("Voltage (V)", "Current (uA)"),
 				        xlim=(0, time_spans[frequency]), ylims=((y_min, y_max), None),
 				        elements=panels[frequency, 'time']),
-				PlotDef(f"loop_{row}", row=row, col=1, title=f"{name} I-V, Q-V (lighter)",
+				PlotDef(f"loop_{row}", row=row, col=1, title=f"{name} I-V, Q-V",
 				        xlabel="Voltage (V)", ylabels=("Current (uA)", "Charge (nC)"),
 				        elements=panels[frequency, 'loop']),
 			]
