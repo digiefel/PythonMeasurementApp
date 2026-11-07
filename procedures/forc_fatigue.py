@@ -60,6 +60,9 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 
 	def _validate_settings(self):
 		super()._validate_settings()
+		# TODO: read at every frequency once the fatigue procedures are rewritten as a chain.
+		if len(self.read_frequencies) > 1:
+			raise ValueError("FORCFatigue reads at one frequency only; give a single read frequency.")
 		FORCProcedure._build_forc_vectors(self)
 		try:
 			self.forc_cycle_list = sorted({int(float(c)) for c in str(self.forc_cycles).split(',') if c.strip()})
@@ -125,8 +128,8 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 
 		initial_pg = self._idle_voltage()
 		settle_duration = 1.0 / self.fatigue_freq
-		pund_vectors = self._build_read_vectors()
-		pund_interval = self._sample_interval()
+		pund_vectors = self._build_read_vectors(self.read_frequencies[0])
+		pund_interval = self._sample_interval(self.read_frequencies[0])
 		forc_vectors, hold, forcs = FORCProcedure._build_forc_vectors(self)
 		# 1000 samples per full FORC triangle, rounded to the 10 ns WGFMU resolution, as in FORC.
 		forc_interval = max(round(1e-3 / self.frequency / self.RESOLUTION), 1) * self.RESOLUTION

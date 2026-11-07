@@ -39,6 +39,9 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 
 	def _validate_settings(self):
 		super()._validate_settings()
+		# TODO: read at every frequency once the fatigue procedures are rewritten as a chain.
+		if len(self.read_frequencies) > 1:
+			raise ValueError("FTJFatigue reads at one frequency only; give a single read frequency.")
 		if self.channel_1 not in RSU_SMU or self.channel_2 not in RSU_SMU or self.channel_1 == self.channel_2:
 			raise ValueError(f"FTJFatigue needs WGFMU channels {sorted(RSU_SMU)}, which have SMUs on their RSUs.")
 		if self.smu_current_compliance <= 0:
@@ -171,10 +174,10 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 
 		read_cycles = self._read_cycles()
 		fatigue_vectors = self._build_fatigue_vectors()
-		read_vectors = self._build_read_vectors()
+		read_vectors = self._build_read_vectors(self.read_frequencies[0])
 		read_duration = sum(dt for dt, _ in read_vectors)
 		settle_duration = 1.0 / self.fatigue_freq
-		sample_interval = self._sample_interval()
+		sample_interval = self._sample_interval(self.read_frequencies[0])
 		sample_points = max(1, int(round(read_duration / sample_interval)))
 		self._configure_plot(device, read_cycles, read_duration)
 		self._report_fatigue_progress(0)
