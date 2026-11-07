@@ -1190,6 +1190,14 @@ class WGFMUSession:
         )
         self._check_ret(ret, "WGFMU set measure event")
 
+    def set_range_event(self, pattern_name: str, event_name: str, time: float, rng: int):
+        """Switch the current measurement range `time` seconds into the pattern (Fast IV only).
+
+        It must fall outside any measurement's averaging window. B1530A Guide 4-58.
+        """
+        ret = dll_wgfmu.WGFMU_setRangeEvent(pattern_name.encode(), event_name.encode(), time, rng)
+        self._check_ret(ret, "WGFMU set range event")
+
     def create_pattern(self, name, initial_voltage=0.0):
         ret = dll_wgfmu.WGFMU_createPattern(name.encode(), initial_voltage)
         self._check_ret(ret, "WGFMU create pattern")

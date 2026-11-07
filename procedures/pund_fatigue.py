@@ -5,6 +5,7 @@ Sends up to 1e12 fatigue cycles using WGFMU hardware repetition, all in one WGFM
 run. At each read cycle (linear or log spaced, always including cycle 0 and the
 last cycle) it reads the device at every read frequency, in the order typed:
 PN, PUND, or PN then PUND. Each read starts after one read period at the idle voltage.
+Each read frequency has its own current range, since faster reads draw more current.
 
 Every read is saved as its own CSV as soon as it is measured:
 ``<base>_PN_<frequency>Hz_c<cycle>.csv`` and ``<base>_PUND_<frequency>Hz_c<cycle>.csv``,
@@ -21,6 +22,11 @@ from procedures.base import Choice, MeasurementProcedure, ValueList, WGFMUChanne
 from si_utils import format_si_compact, parse_si_list
 from instrumentio.codes import (
 	WGFMU_FORCE_VOLTAGE_RANGE_AUTO,
+	WGFMU_MEASURE_CURRENT_RANGE_1UA,
+	WGFMU_MEASURE_CURRENT_RANGE_10UA,
+	WGFMU_MEASURE_CURRENT_RANGE_100UA,
+	WGFMU_MEASURE_CURRENT_RANGE_1MA,
+	WGFMU_MEASURE_CURRENT_RANGE_10MA,
 	WGFMU_MEASURE_ENABLED_ENABLE,
 	WGFMU_MEASURE_EVENT_DATA_AVERAGED,
 	WGFMU_MEASURE_MODE_CURRENT,
@@ -28,10 +34,7 @@ from instrumentio.codes import (
 	WGFMU_OPERATION_MODE_FASTIV,
 	WGFMU_OPERATION_MODE_PG,
 )
-from instrumentio.constants import (
-	WGFMU_MEASURE_VOLTAGE_RANGES,
-	WGFMU_MEASURE_CURRENT_RANGES,
-)
+from instrumentio.constants import WGFMU_MEASURE_VOLTAGE_RANGES
 
 HEADERS = ["Cycle", "Time_s", "Voltage_V", "Current_A"]
 # The current offset of a read is the mean of its first samples, taken at Vbase before the first pulse.
@@ -118,8 +121,10 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		          enabled_when=('read_spacing', 'linear')),
         parameter('meas_range_1', 'Meas Range Ch1 (V)', WGFMU_MEASURE_VOLTAGE_RANGES[0][0],
                   Choice(WGFMU_MEASURE_VOLTAGE_RANGES, int)),
-        parameter('meas_range_2', 'Meas Range Ch2 (I)', WGFMU_MEASURE_CURRENT_RANGES[0][0],
-                  Choice(WGFMU_MEASURE_CURRENT_RANGES, int)),
+        parameter('current_ranges', 'Meas Ranges Ch2 (A)', '10u', ValueList,
+                  help='Current range of each read frequency, in the same order, e.g. "10u, 100u, 1m". '
+                       'One value applies to every frequency. Ranges: 1u, 10u, 100u, 1m, 10m. '
+                       'Faster reads draw more current: about 10x the range per decade of frequency.'),
 	)
 	UI_ACTIONS = (
 		action("Preview Sequence", _preview_sequence),
@@ -132,6 +137,12 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 	POST_COMPLETION_DRAIN_TIMEOUT_S = 30.0
 	PUND_SIGNS = (-1, 1, 1, -1, -1)
 	READ_KINDS = {'pn': ('PN',), 'pund': ('PUND',), 'both': ('PN', 'PUND')}
+	# WGFMU current range codes, by range in amperes.
+	CURRENT_RANGE_CODES = {1e-6: WGFMU_MEASURE_CURRENT_RANGE_1UA, 1e-5: WGFMU_MEASURE_CURRENT_RANGE_10UA,
+	                       1e-4: WGFMU_MEASURE_CURRENT_RANGE_100UA, 1e-3: WGFMU_MEASURE_CURRENT_RANGE_1MA,
+	                       1e-2: WGFMU_MEASURE_CURRENT_RANGE_10MA}
+	# The WGFMU needs more than this between range changes. B1530A Guide 4-58.
+	MIN_RANGE_EVENT_INTERVAL = 2e-6
 
 	def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
 		super().__init__(settings, output_root, output_relative, runner, fallback_root)
@@ -153,6 +164,22 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			raise ValueError("Read Frequencies needs at least one frequency, all > 0")
 		if len(set(self.read_frequencies)) < len(self.read_frequencies):
 			raise ValueError("Read Frequencies lists a frequency twice; each one gets its own files")
+		try:
+			ranges = parse_si_list(str(self.current_ranges))
+		except ValueError:
+			raise ValueError(f"Meas Ranges must be comma-separated currents, got {self.current_ranges!r}") from None
+		if len(ranges) == 1:
+			ranges *= len(self.read_frequencies)
+		if len(ranges) != len(self.read_frequencies):
+			raise ValueError(f"Meas Ranges needs one range per read frequency ({len(self.read_frequencies)}), "
+			                 f"or one for all; got {len(ranges)}")
+		# Range code of each read frequency.
+		self.current_ranges_by_freq = {}
+		for frequency, rng in zip(self.read_frequencies, ranges):
+			code = next((c for a, c in self.CURRENT_RANGE_CODES.items() if np.isclose(rng, a)), None)
+			if code is None:
+				raise ValueError(f"Meas Ranges: {rng:g} A is not a WGFMU range (1u, 10u, 100u, 1m, 10m)")
+			self.current_ranges_by_freq[frequency] = code
 		if self.pund_gap < 0:
 			raise ValueError("pund_gap must be >= 0")
 		if self.fatigue_delay < 0:
@@ -327,7 +354,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		wgfmu.set_measure_mode(self.channel_1, WGFMU_MEASURE_MODE_VOLTAGE)
 		wgfmu.set_measure_mode(self.channel_2, WGFMU_MEASURE_MODE_CURRENT)
 		wgfmu.set_measure_voltage_range(self.channel_1, self.meas_range_1)
-		wgfmu.set_measure_current_range(self.channel_2, self.meas_range_2)
+		# The range of the first read; reads at other frequencies switch it with range events.
+		wgfmu.set_measure_current_range(self.channel_2, self.current_ranges_by_freq[self.read_frequencies[0]])
 		wgfmu.set_measure_enabled(self.channel_1, WGFMU_MEASURE_ENABLED_ENABLE)
 		wgfmu.set_measure_enabled(self.channel_2, WGFMU_MEASURE_ENABLED_ENABLE)
 
@@ -469,6 +497,14 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				read_types[frequency, kind] = (vectors, interval, max(1, int(round(duration / interval))), start)
 				start += duration + 1.0 / frequency
 			time_spans[frequency] = start - 1.0 / frequency
+		# Range changes only when the frequencies use different ranges; back-to-back reads must leave
+		# the WGFMU enough time between changes (each read pattern adds one read period as lead).
+		switch_ranges = len(set(self.current_ranges_by_freq.values())) > 1
+		if switch_ranges:
+			for (frequency, kind), (vectors, _, _, _) in read_types.items():
+				if 1.0 / frequency + sum(dt for dt, _ in vectors) <= self.MIN_RANGE_EVENT_INTERVAL:
+					raise ValueError(f"{kind} read at {format_si_compact(frequency)}Hz is too short to switch the "
+					                 f"current range; use one range for all frequencies")
 		read_ends = np.cumsum([read_types[frequency, kind][2] for _, frequency, kind in reads])
 		expected_total = int(read_ends[-1])
 
@@ -510,6 +546,10 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 					self._create_pattern_pair(wgfmu, *patterns[frequency, kind], initial_pg,
 					                          [(lead, initial_pg), *vectors],
 					                          measure_points=points, sample_interval=interval, measure_start=lead)
+					# Switch to this frequency's range at the start of the wait before the read.
+					if switch_ranges:
+						wgfmu.set_range_event(patterns[frequency, kind][1], "range", 0.0,
+						                      self.current_ranges_by_freq[frequency])
 
 			prev_cycle = 0
 			for cycle, frequency, kind in reads:
