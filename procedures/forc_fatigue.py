@@ -142,6 +142,13 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 		}
 		sampling['FORC_inversepolarity'] = sampling['FORC']
 		read_ends = np.cumsum([sampling[kind][1] for _, kind in reads])
+		fatigue_vectors = self._build_fatigue_vectors()
+		# Read pattern lengths as built below: settle, read, and for FORCs the return to idle.
+		durations = {'PUND': settle_duration + sum(dt for dt, _ in pund_vectors),
+		             'FORC': 1.1 * settle_duration + sum(dt for dt, _ in forc_vectors)}
+		durations['FORC_inversepolarity'] = durations['FORC']
+		timeline = self._progress_timeline([(cycle, durations[kind]) for cycle, kind in reads],
+		                                   sum(dt for dt, _ in fatigue_vectors))
 		expected_total = int(read_ends[-1])
 
 		map_axes = {kind: forc_map_axes(sign * self.vstart, sign * self.vend, self.forc_count)
@@ -168,7 +175,7 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 				'PUND': (f"FORCFAT_PUND_PG_{ts}", f"FORCFAT_PUND_IV_{ts}"),
 				'FORC': (f"FORCFAT_FORC_PG_{ts}", f"FORCFAT_FORC_IV_{ts}"),
 			}
-			self._create_pattern_pair(wgfmu, *patterns['FAT'], initial_pg, self._build_fatigue_vectors())
+			self._create_pattern_pair(wgfmu, *patterns['FAT'], initial_pg, fatigue_vectors)
 			self._create_pattern_pair(wgfmu, *patterns['PUND'], initial_pg,
 			                          [(settle_duration, initial_pg), *pund_vectors],
 			                          measure_points=sampling['PUND'][1], sample_interval=pund_interval,
@@ -201,7 +208,8 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 			done = 0  # reads already plotted and saved
 			while True:
 				self.check_stop(b1500)
-				status, _, _ = wgfmu.get_status()
+				status, elapsed, _ = wgfmu.get_status()
+				self._report_fatigue_progress(int(np.interp(elapsed, *timeline)))
 				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
 				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
 				available = min(measured_1, measured_2, expected_total)
@@ -235,13 +243,14 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 							grid = forc_map_grid(sign * self.vstart, [(t0, t1, sign * vr) for t0, t1, vr in forcs],
 							                     forc_samples, v_grid, vr_grid)
 							self.runner.plot.replace_source(f"MAP_{done}", [0.0] * grid.size, grid.ravel().tolist())
-						self._report_fatigue_progress(cycle)
 						done += 1
 
 				# Status was read before fetching, so a completed run has no samples left to read.
 				if status == self.STATUS_COMPLETED:
 					break
 				time.sleep(0.05)
+			# The elapsed time is an estimate, so it may stop short of the full count.
+			self._report_fatigue_progress(self.fatigue_count_int)
 
 			if done:
 				self.save_plot_png(f"{base}_plot.png")

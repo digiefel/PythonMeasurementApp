@@ -42,21 +42,20 @@ def _preview_sequence(ui):
 	"""Preview this procedure's schedule using the current form settings."""
 	from tkinter import messagebox
 	try:
-		settings = ui.collect_settings()
-		cycle_count = float(settings['fatigue_count'])
-		frequency = float(settings['fatigue_freq'])
-		spacing = settings['read_spacing']
-		if spacing == 'linear':
-			read_count = int(float(settings['linear_read_count']))
-			read_line = f"Linear Reads: {read_count} (plus cycle 0)"
-		else:
-			read_count = int(float(settings['reads_per_decade']))
-			read_line = f"Reads per Decade: {read_count}"
-		preview = PUNDFatigueProcedure.get_preview_info(cycle_count, frequency, spacing, read_count)
+		# Built only to check the settings and lay out the run; it touches no instrument.
+		proc = PUNDFatigueProcedure(ui.collect_settings(), '', '', None)
 	except (TypeError, ValueError) as exc:
 		messagebox.showerror("Invalid Parameters", f"Could not parse parameters: {exc}", parent=ui.root)
 		return
-	total_sec = preview['total_duration']
+	if proc.read_spacing == 'linear':
+		read_line = f"Linear Reads: {proc.linear_read_count} (plus cycle 0)"
+	else:
+		read_line = f"Reads per Decade: {proc.reads_per_decade}"
+	cycles = proc._read_cycles()
+	# One measurement (and file) per read cycle, read frequency and read type.
+	measurements = len(cycles) * len(proc.read_frequencies) * len(proc.READ_KINDS[proc.read_pulse_type])
+	# The reads take milliseconds; the fatigue cycles set the duration.
+	total_sec = proc.fatigue_count_int * sum(dt for dt, _ in proc._build_fatigue_vectors())
 	if total_sec < 60:
 		duration = f"{total_sec:.1f} s"
 	elif total_sec < 3600:
@@ -64,12 +63,11 @@ def _preview_sequence(ui):
 	else:
 		duration = f"{total_sec / 3600:.2f} h"
 	lines = [
-		f"Cycle Count: {cycle_count:.2e}", f"Frequency: {frequency:.0f} Hz",
-		read_line, f"Decades: {preview['decades']:.1f}", "",
-		f"Total Measurements: {preview['total_measurements']}",
+		f"Cycle Count: {proc.fatigue_count_int:.2e}", f"Frequency: {proc.fatigue_freq:.0f} Hz",
+		read_line, f"Decades: {np.log10(proc.fatigue_count_int):.1f}", "",
+		f"Total Measurements: {measurements}",
 		f"Estimated Duration: {duration}", "", "Measurement at cycles:",
 	]
-	cycles = preview['measure_cycles']
 	if len(cycles) <= 20:
 		lines.append("  " + ", ".join(str(c) for c in cycles))
 	else:
@@ -340,6 +338,23 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		mantissa, exponent = f"{count:.4e}".split('e')
 		return f"{mantissa.rstrip('0').rstrip('.')}e{int(exponent)}"
 
+	@staticmethod
+	def _progress_timeline(reads, fatigue_duration):
+		"""Waveform time and fatigue cycles sent, at the start and end of every read.
+
+		reads: (cycle, duration_s) of every read, in run order. np.interp over the result
+		turns the WGFMU's elapsed time into cycles sent: they grow during fatigue and hold during reads.
+		"""
+		times, cycles = [0.0], [0]
+		t, prev_cycle = 0.0, 0
+		for cycle, duration in reads:
+			t += (cycle - prev_cycle) * fatigue_duration
+			times += [t, t + duration]
+			cycles += [cycle, cycle]
+			t += duration
+			prev_cycle = cycle
+		return np.array(times), np.array(cycles)
+
 	def _report_fatigue_progress(self, cycles_sent):
 		self.report_progress(
 			cycles_sent, self.fatigue_count_int, "Fatigue cycles sent",
@@ -425,17 +440,6 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self.runner.configure_plot(f'PUND Fatigue Overlay - {device.name}', plots,
 		                           row_ratios=[2.0] * count + [1.0] * count)
 
-	@staticmethod
-	def get_preview_info(cycle_count: float, frequency: float, spacing: str, read_count: int) -> dict:
-		read_cycles = PUNDFatigueProcedure._compute_read_cycles(int(cycle_count), spacing, int(read_count))
-		return {
-			'measure_cycles': read_cycles,
-			'total_measurements': len(read_cycles),
-			'pattern_duration': 2.0 / frequency if frequency > 0 else 0.0,
-			'total_duration': cycle_count * (2.0 / frequency if frequency > 0 else 0.0),
-			'decades': np.log10(max(int(cycle_count), 1)),
-		}
-
 	def measure(self, device):
 		b1500 = self.b1500
 		wgfmu = b1500.wgfmu
@@ -474,8 +478,11 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self._configure_plot(device, reads, plotted, time_spans)
 		self._report_fatigue_progress(0)
 
-		read_time = sum(1.0 / frequency + sum(dt for dt, _ in read_types[frequency, kind][0])
-		                for _, frequency, kind in reads)
+		# Each read pattern is one read period at the idle voltage, then the read.
+		timeline = self._progress_timeline(
+			[(cycle, 1.0 / frequency + sum(dt for dt, _ in read_types[frequency, kind][0]))
+			 for cycle, frequency, kind in reads],
+			fatigue_duration)
 		self.log(f"Starting PUND Fatigue on {device.name}")
 		self.log(
 			f"  {self.fatigue_count_int:.2e} {self.fatigue_pulse_type} fatigue cycles, "
@@ -483,7 +490,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			f"{len(read_cycles)} read cycles x {len(self.read_frequencies)} frequencies x {'+'.join(kinds)}"
 		)
 		self.log(f"  Fatigue duration/cycle: {fatigue_duration:.6g} s")
-		self.log(f"  Estimated waveform duration: {self.fatigue_count_int * fatigue_duration + read_time:.1f} s")
+		self.log(f"  Estimated waveform duration: {timeline[0][-1]:.1f} s")
 
 		ts = self.get_run_timestamp()
 		base = self.format_filename("PUND_Fatigue", device.name)
@@ -527,7 +534,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			done = 0  # reads already saved (and plotted, if chosen)
 			while True:
 				self.check_stop(b1500)
-				status, _, _ = wgfmu.get_status()
+				status, elapsed, _ = wgfmu.get_status()
+				self._report_fatigue_progress(int(np.interp(elapsed, *timeline)))
 				measured_1, _ = wgfmu.get_measure_value_size(self.channel_1)
 				measured_2, _ = wgfmu.get_measure_value_size(self.channel_2)
 				available = min(measured_1, measured_2, expected_total)
@@ -561,13 +569,14 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 								f"IV_{done}": list(zip(v[BASELINE_POINTS:], i_switch[BASELINE_POINTS:] * 1e6)),
 								f"QV_{done}": list(zip(v[BASELINE_POINTS:], charge * 1e9)),
 							})
-						self._report_fatigue_progress(cycle)
 						done += 1
 
 				# Status was read before fetching, so a completed run has no samples left to read.
 				if status == self.STATUS_COMPLETED:
 					break
 				time.sleep(0.05)
+			# The elapsed time is an estimate, so it may stop short of the full count.
+			self._report_fatigue_progress(self.fatigue_count_int)
 
 			if done:
 				self.save_plot_png(f"{base}_plot.png")
