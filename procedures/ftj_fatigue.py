@@ -28,6 +28,7 @@ RSU_SMU = {101: "SMU1", 102: "SMU2"}
 
 class FTJFatigueProcedure(PUNDFatigueProcedure):
 	NAME = "FTJFatigue"
+	# TODO: the inherited Read Delay field is not used yet; reads here still start after one read period.
 	PARAMETERS = (
 		*PUNDFatigueProcedure.PARAMETERS,
 		parameter('smu_points', 'SMU Sweep Points (outward leg)', 21, int,

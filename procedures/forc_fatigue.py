@@ -57,6 +57,7 @@ class FORCFatigueProcedure(PUNDFatigueProcedure):
 		*_PUND_FATIGUE_PARAMETERS[-2:],  # measurement ranges
 	)
 	# TODO: the inherited "Preview Sequence" shows the PUND reads only, not cycle 0 or the FORCs.
+	# TODO: the inherited Read Delay field is not used yet; reads here still start after one read period.
 
 	def _validate_settings(self):
 		super()._validate_settings()

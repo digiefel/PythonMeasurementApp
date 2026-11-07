@@ -4,7 +4,7 @@ PUND Fatigue Procedure - High cycle count pulsing with sparse measurements.
 Sends up to 1e12 fatigue cycles using WGFMU hardware repetition, all in one WGFMU
 run. At each read cycle (linear or log spaced, always including cycle 0 and the
 last cycle) it reads the device at every read frequency, in the order typed:
-PN, PUND, or PN then PUND. Each read starts after one read period at the idle voltage.
+PN, PUND, or PN then PUND. Every read starts after the same wait at the idle voltage, the read delay.
 Each read frequency has its own current range, since faster reads draw more current.
 
 Every read is saved as its own CSV as soon as it is measured:
@@ -106,6 +106,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
                        'Sets the ramp speed of the read pulses; the tallest pulse lasts as long as at this frequency.'),
         parameter('read_pulse_type', 'Type of Read Cycle', 'pund',
                   Choice((('pund', 'PUND'), ('pn', 'PN'), ('both', 'PN+PUND')))),
+        parameter('read_delay', 'Read Delay (s)', 1e-3, float,
+                  help='Time at the idle voltage before every read: after fatigue and between reads. '
+                       'The current range switches at its start, so it is also the settling time.'),
         parameter('pund_gap', 'PUND Gap (periods)', 0.2, float,
                   help='Time at Vbase between the triangles of a PUND, as a fraction of its period '
                        '(read or fatigue). 0 puts the triangles back to back.'),
@@ -180,6 +183,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			if code is None:
 				raise ValueError(f"Meas Ranges: {rng:g} A is not a WGFMU range (1u, 10u, 100u, 1m, 10m)")
 			self.current_ranges_by_freq[frequency] = code
+		if self.read_delay < self.MIN_INTERVAL:
+			raise ValueError(f"read_delay must be >= {self.MIN_INTERVAL:g} s")
 		if self.pund_gap < 0:
 			raise ValueError("pund_gap must be >= 0")
 		if self.fatigue_delay < 0:
@@ -486,7 +491,8 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		fatigue_vectors = self._build_fatigue_vectors()
 		fatigue_duration = sum(dt for dt, _ in fatigue_vectors)
 		# Per (frequency, kind): waveform, sample interval, samples per read, and where the read
-		# starts on the time plot (PUND after PN and its lead, as the waveform runs).
+		# starts on the time plot. There PUND follows PN after one read period, whatever the read delay,
+		# so that both fit on one time axis.
 		read_types = {}
 		time_spans = {}
 		for frequency in self.read_frequencies:
@@ -498,14 +504,12 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 				read_types[frequency, kind] = (vectors, interval, max(1, int(round(duration / interval))), start)
 				start += duration + 1.0 / frequency
 			time_spans[frequency] = start - 1.0 / frequency
-		# Range changes only when the frequencies use different ranges; back-to-back reads must leave
-		# the WGFMU enough time between changes (each read pattern adds one read period as lead).
+		# Range changes only when the frequencies use different ranges. Every read pattern starts with
+		# the read delay, so that keeps range changes far enough apart for the WGFMU.
 		switch_ranges = len(set(self.current_ranges_by_freq.values())) > 1
-		if switch_ranges:
-			for (frequency, kind), (vectors, _, _, _) in read_types.items():
-				if 1.0 / frequency + sum(dt for dt, _ in vectors) <= self.MIN_RANGE_EVENT_INTERVAL:
-					raise ValueError(f"{kind} read at {format_si_compact(frequency)}Hz is too short to switch the "
-					                 f"current range; use one range for all frequencies")
+		if switch_ranges and self.read_delay <= self.MIN_RANGE_EVENT_INTERVAL:
+			raise ValueError(f"Read Delay must be over {self.MIN_RANGE_EVENT_INTERVAL * 1e6:g} us "
+			                 f"to switch the current range between reads")
 		read_ends = np.cumsum([read_types[frequency, kind][2] for _, frequency, kind in reads])
 		expected_total = int(read_ends[-1])
 
@@ -515,9 +519,9 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		self._configure_plot(device, reads, plotted, time_spans)
 		self._report_fatigue_progress(0)
 
-		# Each read pattern is one read period at the idle voltage, then the read.
+		# Each read pattern is the read delay at the idle voltage, then the read.
 		timeline = self._progress_timeline(
-			[(cycle, 1.0 / frequency + sum(dt for dt, _ in read_types[frequency, kind][0]))
+			[(cycle, self.read_delay + sum(dt for dt, _ in read_types[frequency, kind][0]))
 			 for cycle, frequency, kind in reads],
 			fatigue_duration)
 		self.log(f"Starting PUND Fatigue on {device.name}")
@@ -537,17 +541,17 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 			fat_pg = f"FAT_FAT_PG_{ts}"
 			fat_iv = f"FAT_FAT_IV_{ts}"
 			self._create_pattern_pair(wgfmu, fat_pg, fat_iv, initial_pg, fatigue_vectors)
-			# One pattern pair per frequency and kind; each starts with one read period at the idle voltage.
+			# One pattern pair per frequency and kind; each starts with the read delay at the idle voltage.
 			patterns = {}
 			for f_idx, frequency in enumerate(self.read_frequencies):
 				for kind in kinds:
 					vectors, interval, points, _ = read_types[frequency, kind]
-					lead = 1.0 / frequency
 					patterns[frequency, kind] = (f"FAT_{kind}{f_idx}_PG_{ts}", f"FAT_{kind}{f_idx}_IV_{ts}")
 					self._create_pattern_pair(wgfmu, *patterns[frequency, kind], initial_pg,
-					                          [(lead, initial_pg), *vectors],
-					                          measure_points=points, sample_interval=interval, measure_start=lead)
-					# Switch to this frequency's range at the start of the wait before the read.
+					                          [(self.read_delay, initial_pg), *vectors],
+					                          measure_points=points, sample_interval=interval,
+					                          measure_start=self.read_delay)
+					# Switch to this frequency's range at the start of the read delay.
 					if switch_ranges:
 						wgfmu.set_range_event(patterns[frequency, kind][1], "range", 0.0,
 						                      self.current_ranges_by_freq[frequency])
