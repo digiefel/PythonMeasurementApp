@@ -205,7 +205,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 	def _build_triangular_pulse_vectors(self, frequency, signs):
 		"""Triangular PUND timing: ramp out, ramp back, base hold of pund_gap periods.
 
-		The tallest pulse ramps for 0.4T each way; shorter pulses ramp at the same speed.
+		The tallest pulse ramps for 0.5T each way, as in PN; shorter pulses ramp at the same speed.
 		"""
 		T = 1.0 / frequency
 		gap = self.pund_gap * T
@@ -214,7 +214,7 @@ class PUNDFatigueProcedure(MeasurementProcedure):
 		vectors = [(edge, self.v_base)]
 		for sign in signs:
 			level = self.v_pos if sign > 0 else self.v_neg
-			ramp = 0.4 * T * abs(level - self.v_base) / self.vmax
+			ramp = 0.5 * T * abs(level - self.v_base) / self.vmax
 			vectors += [
 				(ramp, level),
 				(ramp, self.v_base),
