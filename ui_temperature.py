@@ -289,6 +289,12 @@ class TemperatureUI:
         interval_ms = max(int(poll_interval_s * 1000), 250)
 
         def poll():
+            # While the run thread is using the prober (e.g. moving the chuck), skip this update
+            # and keep showing the last reading, instead of freezing the window until it is done.
+            lock = self.runner.prober_ctrl.lock
+            if not lock.acquire(blocking=False):
+                self._poll_job = self.root.after(interval_ms, poll)
+                return
             try:
                 temp = self.runner.prober_get_temp()
                 state = self.runner.get_thermo_state()
@@ -297,6 +303,8 @@ class TemperatureUI:
                 temp = None
                 state = "error"
                 setpoint = None
+            finally:
+                lock.release()
             if temp is None:
                 self.value_var.set("N/A")
                 color = "red"

@@ -452,7 +452,8 @@ class MeasurementRunner:
                     self.log("Warning: No temp step started callback registered.")
                 self.prober_set_temp(target)
                 if poll_interval_s > 0:
-                    self.prober_wait_until_temp(target, tolerance_c, wait_after_stable_s, poll_interval_s)
+                    if not self.prober_wait_until_temp(target, tolerance_c, wait_after_stable_s, poll_interval_s):
+                        self.log(f"Warning: chuck did not reach {target:.1f} C within the timeout; measuring anyway.")
                 if self.temp_phase_cb:
                     try:
                         self.temp_phase_cb("measure_start", idx)

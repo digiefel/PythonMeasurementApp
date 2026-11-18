@@ -1,4 +1,6 @@
+import functools
 import logging
+import threading
 import time
 from typing import Optional, Callable
 from sentio_prober_control.Communication.CommunicatorVisa import CommunicatorVisa
@@ -17,6 +19,20 @@ from instrumentio.availability import check_gpib_interface
 logger = logging.getLogger(__name__)
 
 
+def _one_exchange_at_a_time(method):
+    """Hold the session lock for the whole call.
+
+    The UI thread and the run thread both query the prober over one GPIB session.
+    Without the lock, one thread can read the answer meant for the other, and the
+    session can stay one answer behind from then on.
+    """
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class ProberController:
     """Encapsulate SENTIO prober interactions."""
 
@@ -30,7 +46,10 @@ class ProberController:
         self._last_init_error: Optional[str] = None
         self.subsite_origin = None
         self._scope_light_on: Optional[bool] = None
+        # Reentrant: close() is also called from set_enabled() and initialize().
+        self.lock = threading.RLock()
 
+    @_one_exchange_at_a_time
     def initialize(self, force: bool = False) -> bool:
         """Initialize the SENTIO session.
 
@@ -113,6 +132,7 @@ class ProberController:
         return self.prober
 
     # --- Positioning helpers ---
+    @_one_exchange_at_a_time
     def set_subsite_origin(self, x_offset: float, y_offset: float) -> bool:
         try:
             prober = self._get()
@@ -125,6 +145,7 @@ class ProberController:
             self.log(f'Warning: Failed to set subsite origin: {e}')
             return False
 
+    @_one_exchange_at_a_time
     def go_home(self):
         try:
             if not self.subsite_origin:
@@ -138,6 +159,7 @@ class ProberController:
         except Exception as e:
             self.log(f'Warning: Go home failed: {e}')
 
+    @_one_exchange_at_a_time
     def contact(self) -> bool:
         try:
             prober = self._get()
@@ -149,6 +171,7 @@ class ProberController:
             self.log(f'Warning: Contact failed: {e}')
             return False
 
+    @_one_exchange_at_a_time
     def separation(self) -> bool:
         try:
             prober = self._get()
@@ -160,11 +183,13 @@ class ProberController:
             self.log(f'Warning: Separation failed: {e}')
             return False
 
+    @_one_exchange_at_a_time
     def read_position(self) -> tuple[float, float]:
         prober = self._get()
         x, y = prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
         return x, y
 
+    @_one_exchange_at_a_time
     def get_chuck_height(self) -> float:
         prober = self._get()
         height = prober.get_chuck_z(ZReference.Contact)
@@ -172,6 +197,7 @@ class ProberController:
             raise RuntimeError("Chuck height read returned None.")
         return height
 
+    @_one_exchange_at_a_time
     def move_xy_home(self, target_x: float, target_y: float):
         prober = self._get()
         prober.move_chuck_xy(XyReference.Home, target_x, target_y)
@@ -179,6 +205,7 @@ class ProberController:
         return prober.get_chuck_xy(ChuckSite.Wafer, XyReference.Home)
 
     # --- Vision helpers ---
+    @_one_exchange_at_a_time
     def set_scope_light(self, light_on: bool, on_level: int = 80) -> bool | None:
         prober = self._get()
         camera = CameraMountPoint.Scope
@@ -190,6 +217,7 @@ class ProberController:
         self.log(f"Scope light {'ON' if self._scope_light_on else 'OFF'} (level={target}).")
         return self._scope_light_on
 
+    @_one_exchange_at_a_time
     def toggle_scope_light(self, on_level: int = 80) -> bool | None:
         prober = self._get()
         camera = CameraMountPoint.Scope
@@ -201,6 +229,7 @@ class ProberController:
         return self.set_scope_light(not self._scope_light_on, on_level)
 
     # --- Temperature helpers ---
+    @_one_exchange_at_a_time
     def set_temp(self, temp_c: float):
         self.log(f"Setting temperature setpoint to {temp_c:.2f} C")
         try:
@@ -212,6 +241,7 @@ class ProberController:
             self.log(f"Warning: Set chuck temperature failed: {e}")
             return False
 
+    @_one_exchange_at_a_time
     def get_temp(self) -> Optional[float]:
         try:
             prober = self._get()
@@ -222,20 +252,24 @@ class ProberController:
             self.log(f"Warning: Get chuck temperature failed: {e}")
             return None
 
+    @_one_exchange_at_a_time
     def get_temp_setpoint(self) -> Optional[float]:
         prober = self._get()
         return prober.status.get_chuck_temp_setpoint()
 
+    @_one_exchange_at_a_time
     def get_chuck_site_height(self, site: ChuckSite = ChuckSite.Wafer):
         """Return (contact, separation, overtravel, hover) heights for the site."""
         prober = self._get()
         return prober.get_chuck_site_height(site)
 
+    @_one_exchange_at_a_time
     def set_chuck_site_height(self, contact: float, separation: float, overtravel_dist: float, hover_gap: float, site: ChuckSite = ChuckSite.Wafer):
         """Set chuck Z positions for the site."""
         prober = self._get()
         prober.set_chuck_site_height(site, contact, separation, overtravel_dist, hover_gap)
 
+    @_one_exchange_at_a_time
     def get_thermo_state(self) -> str:
         prober = self._get()
         state = prober.status.get_chuck_thermo_state()
@@ -259,6 +293,8 @@ class ProberController:
         stop_check=None,
     ) -> bool:
         """Poll until temp within tolerance, optionally enforcing soak time."""
+        # Not locked as a whole: each get_temp() locks on its own, so the UI and Stop
+        # can still reach the prober between polls.
         self.log(f"Waiting for chuck to stabilize at {target_c:.1f} C (+/-{tol_c:.1f} C)")
         start = time.time()
         reached = False
@@ -290,6 +326,7 @@ class ProberController:
             time.sleep(max(poll_s, 0.25))
         return reached
 
+    @_one_exchange_at_a_time
     def close(self):
         """Return control to local and tear down VISA session cleanly."""
         self.subsite_origin = None
