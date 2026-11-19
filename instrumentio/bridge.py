@@ -90,7 +90,6 @@ class RemoteB1500Session(_Proxy):
         self._failure = None
         self._terminal = None
         self._closed = False
-        self._shutdown_error = None
         self._cancel_requested = False
         self._wgfmu_used = False
         self._outgoing = queue.SimpleQueue()
@@ -246,8 +245,6 @@ class RemoteB1500Session(_Proxy):
                 if not isinstance(exc, InstrumentError):
                     logger.exception("Instrument request ended: %s", message[:3])
                 self.close()
-                if self._shutdown_error is not None:
-                    raise InstrumentError(str(self._shutdown_error))
                 if self._cancel_requested or any(event.is_set() for event in self._cancel_events):
                     raise InstrumentCancelled("Measurement stopped.") from exc
                 raise
@@ -260,8 +257,6 @@ class RemoteB1500Session(_Proxy):
         """Stop independently of the call lock, including blocked native calls."""
         self._cancel_requested = True
         self.close()
-        if self._shutdown_error is not None:
-            raise InstrumentError(str(self._shutdown_error))
 
     def _emergency_shutdown(self):
         """The old process must be dead before resetting through a new session."""
@@ -306,11 +301,11 @@ class RemoteB1500Session(_Proxy):
                 self._process.wait(timeout=2)
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.exception("Could not terminate the instrument process")
-            self._shutdown_error = self._failure = InstrumentError(
+            self._failure = InstrumentError(
                 f"Could not stop the instrument-control process: {exc}. "
                 "The emergency reset could not be attempted."
             )
-            raise self._shutdown_error from None
+            raise self._failure from None
         finally:
             self._outgoing.put(None)
             for thread in self._threads:
@@ -340,5 +335,5 @@ class RemoteB1500Session(_Proxy):
                     failure = exc
                 else:
                     failure = InstrumentError(f"Could not complete the emergency instrument reset: {exc}")
-                self._shutdown_error = self._failure = failure
-                raise self._shutdown_error from None
+                self._failure = failure
+                raise failure from None

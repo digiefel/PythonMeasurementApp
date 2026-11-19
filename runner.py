@@ -86,7 +86,6 @@ class MeasurementRunner:
                 raise InstrumentError("Instrument is not connected.")
             if self.b1500 is not None:
                 self._stop_instrument()
-                self.check_stop()
                 self.b1500 = None
             self.log(f'Opening B1500 session at {address}')
             self.b1500 = RemoteB1500Session(
@@ -101,9 +100,6 @@ class MeasurementRunner:
             try:
                 session.cancel()
             except InstrumentError as exc:
-                # A failed Skip shutdown must stop the queue, not reconnect and
-                # start moving to another device with unknown output state.
-                self.stop_event.set()
                 self.log(str(exc))
 
     
@@ -611,7 +607,6 @@ class MeasurementRunner:
             # Python-side cancellation can arrive between RPCs. Wait for the
             # same hardware shutdown before the queue is allowed to advance.
             self._stop_instrument()
-            self.check_stop()
             raise
         except InstrumentError:
             self._stop_instrument()
