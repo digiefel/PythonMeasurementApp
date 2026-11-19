@@ -21,6 +21,7 @@ import time
 import traceback
 
 from app_logging import configure_logging
+from .ownership import BusLock
 from .protocol import InstrumentCancelled, STOP_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
@@ -122,8 +123,16 @@ def main(session_factory=None):
             session_factory = B1500Session
         if cancelled.is_set():
             raise InstrumentCancelled()
-        connection_attempted = True
-        session = session_factory(message[1])
+        # The prober shares the GPIB interface. Every call below is one complete exchange
+        # (command and answer), so hold the bus for each one; give up waiting when cancelled.
+        bus = BusLock(message[1])
+        if not bus.acquire(cancelled=cancelled):
+            raise InstrumentCancelled()
+        try:
+            connection_attempted = True
+            session = session_factory(message[1])
+        finally:
+            bus.release()
         if cancelled.is_set():
             raise InstrumentCancelled()
         emit(["result", {"pid": os.getpid(), "python_executable": sys.executable,
@@ -136,20 +145,25 @@ def main(session_factory=None):
             if target not in ("", "wgfmu") or method.startswith("_") or method in ("close", "interrupt_io"):
                 raise ValueError("Invalid instrument method")
             receiver = session if not target else getattr(session, target)
-            with io_handoff:
-                if cancelled.is_set():
-                    raise InstrumentCancelled()
-                operation_active = target == ""  # WGFMU has its own opaque driver session.
+            if not bus.acquire(cancelled=cancelled):
+                raise InstrumentCancelled()
             try:
-                result = getattr(receiver, method)(
-                    *(unpack(value) for value in args),
-                    **{key: unpack(value) for key, value in kwargs.items()},
-                )
-            finally:
-                # Wait for any in-flight viTerminate to return before entering
-                # cleanup. No terminate can touch this session after this point.
                 with io_handoff:
-                    operation_active = False
+                    if cancelled.is_set():
+                        raise InstrumentCancelled()
+                    operation_active = target == ""  # WGFMU has its own opaque driver session.
+                try:
+                    result = getattr(receiver, method)(
+                        *(unpack(value) for value in args),
+                        **{key: unpack(value) for key, value in kwargs.items()},
+                    )
+                finally:
+                    # Wait for any in-flight viTerminate to return before entering
+                    # cleanup. No terminate can touch this session after this point.
+                    with io_handoff:
+                        operation_active = False
+            finally:
+                bus.release()
             if cancelled.is_set():
                 raise InstrumentCancelled()
             emit(["result", result])

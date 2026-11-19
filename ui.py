@@ -488,7 +488,9 @@ class MainUI:
 
     def _apply_prober_availability_ui(self):
         available = self.prober_available and not self._connection_busy
-        self._set_section_enabled(self.prober_frame, available and not getattr(self.runner, 'prober_motion_inhibited', False))
+        # During a run the window must never wait for the GPIB bus, or Stop would freeze with it.
+        self._set_section_enabled(self.prober_frame, available and not self._is_running()
+                                  and not getattr(self.runner, 'prober_motion_inhibited', False))
         if self.prober_frame is not None:
             if available:
                 suffix = ""
@@ -2368,6 +2370,8 @@ class MainUI:
 
     def _set_running_state(self, running: bool, *, reconnect: bool = True):
         self._running = running
+        self.temp_ui.measuring = running
+        self.temp_ui._toggle_controls()
         self.light_settings_button.configure(state=tk.NORMAL if self.prober_available and not running else tk.DISABLED)
         if running:
             self._finish_btn.config(text="Finish & Stop", bg="#d4830a")

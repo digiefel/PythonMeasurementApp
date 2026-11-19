@@ -36,6 +36,8 @@ class TemperatureUI:
         self.temp_tracker = TempTracker(self.log)
         self._poll_job = None
         self._run_active = False
+        # Set by the main window during any run: "Set Temperature" would have to wait for the GPIB bus.
+        self.measuring = False
         self._prober_available = False
 
         # Widgets (set in build_panel)
@@ -250,7 +252,7 @@ class TemperatureUI:
             self.setpoint_entry.grid_remove()
             self.setpoint_entry.configure(state="disabled")
         self.wait_entry.configure(state=entry_state)
-        self.set_button.configure(state="normal" if effective_enabled else "disabled")
+        self.set_button.configure(state="normal" if effective_enabled and not self.measuring else "disabled")
         if effective_enabled:
             self._start_polling(self._safe_poll_interval())
             self._update_sweep_plot()
@@ -289,8 +291,8 @@ class TemperatureUI:
         interval_ms = max(int(poll_interval_s * 1000), 250)
 
         def poll():
-            # While the run thread is using the prober (e.g. moving the chuck), skip this update
-            # and keep showing the last reading, instead of freezing the window until it is done.
+            # While the GPIB bus is busy (the run thread moving the chuck, or the B1500 in the middle
+            # of an exchange), skip this update and keep the last reading instead of freezing the window.
             lock = self.runner.prober_ctrl.lock
             if not lock.acquire(blocking=False):
                 self._poll_job = self.root.after(interval_ms, poll)

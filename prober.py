@@ -1,6 +1,5 @@
 import functools
 import logging
-import threading
 import time
 from typing import Optional, Callable
 from sentio_prober_control.Communication.CommunicatorVisa import CommunicatorVisa
@@ -15,16 +14,15 @@ from sentio_prober_control.Sentio.Enumerations import (
 )
 from sentio_prober_control.Sentio.Response import Response
 from instrumentio.availability import check_gpib_interface
+from instrumentio.ownership import BusLock
 
 logger = logging.getLogger(__name__)
 
 
 def _one_exchange_at_a_time(method):
-    """Hold the session lock for the whole call.
+    """Hold the GPIB bus for the whole call, so its commands and answers stay together.
 
-    The UI thread and the run thread both query the prober over one GPIB session.
-    Without the lock, one thread can read the answer meant for the other, and the
-    session can stay one answer behind from then on.
+    The window, the run thread and the B1500's process all use the same interface.
     """
     @functools.wraps(method)
     def locked(self, *args, **kwargs):
@@ -47,7 +45,7 @@ class ProberController:
         self.subsite_origin = None
         self._scope_light_on: Optional[bool] = None
         # Reentrant: close() is also called from set_enabled() and initialize().
-        self.lock = threading.RLock()
+        self.lock = BusLock(self.DEFAULT_ADDRESS)
 
     @_one_exchange_at_a_time
     def initialize(self, force: bool = False) -> bool:
