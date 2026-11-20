@@ -1,6 +1,7 @@
 """Transient ContactTest controls and main-thread dialogs.
 
-The only config write is the operator name, remembered for the next ContactTest.
+The only config writes are the operator name and the selected probes, remembered
+for the next ContactTest.
 """
 import threading
 import tkinter as tk
@@ -29,8 +30,10 @@ def ask_options(ui):
     entry = ttk.Entry(body, textvariable=operator, width=30)
     entry.grid(row=2, column=1, sticky='ew')
     probes = {}
+    # The probes of the last ContactTest, all of them the first time.
+    checked = ui.config.data.get('contact_test_probes', ['GND', '1', '2', '3', '4'])
     for row, label in enumerate(('GND', '1', '2', '3', '4'), start=3):
-        probes[label] = tk.BooleanVar(value=True)
+        probes[label] = tk.BooleanVar(value=label in checked)
         ttk.Checkbutton(body, text=label if label == 'GND' else f'SMU{label}', variable=probes[label]).grid(
             row=row, column=0, columnspan=2, sticky='w', pady=3)
     result = None
@@ -55,8 +58,10 @@ def ask_options(ui):
             if name is None:
                 return
             name = name.strip()
-        if name != ui.config.data.get('contact_test_operator'):
-            ui.config.data['contact_test_operator'] = name
+        remembered = {'contact_test_operator': name,
+                      'contact_test_probes': [label for label, var in probes.items() if var.get()]}
+        if any(ui.config.data.get(key) != value for key, value in remembered.items()):
+            ui.config.data.update(remembered)
             ui.config.save()
         result = chip_id, name, selected, ground
         dialog.destroy()
