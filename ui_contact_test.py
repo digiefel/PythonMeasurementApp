@@ -3,6 +3,7 @@
 The only config writes are the operator name and the selected probes, remembered
 for the next ContactTest.
 """
+from datetime import datetime
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -127,7 +128,19 @@ def confirm_lift(ui):
         done.set()
 
 
-def show_results(ui, results, path):
+def excel_row(operator, started, results):
+    """One tab-separated row for the contact log spreadsheet.
+
+    Operator, date (YYMMDD), time (HH:MM), then three empty columns to fill in
+    by hand (the second and third hold the note and the stack; the third stays
+    empty), then the fits in SUMMARY_ORDER: R12 R13 R14 R1G R23 R24 R2G R34 R3G R4G.
+    A pair that was not measured is an empty cell; a failed fit reads nan.
+    """
+    values = ['' if results.get(key) is None else format_resistance(results[key]) for key in SUMMARY_ORDER]
+    return '\t'.join([operator, started.strftime('%y%m%d'), started.strftime('%H:%M'), '', '', '', *values])
+
+
+def show_results(ui, results, path, operator, started):
     dialog = tk.Toplevel(ui.root)
     dialog.title('ContactTest results')
     dialog.transient(ui.root)
@@ -139,7 +152,18 @@ def show_results(ui, results, path):
         ttk.Label(body, text=f'R{key}').grid(row=row, column=0, sticky='w', pady=3)
         ttk.Label(body, text=format_resistance(results.get(key)), font=('TkFixedFont', 11)).grid(
             row=row, column=1, sticky='e', padx=(22, 0), pady=3)
-    ttk.Button(body, text='Close', command=dialog.destroy).grid(row=11, column=0, columnspan=2, sticky='e')
+    buttons = ttk.Frame(body)
+    buttons.grid(row=11, column=0, columnspan=2, sticky='e', pady=(10, 0))
+    copy_text = tk.StringVar(value='Copy')
+
+    def copy():
+        # Tab-separated, so pasting into the spreadsheet fills one row, one cell per value.
+        ui.root.clipboard_clear()
+        ui.root.clipboard_append(excel_row(operator, started, results))
+        copy_text.set('Copied')
+
+    ttk.Button(buttons, textvariable=copy_text, command=copy).pack(side='left', padx=5)
+    ttk.Button(buttons, text='Close', command=dialog.destroy).pack(side='left')
     center_popup(dialog, ui.root)
 
 
@@ -158,6 +182,7 @@ def start_contact_test(ui):
     if ui._closing or ui._connection_busy or ui._is_running() or not ui._b1500_available():
         return
     chip, operator, selected, ground = options
+    started = datetime.now()  # the date and time in the spreadsheet row
     address = ui.runner.b1500.address
     ui.runner.stop_event.clear()
     ui.runner.skip_device_event.clear()
@@ -180,7 +205,7 @@ def start_contact_test(ui):
         ui._finish_btn.configure(state=tk.NORMAL)
         ui._skip_button.configure(state=tk.NORMAL)
         if results is not None:
-            show_results(ui, results, path)
+            show_results(ui, results, path, operator, started)
         elif error is not None:
             messagebox.showerror('ContactTest', error, parent=ui.root)
 
