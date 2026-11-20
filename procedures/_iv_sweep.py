@@ -1,17 +1,15 @@
 """Shared execution for Isweep and Vsweep. Only hardware staircase sweeps."""
 import math
-import time
 
 from procedures.base import Choice, MeasurementProcedure, OptionalSMU, SMU, SMUOrGNDU, parameter
+from procedures._hardware_sweep import CURRENT, SOURCE_CURRENT, SOURCE_VOLTAGE, setup_smus, stream_sweep
 from procedures._iv_model import IVPlan, sweep_segments
 from procedures._smu_parameters import ACQUISITION_PARAMETERS
 from instrumentio.constants import B1500_CURRENT_RANGES, B1500_VOLTAGE_RANGES
 from instrumentio.codes import (
-    B1500_CH_ALL, B1500_CH_NOCH, B1500_STOP_DISABLE, B1500_LAST_STOP,
-    B1500_SWP_VF_SGLLIN, B1500_SWP_VF_DBLLIN,
+    B1500_CH_ALL, B1500_SWP_VF_SGLLIN, B1500_SWP_VF_DBLLIN,
     B1500_SWP_IF_SGLLIN, B1500_SWP_IF_DBLLIN, B1500_VF_MODE,
 )
-from instrumentio.descriptors import describe_status_bits
 
 CHANNEL_PARAMETERS = (
     parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
@@ -103,25 +101,10 @@ class IVSweepBase(MeasurementProcedure):
                                    row_ratios=(1.0, 2.8))
         try:
             self.check_stop(b1500)
-            b1500.reset()
-            b1500.enable_error_detect(True)
-            # Keep the endpoint between butterfly segments; cleanup disables all
-            # outputs on success. Abort/error cleanup belongs to the runner.
-            b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
-            channels = [m.channel for m in plan.measurements]
             asu_range = self.current_range
             if self.FORCE_MODE == 'Force I' and self.source_range == 1e-12:
                 asu_range = 1e-12
-            self.prepare_asu_channels(b1500, channels, asu_range)
-            b1500.set_switch(B1500_CH_ALL, False)
-            for ch in channels:
-                b1500.set_switch(ch, True)
-            b1500.configure_smu_acquisition(
-                channels, adc=self.adc_type, mode=self.adc_mode, coefficient=self.adc_coefficient,
-                parallel=self.parallel_measurement, autozero=self.adc_autozero,
-                source_wait_factor=self.source_wait_factor, source_wait_offset=self.source_wait_offset,
-                measurement_wait_factor=self.measurement_wait_factor,
-                measurement_wait_offset=self.measurement_wait_offset)
+            setup_smus(self, b1500, [m.channel for m in plan.measurements], asu_range)
             if self.low_channel != 'GNDU':
                 compliance = self.return_current_compliance if self.FORCE_MODE == 'Force I' else self.current_compliance
                 b1500.force_voltage(self.low_channel, 0.0, compliance=compliance)
@@ -170,58 +153,23 @@ class IVSweepBase(MeasurementProcedure):
                                 -start / 2, -stop / 2, self.current_compliance, self.power_compliance)
 
     def _collect_segment(self, b1500, plan, segment, all_rows):
-        measurements = plan.measurements
-        b1500.start_measure([m.channel for m in measurements], [m.kind for m in measurements],
-                           [self.current_range if m.kind == 1 else self.voltage_range for m in measurements],
-                           source_output=1, timestamp=1)
-        buffers = {m.role: [] for m in measurements}
-        by_channel = {m.channel: m for m in measurements}
-        outputs, seen = [], set()
-        pending_time = None
+        measure = {m.channel: (m.kind, self.current_range if m.kind == CURRENT else self.voltage_range)
+                   for m in plan.measurements}
         base_index = len(all_rows)
-        output_kind = 4 if self.FORCE_MODE == 'Force V' else 3
-        last_plot = 0.0
 
-        def update_rows():
+        def update_rows(data):
             # No assumed count or reconstructed setpoint vector: retain exactly
             # what the instrument reported, including trailing status records.
-            count = max([len(outputs), *(len(b) for b in buffers.values())])
-            new = [plan.row(base_index + i, segment,
-                            {role: values[i] for role, values in buffers.items() if i < len(values)},
-                            outputs[i] if i < len(outputs) else None) for i in range(count)]
-            all_rows[base_index:] = new
-
-        try:
-            while True:
-                self.check_stop(b1500)
-                _, eod, kind, value, status, channel = b1500.read_data()
-                if status and (channel, kind, status) not in seen:
-                    seen.add((channel, kind, status))
-                    self.runner.report_status(dict(channel=channel, data_type=kind, status=status,
-                                                   desc=describe_status_bits(status)))
-                if kind == 5:
-                    pending_time = value
-                elif channel in by_channel and kind == by_channel[channel].kind:
-                    buffers[by_channel[channel].role].append((value, status, pending_time))
-                    pending_time = None
-                elif kind == output_kind and channel in (self.high_channel, B1500_CH_NOCH, B1500_CH_ALL):
-                    outputs.append((value, status))
-                    pending_time = None
-                now = time.monotonic()
-                if now - last_plot >= 0.1 or eod:
-                    update_rows()
-                    self._plot_rows(plan, all_rows)
-                    last_plot = now
-                if eod:
-                    break
-        finally:
-            update_rows()
-            # Refresh the final partial point locally, without further I/O.
+            buffers = {m.role: data.readings[m.channel] for m in plan.measurements}
+            count = max([len(data.outputs), *(len(b) for b in buffers.values())])
+            all_rows[base_index:] = [
+                plan.row(base_index + i, segment,
+                         {role: values[i] for role, values in buffers.items() if i < len(values)},
+                         data.outputs[i] if i < len(data.outputs) else None) for i in range(count)]
             self._plot_rows(plan, all_rows)
-        b1500.finish_measure()
-        counts = [len(outputs), *(len(b) for b in buffers.values())]
-        if len(set(counts)) > 1 or not counts[0]:
-            raise RuntimeError(f'Incomplete hardware sweep stream: record counts {counts}; available data saved.')
+
+        stream_sweep(self, b1500, measure, self.high_channel,
+                     SOURCE_VOLTAGE if self.FORCE_MODE == 'Force V' else SOURCE_CURRENT, update_rows)
 
     def _plot_rows(self, plan, rows):
         if self.runner.plot is not None:
