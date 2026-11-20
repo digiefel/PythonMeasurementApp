@@ -23,7 +23,9 @@ from instrumentio.descriptors import describe_status_bits
 
 # Each RSU has one SMU cabled into it; this is wiring, not a setting.
 # SMU numbers become B1500 slots through the channel map found at start-up.
-RSU_SMU = {101: "SMU1", 102: "SMU2"}
+# 102 and 201 are fed by the SCUU outputs: SMU3 shares 102 with CMU-L, SMU4 shares 201 with CMU-H
+# (the SCUU pairs CMU-H with the SMU one slot below the CMU). Those two RSU paths are limited to ±25 V.
+RSU_SMU = {101: "SMU1", 102: "SMU3", 201: "SMU4"}
 
 
 class FTJFatigueProcedure(PUNDFatigueProcedure):
