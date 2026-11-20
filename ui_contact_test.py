@@ -1,4 +1,7 @@
-"""Transient ContactTest controls and main-thread dialogs; no config writes."""
+"""Transient ContactTest controls and main-thread dialogs.
+
+The only config write is the operator name, remembered for the next ContactTest.
+"""
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -22,7 +25,7 @@ def ask_options(ui):
     chip_entry = ttk.Entry(body, textvariable=chip, width=30)
     chip_entry.grid(row=1, column=1, sticky='ew')
     ttk.Label(body, text='Operator name').grid(row=2, column=0, sticky='w', padx=(0, 10))
-    operator = tk.StringVar(value='')
+    operator = tk.StringVar(value=ui.config.data.get('contact_test_operator', ''))
     entry = ttk.Entry(body, textvariable=operator, width=30)
     entry.grid(row=2, column=1, sticky='ew')
     probes = {}
@@ -52,6 +55,9 @@ def ask_options(ui):
             if name is None:
                 return
             name = name.strip()
+        if name != ui.config.data.get('contact_test_operator'):
+            ui.config.data['contact_test_operator'] = name
+            ui.config.save()
         result = chip_id, name, selected, ground
         dialog.destroy()
 
@@ -60,6 +66,9 @@ def ask_options(ui):
     ttk.Button(buttons, text='Cancel', command=dialog.destroy).pack(side='left', padx=5)
     ttk.Button(buttons, text='Start', command=submit).pack(side='left')
     dialog.bind('<Escape>', lambda _: dialog.destroy())
+    # Enter starts, as the Start button does, from any field or checkbox.
+    dialog.bind('<Return>', lambda _: submit())
+    dialog.bind('<KP_Enter>', lambda _: submit())
     center_popup(dialog, ui.root)
     dialog.grab_set()
     chip_entry.focus_set()
@@ -161,9 +170,8 @@ def start_contact_test(ui):
         ui.runner.skip_device_event.clear()
         ui.runner.cancel_queue_event.clear()
         ui.runner.prober_motion_inhibited = False
-        # Automatic reconnect also initializes the prober; leave that to an
-        # explicit Reconnect action after a cancelled standalone measurement.
-        ui._set_running_state(False, reconnect=False)
+        # A cancel retires the B1500 connection; this reconnects the B1500 only.
+        ui._set_running_state(False)
         ui._finish_btn.configure(state=tk.NORMAL)
         ui._skip_button.configure(state=tk.NORMAL)
         if results is not None:
