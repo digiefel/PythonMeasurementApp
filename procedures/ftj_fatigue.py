@@ -72,8 +72,8 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 			        xlabel="Time (s)",
 			        ylabels=("Voltage (V)", "Current (uA)"),
 			        xlim=(0, read_duration),
-			        ylims=((min(0.0, self.base_voltage - max_abs_v) - v_margin,
-			                max(0.0, self.base_voltage + max_abs_v) + v_margin), None),
+			        ylims=((min(0.0, self.v_base - max_abs_v) - v_margin,
+			                max(0.0, self.v_base + max_abs_v) + v_margin), None),
 			        elements=waveform),
 			PlotDef("qv", row=1, col=0, xlabel="Voltage (V)", ylabels=("Charge (nC)",), elements=qv),
 			PlotDef("smu_iv", row=1, col=1, xlabel="SMU 1 Voltage (V)", ylabels=("|SMU 2 Current| (A)",),
@@ -145,7 +145,7 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 		for segment, (start, stop, double, points) in enumerate(sweep_segments(0.0, self.vmax, self.smu_points, 'Butterfly')):
 			self.check_stop(b1500)
 			b1500.set_iv_sweep(force, B1500_SWP_VF_DBLLIN if double else B1500_SWP_VF_SGLLIN, 0.0,
-			                   self.base_voltage + start, self.base_voltage + stop, points,
+			                   self.v_base + start, self.v_base + stop, points,
 			                   compliance=self.smu_current_compliance)
 			b1500.start_measure([force, ground], [1, 1], [self.smu_current_range] * 2, source_output=1, timestamp=0)
 			outputs, currents, seen = [], {force: [], ground: []}, set()
