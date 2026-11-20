@@ -3,9 +3,10 @@ FTJ Fatigue Procedure - PUND fatigue with an SMU I-V sweep after every read.
 
 Same fatigue and read schedule as PUNDFatigue. After each WGFMU read, both
 RSUs switch to their SMU input and a butterfly staircase sweep reads the
-junction: SMU 1 (on WGFMU channel 1) sweeps base → base+Vmax → base → base−Vmax
-→ base, while SMU 2 (on WGFMU channel 2) holds 0 V and measures the current.
-The RSUs then switch back to the WGFMU for the next fatigue block.
+junction: the SMU cabled into channel 1's RSU sweeps base → base+Vmax → base →
+base−Vmax → base, while the SMU cabled into channel 2's RSU holds 0 V and
+measures the current. Which SMU feeds which RSU is cabling, so it is set in the
+form. The RSUs then switch back to the WGFMU for the next fatigue block.
 """
 import time
 import numpy as np
@@ -21,18 +22,15 @@ from instrumentio.codes import (
 from instrumentio.constants import B1500_CURRENT_RANGES
 from instrumentio.descriptors import describe_status_bits
 
-# Each RSU has one SMU cabled into it; this is wiring, not a setting.
-# SMU numbers become B1500 slots through the channel map found at start-up.
-# 102 and 201 are fed by the SCUU outputs: SMU3 shares 102 with CMU-L, SMU4 shares 201 with CMU-H
-# (the SCUU pairs CMU-H with the SMU one slot below the CMU). Those two RSU paths are limited to ±25 V.
-RSU_SMU = {101: "SMU1", 102: "SMU3", 201: "SMU4"}
-
-
 class FTJFatigueProcedure(PUNDFatigueProcedure):
 	NAME = "FTJFatigue"
 	# TODO: the inherited Read Delay field is not used yet; reads here still start after one read period.
 	PARAMETERS = (
 		*PUNDFatigueProcedure.PARAMETERS,
+		parameter('smu_1', "SMU on Channel 1's RSU", 'SMU1', SMU,
+		          help="The SMU cabled into the From-SMU input of WGFMU channel 1's RSU. It sweeps."),
+		parameter('smu_2', "SMU on Channel 2's RSU", 'SMU2', SMU,
+		          help="The SMU cabled into the From-SMU input of WGFMU channel 2's RSU. It holds 0 V and measures."),
 		parameter('smu_points', 'SMU Sweep Points (outward leg)', 21, int,
 		          help="Butterfly sweep base → +Vmax → base → −Vmax → base, with the PUND Vmax."),
 		parameter('smu_current_range', 'SMU Current Range (A)', 1e-9, Choice(B1500_CURRENT_RANGES, float)),
@@ -45,8 +43,10 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 		# TODO: read at every frequency once the fatigue procedures are rewritten as a chain.
 		if len(self.read_frequencies) > 1:
 			raise ValueError("FTJFatigue reads at one frequency only; give a single read frequency.")
-		if self.channel_1 not in RSU_SMU or self.channel_2 not in RSU_SMU or self.channel_1 == self.channel_2:
-			raise ValueError(f"FTJFatigue needs WGFMU channels {sorted(RSU_SMU)}, which have SMUs on their RSUs.")
+		if self.channel_1 == self.channel_2:
+			raise ValueError("WGFMU channels 1 and 2 must differ.")
+		if self.smu_1 == self.smu_2:
+			raise ValueError("The SMUs on the two RSUs must differ.")
 		if self.smu_current_compliance <= 0:
 			raise ValueError("SMU current compliance must be > 0")
 		sweep_segments(0.0, self.vmax, self.smu_points, 'Butterfly')
@@ -133,7 +133,7 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 		"""Butterfly sweep on SMU 1 with SMU 2 at 0 V. Returns (segment, V1, I1, I2, status) rows."""
 		b1500 = self.b1500
 		wgfmu = b1500.wgfmu
-		force, ground = SMU.coerce(RSU_SMU[self.channel_1]), SMU.coerce(RSU_SMU[self.channel_2])
+		force, ground = self.smu_1, self.smu_2
 		for channel in (self.channel_1, self.channel_2):
 			wgfmu.set_operation_mode(channel, WGFMU_OPERATION_MODE_SMU)
 			wgfmu.update_channel(channel)
@@ -192,7 +192,7 @@ class FTJFatigueProcedure(PUNDFatigueProcedure):
 		try:
 			b1500.enable_error_detect(True)
 			b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
-			smu_channels = [SMU.coerce(RSU_SMU[self.channel_1]), SMU.coerce(RSU_SMU[self.channel_2])]
+			smu_channels = [self.smu_1, self.smu_2]
 			self.prepare_asu_channels(b1500, smu_channels, self.smu_current_range)
 			# High-resolution ADC in auto mode: sensitive at nA, still well under a second per sweep.
 			b1500.configure_smu_acquisition(smu_channels, adc=self.smu_adc_type, mode=0, coefficient=0,

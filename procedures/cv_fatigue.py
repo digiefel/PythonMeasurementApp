@@ -9,12 +9,13 @@ each fatigue cycle count listed in "C-V at Cycles". Cycle 0 also gets a PUND
 read. Where a cycle has both, the C-V comes first, so the cycle-0 C-V sees a
 pristine device.
 
-The CMU reaches the probes through the same RSUs as the WGFMU (procedures/_cmu.py,
-CMU_RSU): an RSU connects its From-SMU input, which the SCUU feeds, whenever its
-WGFMU channel is idle. So the WGFMU runs in blocks, from one C-V to the next; after
-each block its channels are switched off and the CMU measures. Channel 1 (the pulse
-channel) must be the CMU-H RSU and channel 2 the CMU-L one, so that a positive pulse
-and a positive C-V bias point the same way.
+This needs the SCUU outputs cabled into the From-SMU inputs of the two channels'
+RSUs: an RSU connects that input to the probe whenever its WGFMU channel is idle.
+So the WGFMU runs in blocks, from one C-V to the next; after each block its
+channels are switched off and the CMU measures through the same RSUs. Choose
+channel 1 (the pulse channel) as the RSU that CMU-H reaches and channel 2 as the
+CMU-L one, so a positive pulse and a positive C-V bias point the same way. The
+software cannot see the cabling, so it does not check this.
 
 The run uses the CMU calibration the instrument holds: the calibration section
 calibrates at the C-V frequencies, and the CSV headers name what was in use
@@ -34,7 +35,6 @@ from plotting import PlotDef, Curve
 from procedures.base import Choice, ValueList, parameter
 from procedures.pund_fatigue import PUNDFatigueProcedure
 from procedures._cmu import (
-	CMU_RSU,
 	CMUCalibration,
 	CV_SWEEP_TYPES,
 	freq_label,
@@ -68,10 +68,11 @@ class CVFatigueProcedure(CMUCalibration, PUNDFatigueProcedure):
 	NAME = "CVFatigue"
 	PARAMETERS = (
 		_PUND_FATIGUE_PARAMETERS['gpib_address'],
-		replace(_PUND_FATIGUE_PARAMETERS['channel_1'], default=CMU_RSU['H'],
-		        help="Pulse channel. Must be the RSU that carries CMU-H, so pulses and C-V bias share a sign."),
-		replace(_PUND_FATIGUE_PARAMETERS['channel_2'], default=CMU_RSU['L'],
-		        help="Current channel. Must be the RSU that carries CMU-L."),
+		replace(_PUND_FATIGUE_PARAMETERS['channel_1'],
+		        help="Pulse channel. Its RSU must be the one cabled to CMU-H (through the SCUU), "
+		             "so pulses and C-V bias share a sign."),
+		replace(_PUND_FATIGUE_PARAMETERS['channel_2'],
+		        help="Current channel. Its RSU must be the one cabled to CMU-L (through the SCUU)."),
 		replace(_PUND_FATIGUE_PARAMETERS['v_pos'], label='Fatigue Vpos (V)',
 		        help='Peak voltage of the positive fatigue pulses.'),
 		replace(_PUND_FATIGUE_PARAMETERS['v_neg'], label='Fatigue Vneg (V)',
@@ -135,9 +136,8 @@ class CVFatigueProcedure(CMUCalibration, PUNDFatigueProcedure):
 		# TODO: read at every frequency once the fatigue procedures are rewritten as a chain.
 		if len(self.read_frequencies) > 1:
 			raise ValueError("CVFatigue reads at one PUND frequency only; give a single read frequency.")
-		if (self.channel_1, self.channel_2) != (CMU_RSU['H'], CMU_RSU['L']):
-			raise ValueError(f"CVFatigue needs WGFMU channel 1 = {CMU_RSU['H']} (CMU-H RSU) and channel 2 = "
-			                 f"{CMU_RSU['L']} (CMU-L RSU): the C-V reaches the device only through those RSUs.")
+		if self.channel_1 == self.channel_2:
+			raise ValueError("WGFMU channels 1 and 2 must differ.")
 		self.cv_frequencies = parse_cmu_frequencies(self.frequencies)
 		validate_cv_sweep(self.sweep_type, self.start_bias, self.stop_bias, self.points)
 		if max(abs(self.start_bias), abs(self.stop_bias)) > MAX_CV_BIAS:

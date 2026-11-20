@@ -16,11 +16,6 @@ DEFAULT_CORRECTION_FREQUENCIES = (
     2.5e6, 2.7e6, 3e6, 3.2e6, 3.5e6, 3.7e6, 4e6, 4.2e6, 4.5e6, 5e6,
 )
 
-# Wiring: the SCUU outputs feed the From-SMU inputs of two RSUs, so the CMU reaches the
-# probes there whenever those WGFMU channels are idle. CMU-H shares RSU 201 with SMU4,
-# CMU-L shares RSU 102 with SMU3 (checked by switching each RSU and watching the CMU).
-CMU_RSU = {'H': 201, 'L': 102}
-
 CV_SWEEP_TYPES = (
     ('single', 'Single (Start → Stop)'),
     ('double', 'Double (Start → Stop → Start)'),
