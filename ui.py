@@ -866,7 +866,7 @@ class MainUI:
     def update_output_dir_from_ui(self) -> bool:
         output_dir = self.output_dir_var.get().strip()
         if not output_dir:
-            messagebox.showerror("Output Directory", "Please choose an output directory before running or saving settings.")
+            messagebox.showerror("Output Directory", "Please choose an output directory before running.")
             return False
         output_dir = self.config.set_output_dir(output_dir)
         self.output_dir_var.set(output_dir)
@@ -1884,8 +1884,9 @@ class MainUI:
         if not proc_name:
             self.log("Select a procedure before saving settings.")
             return
-        if not self.update_output_dir_from_ui():
-            return
+        # The output directory goes into the saved file when one is set; only a run needs one.
+        if self.output_dir_var.get().strip():
+            self.update_output_dir_from_ui()
         settings = self.collect_settings()
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
