@@ -997,10 +997,20 @@ class B1500Session:
         if phase:
             self._visa_write(f"ADJ {ch},1\n")
             phase_result = int(float(self._visa_query(f"ADJ? {ch},0").strip().split(",")[0]))
-        for corr in (B1500_CMU_CORR_OPEN, B1500_CMU_CORR_SHORT, B1500_CMU_CORR_LOAD):
+        names = {B1500_CMU_CORR_OPEN: "open", B1500_CMU_CORR_SHORT: "short", B1500_CMU_CORR_LOAD: "load"}
+        for corr in names:
             self._visa_write(f"CORRST {ch},{corr},{1 if corr in enabled else 0}\n")
         self._check_instrument_errors("Apply CMU calibration")
-        return {"phase_result": phase_result, "list_length": self.get_cmu_correction_count(ch)}
+        # Read the state back, so the caller can check what the instrument will really use.
+        corrst = {name: int(float(self._visa_query(f"CORRST? {ch},{corr}").strip())) for corr, name in names.items()}
+        # *LRN? 90 answers "ADJ<chnum>,<mode>[;ADJ...]" for every MFCMU (Programming Guide, *LRN?).
+        adj_mode = None
+        for item in self._visa_query("*LRN? 90").strip().split(";"):
+            channel_text, _, mode_text = item.strip().removeprefix("ADJ").partition(",")
+            if channel_text.strip() == str(ch) and mode_text.strip():
+                adj_mode = int(mode_text)
+        return {"phase_result": phase_result, "adj_mode": adj_mode, "corrst": corrst,
+                "table": self.get_cmu_correction_table(ch)}
 
     def interrupt_io(self):
         """Request cancellation of host I/O; never send an instrument command.

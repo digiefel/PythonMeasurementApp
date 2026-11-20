@@ -275,55 +275,120 @@ class CMUCalibration:
         """The frequencies the calibration buttons measure, sorted, from the form settings."""
         raise NotImplementedError
 
-    def apply_cmu_calibration(self, b1500):
-        """Use the stored phase compensation and the corrections the instrument still holds.
+    # CORRDT? columns of each correction type, and how the header names them.
+    _CORRECTION_COLUMNS = {"open": (("open_r", "G", "S"), ("open_i", "B", "S")),
+                           "short": (("short_r", "R", "Ohm"), ("short_i", "X", "Ohm")),
+                           "load": (("load_r", "R", "Ohm"), ("load_i", "X", "Ohm"))}
 
-        Call after b1500.reset(). A correction type is used when it was measured at
-        the frequencies now in the instrument's correction list; it is reported as
-        incomplete when those do not span this run's calibration frequencies (the
-        CMU interpolates between list frequencies). With require_cmu_calibration,
-        missing phase compensation, a missing open correction or incomplete coverage
-        is an error. Records what is in use as the 'cmu_correction' setting, so the
-        CSV header shows it. Returns that list.
+    @classmethod
+    def _matches_record(cls, corr_type, entry, table):
+        """Whether the instrument's correction table holds this record's data: same frequencies, same values."""
+        stored = sorted(float(f) for f in entry.get("frequencies_hz") or [])
+        if not stored or len(stored) != len(table) or any(
+                abs(a - row["frequency_hz"]) > 1e-6 * a for a, row in zip(stored, table)):
+            return False
+        by_freq = entry.get("results_by_frequency") or {}
+        for row in table:
+            coeffs = (by_freq.get(freq_key(row["frequency_hz"])) or {}).get("coefficients")
+            if not isinstance(coeffs, dict):
+                continue  # older records kept no coefficients; the frequencies have to do
+            for column, _, _ in cls._CORRECTION_COLUMNS[corr_type]:
+                a, b = float(coeffs.get(column, 0.0)), float(row[column])
+                if abs(a - b) > 1e-6 * max(abs(a), abs(b)) + 1e-30:
+                    return False
+        return True
+
+    def apply_cmu_calibration(self, b1500):
+        """Use the stored phase compensation and the corrections the instrument still holds, and check it does.
+
+        Call after b1500.reset(). A correction type is used when the instrument's
+        correction table holds that record's data (same frequencies and coefficients);
+        it is reported as incomplete when its frequencies do not span this run's
+        calibration frequencies (the CMU interpolates between list frequencies).
+        After switching, the instrument's state is read back; a mismatch is always an
+        error. With require_cmu_calibration, missing phase compensation, a missing
+        open correction or incomplete coverage is an error too.
+
+        Writes the calibration into the settings, so every CSV header carries it:
+        cmu_correction (what is in use), cmu_instrument_state (read back),
+        cmu_cal_<type> (when measured, over which frequencies, used or why not),
+        and cmu_cal_<type>_data (the instrument's coefficients at the list
+        frequencies around this run's frequencies). Returns the list in use.
         """
         channel = self.cmu_channel
         records = (self.cmu_calibration or {}).get(str(channel), {})
         needed = self.cmu_calibration_frequencies(self.settings)
         lo, hi = min(needed), max(needed)
         # `or`: the waveform preview's stand-in instrument answers None.
-        instrument_freqs = sorted(b1500.get_cmu_correction_frequencies(channel) or [])
-        problems, corrections = [], []
+        table = sorted(b1500.get_cmu_correction_table(channel) or [], key=lambda row: row["frequency_hz"])
+        problems, corrections, notes = [], [], {}
         for corr_type in ("open", "short", "load"):
             entry = records.get(corr_type)
             if not isinstance(entry, dict):
+                notes[corr_type] = "not calibrated"
                 continue
             stored = sorted(float(f) for f in entry.get("frequencies_hz") or [])
-            if not stored or len(stored) != len(instrument_freqs) or any(
-                    abs(a - b) > 1e-6 * b for a, b in zip(stored, instrument_freqs)):
+            span = f"{len(stored)} frequencies {freq_label(stored[0])}-{freq_label(stored[-1])}" if stored else "no frequencies"
+            if not self._matches_record(corr_type, entry, table):
                 problems.append(f"{corr_type}: no longer in the instrument (switched off since, "
-                                f"or recalibrated at other frequencies); measure it again")
+                                f"or recalibrated elsewhere); measure it again")
+                notes[corr_type] = f"NOT USED, not in the instrument any more; measured {entry.get('timestamp')}, {span}"
                 continue
             corrections.append(corr_type)
+            notes[corr_type] = f"used; measured {entry.get('timestamp')}, {span}"
             if stored[0] > lo * (1 + 1e-9) or stored[-1] < hi * (1 - 1e-9):
-                problems.append(f"{corr_type}: calibrated {freq_label(stored[0])}–{freq_label(stored[-1])}, "
-                                f"which does not span {freq_label(lo)}–{freq_label(hi)}")
+                problems.append(f"{corr_type}: calibrated {freq_label(stored[0])}-{freq_label(stored[-1])}, "
+                                f"which does not span {freq_label(lo)}-{freq_label(hi)}")
+                notes[corr_type] += f", does not span {freq_label(lo)}-{freq_label(hi)}"
 
+        phase_entry = records.get("phase")
         want_phase = phase_compensated(self.cmu_calibration, channel)
         applied = b1500.apply_cmu_calibration(channel, want_phase, corrections) or {}
-        used = list(corrections)
+        use_phase = want_phase and applied.get("phase_result") == 0
         if not want_phase:
             problems.append("phase: never run")
-        elif applied.get("phase_result") == 0:
-            used.insert(0, "phase")
+            notes["phase"] = "not calibrated"
+        elif use_phase:
+            notes["phase"] = f"used; measured {phase_entry.get('timestamp')}"
         else:
             # ADJ? 3: no phase compensation since the B1500 was switched on.
             problems.append(f"phase: the instrument holds no compensation data (ADJ? {applied.get('phase_result')}); "
                             f"run Phase again")
-            b1500.apply_cmu_calibration(channel, False, corrections)
+            notes["phase"] = f"NOT USED, the instrument has no data (ADJ? {applied.get('phase_result')}); " \
+                             f"measured {phase_entry.get('timestamp')}"
+            applied = b1500.apply_cmu_calibration(channel, False, corrections) or {}
         if "open" not in corrections:
             problems.append("open: missing")
 
+        if applied:  # the preview's stand-in has nothing to read back
+            corrst = applied["corrst"]
+            wrong = [t for t in ("open", "short", "load") if corrst.get(t) != (1 if t in corrections else 0)]
+            if use_phase and applied["adj_mode"] != 1:
+                wrong.append(f"phase (ADJ mode {applied['adj_mode']})")
+            if wrong:
+                raise RuntimeError(f"The CMU did not take the calibration settings: {', '.join(wrong)} "
+                                   f"(CORRST? {corrst}). Not measuring with unknown corrections.")
+            self.settings['cmu_instrument_state'] = (
+                f"ADJ mode {applied['adj_mode']} (0 auto, 1 manual); "
+                f"CORRST open={corrst['open']} short={corrst['short']} load={corrst['load']}")
+
+        used = (["phase"] if use_phase else []) + corrections
         self.settings['cmu_correction'] = ", ".join(used) or "none"
+        for cal_type in ("phase", "open", "short", "load"):
+            self.settings[f'cmu_cal_{cal_type}'] = notes[cal_type]
+        # The coefficients the CMU interpolates from for this run: the list frequencies in the
+        # run's span, and the nearest one on each side.
+        freqs = [row["frequency_hz"] for row in table]
+        below = [i for i, f in enumerate(freqs) if f < lo * (1 - 1e-9)]
+        above = [i for i, f in enumerate(freqs) if f > hi * (1 + 1e-9)]
+        first = below[-1] if below else 0
+        last = above[0] if above else len(table) - 1
+        for corr_type in corrections:
+            self.settings[f'cmu_cal_{corr_type}_data'] = "; ".join(
+                f"{freq_label(row['frequency_hz'])}: " + " ".join(
+                    f"{name}={row[column]:.6g} {unit}" for column, name, unit in self._CORRECTION_COLUMNS[corr_type])
+                for row in table[first:last + 1])
+
         self.log(f"CMU calibration in use on channel {channel}: {self.settings['cmu_correction']}")
         if problems:
             message = f"CMU calibration on channel {channel}: " + "; ".join(problems)
