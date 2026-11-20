@@ -387,15 +387,22 @@ class MainUI:
             return "The B1500 is unavailable. Check that the instrument and GPIB adapter are connected, then click to reconnect."
         return "Run the selected procedure on the selected devices."
 
-    def _start_connection_check(self, check_b1500=True):
+    def _start_connection_check(self, check_b1500=True, check_prober=True):
+        """Connect the B1500 and/or the prober in the background, then refresh the controls.
+
+        check_prober=False leaves the prober session, its contact state and the
+        temperature controls alone: used to restore only the B1500 connection,
+        which every stopped run retires.
+        """
         if self._closing or self._connection_busy or self._is_running():
             return
         address = self._selected_gpib_address()
         discover = self.config.data.get('b1500', {}).get('auto_discover_channels', True)
         prober_enabled = self.prober_enabled_var.get()
         restore_temperature = self.temp_ui.enabled_var.get()
-        self.temp_ui.set_prober_available(False)
-        self.prober_available = False
+        if check_prober:
+            self.temp_ui.set_prober_available(False)
+            self.prober_available = False
         self._connection_busy = True
         self.runner.stop_event.clear()
         self._refresh_connection_controls()
@@ -412,7 +419,7 @@ class MainUI:
                     except Exception:
                         results['b1500_failed'] = True
                         logger.exception("B1500 connection check failed at %s", address)
-                if not self._closing:
+                if not self._closing and check_prober:
                     self.runner.prober_ctrl.set_enabled(prober_enabled)
                     if prober_enabled:
                         # Reconnecting the B1500 must not discard prober alignment
@@ -451,12 +458,13 @@ class MainUI:
                 self.render_param_form(proc_name)
             if results.get('b1500_failed'):
                 self.log("B1500 unavailable: Could not connect to the instrument. See the application log for details. Measurement and calibration controls disabled.")
-            self._finish_prober_initialization(results.get('prober_available', False))
-            if self.prober_available:
-                self._set_contact_state(results.get('contact', False))
-                if restore_temperature:
-                    self.temp_ui.enabled_var.set(True)
-                    self.temp_ui._toggle_controls()
+            if check_prober:
+                self._finish_prober_initialization(results.get('prober_available', False))
+                if self.prober_available:
+                    self._set_contact_state(results.get('contact', False))
+                    if restore_temperature:
+                        self.temp_ui.enabled_var.set(True)
+                        self.temp_ui._toggle_controls()
             self._refresh_connection_controls()
 
         self.root.after(100, finish_when_ready)
@@ -2374,9 +2382,9 @@ class MainUI:
         self._refresh_connection_controls()
 
         if reconnect and not running and self.runner.b1500 is not None and not self.runner.b1500.is_open:
-            # Abort/Skip retires the measurement connection. Restore it after
-            # the run ends, without forcing the prober to reconnect.
-            self._start_connection_check()
+            # Abort/Skip retires the B1500 connection. Restore it after the run
+            # ends; the prober session is not affected, so leave it alone.
+            self._start_connection_check(check_prober=False)
 
     def _set_contact_state(self, in_contact: bool):
         """Update contact button appearance based on contact state."""
