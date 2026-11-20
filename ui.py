@@ -584,6 +584,8 @@ class MainUI:
         output_browse_button = ttk.Button(output_frame, text="Browse...", command=self.browse_output_dir)
         output_browse_button.grid(row=0, column=1, sticky="ew")
         attach_tooltip(output_browse_button, "Browse for a folder to save measurement results.")
+        self._show_path_end(self.devices_csv_cb, self.devices_csv_var)
+        self._show_path_end(output_entry, self.output_dir_var)
 
         site_label = ttk.Label(self.selection_frame, text="Site")
         site_label.grid(row=3, column=0, sticky="w")
@@ -862,6 +864,24 @@ class MainUI:
 
     def load_output_dir(self):
         self.output_dir_var.set(self.config.data.get('output_dir', ''))
+
+    @staticmethod
+    def _show_path_end(widget, var):
+        """Keep the end of a path in view: the file or folder name matters more than the drive.
+
+        Right-justified text covers paths shorter than the field; longer ones are
+        scrolled to their end whenever the path changes, the field loses focus or
+        is resized. A field being typed in is left alone.
+        """
+        widget.configure(justify="right")
+
+        def to_end(*_):
+            if widget.focus_get() is not widget:
+                widget.after_idle(widget.xview_moveto, 1.0)
+
+        var.trace_add("write", to_end)
+        widget.bind("<FocusOut>", to_end, add="+")
+        widget.bind("<Configure>", to_end, add="+")
 
     def update_output_dir_from_ui(self) -> bool:
         output_dir = self.output_dir_var.get().strip()
