@@ -1,12 +1,42 @@
-"""Shared helpers for CMU (impedance) procedures: CVSweep and CfSweep."""
+"""Shared helpers for CMU (impedance) procedures: CVSweep, CfSweep and CVFatigue."""
 
 import cmath
 import math
 
+from instrumentio.codes import B1500_SWP_VF_DBLLIN, B1500_SWP_VF_SGLLIN
 from instrumentio.constants import B1500_CMU_CHANNELS
 from plotting import Curve, PlotDef
 from instrumentio.descriptors import describe_status_bits
-from si_utils import format_si_value
+from procedures.base import action
+from si_utils import format_si_value, parse_si_list
+
+# The frequencies CLCORR chnum,2 puts in the correction list (Programming Guide, CLCORR).
+DEFAULT_CORRECTION_FREQUENCIES = (
+    1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3, 200e3, 500e3, 1e6, 1.2e6, 1.5e6, 2e6,
+    2.5e6, 2.7e6, 3e6, 3.2e6, 3.5e6, 3.7e6, 4e6, 4.2e6, 4.5e6, 5e6,
+)
+
+# Wiring: the SCUU outputs feed the From-SMU inputs of two RSUs, so the CMU reaches the
+# probes there whenever those WGFMU channels are idle. CMU-H shares RSU 201 with SMU4,
+# CMU-L shares RSU 102 with SMU3 (checked by switching each RSU and watching the CMU).
+CMU_RSU = {'H': 201, 'L': 102}
+
+CV_SWEEP_TYPES = (
+    ('single', 'Single (Start → Stop)'),
+    ('double', 'Double (Start → Stop → Start)'),
+    ('butterfly', 'Butterfly (0 → Vmax → Vmin → 0)'),
+)
+
+
+def parse_cmu_frequencies(text):
+    """Sorted CMU frequencies from a comma-separated list with SI prefixes, each 1 kHz to 5 MHz."""
+    freqs = sorted(parse_si_list(str(text)))
+    if not freqs:
+        raise ValueError("At least one frequency is required.")
+    for f in freqs:
+        if not (1e3 <= f <= 5e6):
+            raise ValueError(f"Frequency {f:.6g} Hz out of range [1 kHz, 5 MHz].")
+    return freqs
 
 
 def freq_label(freq_hz):
@@ -47,24 +77,26 @@ def resolve_cmu_channel(settings, channel, log) -> int:
     return replacement
 
 
-def calibrated_frequencies(cmu_calibration, channel) -> dict[str, list[float]]:
-    """Return the sorted frequencies with stored open/short/load correction data on a channel."""
-    channel_data = (cmu_calibration or {}).get(str(channel), {})
-    result = {}
-    for corr_type in ("open", "short", "load"):
-        entry = channel_data.get(corr_type, {})
-        freqs = set()
-        if isinstance(entry, dict):
-            # Calibration data can be stored as a per-frequency map or as an older single-frequency entry.
-            by_freq = entry.get("results_by_frequency", {})
-            raw = list(by_freq.keys()) if isinstance(by_freq, dict) and by_freq else [entry.get("frequency_hz")]
-            for value in raw:
-                try:
-                    freqs.add(float(value))
-                except (TypeError, ValueError):
-                    continue
-        result[corr_type] = sorted(freqs)
-    return result
+def record_calibration(cmu_calibration, channel, cal_type, result, timestamp) -> dict:
+    """Store a calibration result in the cmu_calibration dict (as kept in the global config).
+
+    result is what B1500Session.run_cmu_phase_compensation or measure_cmu_correction
+    returned. A correction that rebuilt the instrument's frequency list cleared the
+    other correction types there, so their records go too. Returns the channel's records.
+    """
+    records = cmu_calibration.setdefault(str(channel), {})
+    if cal_type == "phase":
+        records["phase"] = {"timestamp": timestamp, "result": result}
+        return records
+    if result.get("list_changed"):
+        for other in ("open", "short", "load"):
+            records.pop(other, None)
+    records[cal_type] = {
+        "timestamp": timestamp,
+        "frequencies_hz": list(result["frequencies_hz"]),
+        "results_by_frequency": {freq_key(row["frequency_hz"]): {"coefficients": row} for row in result["table"]},
+    }
+    return records
 
 
 def phase_compensated(cmu_calibration, channel) -> bool:
@@ -155,3 +187,147 @@ def report_cmu_status(runner, channel, seen, s1, s2):
                 "channel": channel, "data_type": data_type, "status": status,
                 "desc": describe_status_bits(status),
             })
+
+
+def cv_sweep_legs(sweep_type, start_bias, stop_bias, points):
+    """The legs of a C-V sweep, as (start, stop, points, double) per CMU sweep command.
+
+    'single' is start → stop and 'double' start → stop → start, both one command.
+    'butterfly' is 0 → Vmax → Vmin → 0 in three legs, with start_bias = Vmax and
+    stop_bias = Vmin. Its points are shared out in proportion to each leg's span;
+    legs 2 and 3 repeat the previous leg's last point, which run_cv_sweep drops,
+    so the pool is points + 2.
+    """
+    if sweep_type != 'butterfly':
+        return [(start_bias, stop_bias, points, sweep_type == 'double')]
+    vmax, vmin = start_bias, stop_bias
+    spans = [abs(vmax), abs(vmax - vmin), abs(vmin)]
+    total_span = sum(spans)
+    if total_span == 0:
+        raise ValueError("Butterfly sweep: all voltage spans are zero.")
+    raw = [max(2, round((points + 2) * s / total_span)) for s in spans]
+    # Make the visible point count (sum - 2 shared boundaries) exactly `points`, through the middle leg.
+    raw[1] = max(2, raw[1] + (points + 2) - sum(raw))
+    return [(0.0, vmax, raw[0], False), (vmax, vmin, raw[1], False), (vmin, 0.0, raw[2], False)]
+
+
+def validate_cv_sweep(sweep_type, start_bias, stop_bias, points):
+    if sweep_type not in ('single', 'double', 'butterfly'):
+        raise ValueError(f"Invalid sweep_type: {sweep_type!r}")
+    if points < 1:
+        raise ValueError("C-V points must be >= 1")
+    if sweep_type == 'butterfly' and start_bias == stop_bias:
+        raise ValueError("For butterfly sweep, Start Bias (Vmax) and Stop Bias (Vmin) must differ.")
+    if sweep_type != 'butterfly' and start_bias == stop_bias and points > 1:
+        raise ValueError("Start Bias and Stop Bias are equal; use points=1 for spot-like measurement.")
+    cv_sweep_legs(sweep_type, start_bias, stop_bias, points)
+
+
+def run_cv_sweep(b1500, channel, cmu_mode, measurement_range, sweep_type, start_bias, stop_bias, points,
+                 hold, delay, second_delay, on_point):
+    """Run one C-V sweep at the frequency and AC level already set, streaming every point.
+
+    on_point(source_v, para1, para2, time_s, s1, s2) is called as each point arrives.
+    Only the first leg waits the hold time; later legs continue from the bias the
+    previous one ended at. The CMU stays at the last bias afterwards.
+    """
+    for leg, (start, stop, n, double) in enumerate(cv_sweep_legs(sweep_type, start_bias, stop_bias, points)):
+        b1500.reset_timestamp()
+        b1500.set_cv(channel, B1500_SWP_VF_DBLLIN if double else B1500_SWP_VF_SGLLIN, start, stop, n,
+                     hold=hold if leg == 0 else 0.0, delay=delay, second_delay=second_delay)
+
+        def point(step, source_v, para1, para2, time_s, s1, s2, _skip=leg > 0):
+            # A later leg starts at the previous leg's last bias, which is already recorded.
+            if not (_skip and step == 0):
+                on_point(source_v, para1, para2, time_s, s1, s2)
+
+        b1500.stream_cv_sweep(channel, cmu_mode, measurement_range, point)
+
+
+class CMUCalibration:
+    """CMU calibration for a procedure: the calibration buttons, the coverage check, and using it.
+
+    Mix into a MeasurementProcedure that has 'cmu_channel', 'ac_level_mv' and
+    'require_cmu_calibration' parameters, and implement cmu_calibration_frequencies.
+    The UI then shows the "CMU Calibration" section: its buttons calibrate at
+    cmu_calibration_frequencies(settings), and its readout follows the fields in
+    CMU_FREQUENCY_FIELDS.
+
+    Calibration data stay in the B1500 until it is switched off, but *RST, which
+    every CMU procedure sends first, stops their use. Call apply_cmu_calibration
+    after the reset to use them again.
+    """
+    UI_ACTIONS = (
+        action("Open", "_on_cv_calibration_button", "open", section="CMU Calibration",
+               tooltip="Open correction: probes up, at the calibration frequencies"),
+        action("Short", "_on_cv_calibration_button", "short", section="CMU Calibration",
+               tooltip="Short correction: probes on a short, at the calibration frequencies"),
+        action("Phase", "_on_cv_calibration_button", "phase", section="CMU Calibration",
+               tooltip="Phase compensation: probes up. Run it before the corrections."),
+        action("Load", "_on_cv_calibration_button", "load", section="CMU Calibration",
+               tooltip="Load correction: probes on a 50 Ohm standard, at the calibration frequencies"),
+    )
+    # Fields that change cmu_calibration_frequencies; the UI refreshes the readout when they change.
+    CMU_FREQUENCY_FIELDS = ('frequencies',)
+
+    @classmethod
+    def cmu_calibration_frequencies(cls, settings) -> list[float]:
+        """The frequencies the calibration buttons measure, sorted, from the form settings."""
+        raise NotImplementedError
+
+    def apply_cmu_calibration(self, b1500):
+        """Use the stored phase compensation and the corrections the instrument still holds.
+
+        Call after b1500.reset(). A correction type is used when it was measured at
+        the frequencies now in the instrument's correction list; it is reported as
+        incomplete when those do not span this run's calibration frequencies (the
+        CMU interpolates between list frequencies). With require_cmu_calibration,
+        missing phase compensation, a missing open correction or incomplete coverage
+        is an error. Records what is in use as the 'cmu_correction' setting, so the
+        CSV header shows it. Returns that list.
+        """
+        channel = self.cmu_channel
+        records = (self.cmu_calibration or {}).get(str(channel), {})
+        needed = self.cmu_calibration_frequencies(self.settings)
+        lo, hi = min(needed), max(needed)
+        # `or`: the waveform preview's stand-in instrument answers None.
+        instrument_freqs = sorted(b1500.get_cmu_correction_frequencies(channel) or [])
+        problems, corrections = [], []
+        for corr_type in ("open", "short", "load"):
+            entry = records.get(corr_type)
+            if not isinstance(entry, dict):
+                continue
+            stored = sorted(float(f) for f in entry.get("frequencies_hz") or [])
+            if not stored or len(stored) != len(instrument_freqs) or any(
+                    abs(a - b) > 1e-6 * b for a, b in zip(stored, instrument_freqs)):
+                problems.append(f"{corr_type}: no longer in the instrument (switched off since, "
+                                f"or recalibrated at other frequencies); measure it again")
+                continue
+            corrections.append(corr_type)
+            if stored[0] > lo * (1 + 1e-9) or stored[-1] < hi * (1 - 1e-9):
+                problems.append(f"{corr_type}: calibrated {freq_label(stored[0])}–{freq_label(stored[-1])}, "
+                                f"which does not span {freq_label(lo)}–{freq_label(hi)}")
+
+        want_phase = phase_compensated(self.cmu_calibration, channel)
+        applied = b1500.apply_cmu_calibration(channel, want_phase, corrections) or {}
+        used = list(corrections)
+        if not want_phase:
+            problems.append("phase: never run")
+        elif applied.get("phase_result") == 0:
+            used.insert(0, "phase")
+        else:
+            # ADJ? 3: no phase compensation since the B1500 was switched on.
+            problems.append(f"phase: the instrument holds no compensation data (ADJ? {applied.get('phase_result')}); "
+                            f"run Phase again")
+            b1500.apply_cmu_calibration(channel, False, corrections)
+        if "open" not in corrections:
+            problems.append("open: missing")
+
+        self.settings['cmu_correction'] = ", ".join(used) or "none"
+        self.log(f"CMU calibration in use on channel {channel}: {self.settings['cmu_correction']}")
+        if problems:
+            message = f"CMU calibration on channel {channel}: " + "; ".join(problems)
+            if self.require_cmu_calibration:
+                raise ValueError(message)
+            self.log(f"Warning: {message}")
+        return used

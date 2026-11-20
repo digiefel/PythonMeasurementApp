@@ -3,9 +3,9 @@ from matplotlib import colormaps
 from plotting import PlotDef, Curve
 from procedures.base import Choice, MeasurementProcedure, ValueList, parameter
 from procedures._cmu import (
-    calibrated_frequencies,
+    CMUCalibration,
+    DEFAULT_CORRECTION_FREQUENCIES,
     freq_label,
-    phase_compensated,
     append_z_theta_point,
     report_cmu_status,
     resolve_cmu_channel,
@@ -38,7 +38,7 @@ CF_SPACINGS = (
     ('linear', 'Linear'),
 )
 
-class CfSweepProcedure(MeasurementProcedure):
+class CfSweepProcedure(CMUCalibration, MeasurementProcedure):
     """CMU-based capacitance-frequency sweep for B1500, repeated at several DC biases.
 
     The counterpart of CVSweep: here the DC bias is held constant while the AC
@@ -59,13 +59,12 @@ class CfSweepProcedure(MeasurementProcedure):
     (lowest bias) to green (highest bias); the legend names only those two.
     A repeated bias gets the same colour as its first sweep.
 
-    Open/short/load correction uses the calibration stored for the channel (for
-    example by the CVSweep calibration buttons). The instrument interpolates
-    correction data between calibrated frequencies, so coverage is checked
-    against the sweep's frequency range.
+    The calibration buttons measure at the B1500's default correction frequencies
+    inside the sweep range, plus Start and Stop; the instrument interpolates
+    between them. Every run uses the phase compensation and corrections the
+    instrument holds, and the CSV header names them (cmu_correction).
     """
 
-    # TODO: CMU calibration buttons. The shared UI handler reads a 'frequencies' list field, which this procedure does not have.
     NAME = "CfSweep"
     PARAMETERS = (
         parameter('gpib_address', 'GPIB Address', 'GPIB0::17::INSTR', str),
@@ -87,6 +86,16 @@ class CfSweepProcedure(MeasurementProcedure):
         parameter('require_cmu_calibration', 'Require Calibration', False, bool),
     )
 
+    CMU_FREQUENCY_FIELDS = ('start_frequency', 'stop_frequency')
+
+    @classmethod
+    def cmu_calibration_frequencies(cls, settings):
+        lo, hi = sorted((parse_si_value(str(settings.get('start_frequency', '1k'))),
+                         parse_si_value(str(settings.get('stop_frequency', '5M')))))
+        if not (1e3 <= lo and hi <= 5e6):
+            raise ValueError("C-f frequencies must be within 1 kHz to 5 MHz.")
+        return sorted({lo, hi, *(f for f in DEFAULT_CORRECTION_FREQUENCIES if lo < f < hi)})
+
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
         super().__init__(settings, output_root, output_relative, runner, fallback_root)
         self.cmu_channel = resolve_cmu_channel(
@@ -98,34 +107,12 @@ class CfSweepProcedure(MeasurementProcedure):
         self.ac_level = self.ac_level_mv / 1000.0
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
 
-    def _report_calibration_coverage(self):
-        # Correction is interpolated between calibrated frequencies, so each type must span the sweep range.
-        f_lo, f_hi = sorted((self.start_hz, self.stop_hz))
-        msgs = []
-        for corr_type, freqs in calibrated_frequencies(self.cmu_calibration, self.cmu_channel).items():
-            if not freqs:
-                msgs.append(f"{corr_type}: none")
-            elif freqs[0] > f_lo or freqs[-1] < f_hi:
-                msgs.append(f"{corr_type}: {freq_label(freqs[0])}–{freq_label(freqs[-1])} "
-                            f"does not span {freq_label(f_lo)}–{freq_label(f_hi)}")
-        if not phase_compensated(self.cmu_calibration, self.cmu_channel):
-            msgs.append("phase: missing")
-
-        if not msgs:
-            self.log(f"CMU calibration coverage OK on channel {self.cmu_channel}.")
-            return
-        joined = "; ".join(msgs)
-        if self.require_cmu_calibration:
-            raise ValueError(f"Missing required CMU calibration on channel {self.cmu_channel}: {joined}")
-        self.log(f"Warning: incomplete CMU calibration coverage on channel {self.cmu_channel}: {joined}")
-
     @staticmethod
     def _bias_label(bias_v):
         return f"{bias_v:+g}V"
 
     def measure(self, device):
         b1500 = self.b1500
-        self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
         primary_label = format_cmu_component_label(primary_name)
         monitor_label = format_cmu_component_label(monitor_name)
@@ -170,6 +157,8 @@ class CfSweepProcedure(MeasurementProcedure):
         b1500.reset()
         b1500.set_timeout(10000)
         b1500.enable_error_detect(True)
+        # *RST stops the use of the calibration data; switch it back on.
+        self.apply_cmu_calibration(b1500)
         # Leave the CMU at the last bias between sweeps; the finally block below zeroes it.
         b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
 

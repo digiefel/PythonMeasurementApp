@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import messagebox
 from typing import Optional
-from si_utils import parse_si_value, parse_si_list, format_si_value, format_si_compact_0
+from si_utils import parse_si_value, format_si_value, format_si_compact_0
 from ui_temperature import TemperatureUI
 from ui_device_selection import DeviceSelectionDialog
 from ui_site_selection import SiteSelectionDialog
@@ -42,6 +42,7 @@ from runner import MeasurementAbortRequested, MeasurementSkipRequested, Measurem
 from instrumentio.bridge import InstrumentCancelled, InstrumentError
 from procedures import load_procedures
 from procedures.base import Choice, OptionalSMU, SMU, SMUOrGNDU, ValueList, WGFMUChannel
+from procedures._cmu import record_calibration
 from tooltip_helper import attach_tooltip
 from ui_smu_calibration import calibrate_smus
 from plotting import PlotBridge
@@ -1409,14 +1410,12 @@ class MainUI:
             except Exception:
                 pass
 
-        # Recompute calibration coverage state when selected frequencies change.
-        freq_item = self.param_vars.get('frequencies')
-        if freq_item:
-            freq_var, _ = freq_item
-            try:
-                freq_var.trace_add('write', lambda *_: self._refresh_cv_calibration_readout())
-            except Exception:
-                pass
+        # Recompute calibration coverage state when the fields that set the calibration frequencies change.
+        proc_class = self.procedure_classes.get(self.proc_var.get())
+        for key in getattr(proc_class, 'CMU_FREQUENCY_FIELDS', ()):
+            item = self.param_vars.get(key)
+            if item:
+                item[0].trace_add('write', lambda *_: self._refresh_cv_calibration_readout())
 
     def _build_cv_calibration_tooltip(self, cal_type: str, base_tip: str) -> str:
         try:
@@ -1600,14 +1599,11 @@ class MainUI:
         if channel == -1:
             raise ValueError("Select a valid CMU Channel before calibration.")
 
-        freq_item = self.param_vars.get('frequencies')
-        if not freq_item:
-            raise RuntimeError("Frequency field not available.")
-        freq_var, _ = freq_item
-        raw = str(freq_var.get()).strip()
-        if not raw:
-            raise ValueError("Enter at least one frequency before calibration.")
-        frequencies_hz = sorted(float(f) for f in parse_si_list(raw))
+        # Each CMU procedure says which frequencies its calibration covers (procedures/_cmu.py, CMUCalibration).
+        proc_class = self.procedure_classes.get(self.proc_var.get())
+        if not hasattr(proc_class, 'cmu_calibration_frequencies'):
+            raise RuntimeError("This procedure has no CMU calibration.")
+        frequencies_hz = proc_class.cmu_calibration_frequencies(self.collect_settings())
         if not frequencies_hz:
             raise ValueError("Enter at least one frequency before calibration.")
         return channel, frequencies_hz
@@ -1626,29 +1622,20 @@ class MainUI:
         except Exception:
             return str(channel)
 
-    def _commit_cv_calibration_result(self, channel: int, cal_type: str, result, frequencies_hz, proc_name, settings):
+    def _commit_cv_calibration_result(self, channel: int, cal_type: str, result, proc_name, settings):
         channel_key = str(channel)
-        channel_store = self._cv_calibration_store.setdefault(channel_key, {})
-        if cal_type == 'phase':
-            entry = {
-                'timestamp': datetime.now().isoformat(timespec='seconds'),
-                'result': result,
-            }
-        else:
-            entry = {
-                'timestamp': datetime.now().isoformat(timespec='seconds'),
-                'frequencies_hz': list(frequencies_hz or []),
-                'results_by_frequency': result,
-            }
-        channel_store[cal_type] = entry
+        record_calibration(self._cv_calibration_store, channel, cal_type, result,
+                           datetime.now().isoformat(timespec='seconds'))
 
         session_state = self._cv_calibration_session_done.setdefault(channel_key, {})
         if cal_type == 'phase':
             session_state['phase'] = True
         else:
-            done_set = set(session_state.get(cal_type, set()))
-            done_set.update(self._freq_key(f) for f in (frequencies_hz or []))
-            session_state[cal_type] = done_set
+            if result.get('list_changed'):
+                # The new frequency list cleared the other corrections in the instrument.
+                for other in ('open', 'short', 'load'):
+                    session_state.pop(other, None)
+            session_state[cal_type] = {self._freq_key(f) for f in result['frequencies_hz']}
 
         self.config.set_cmu_calibration(self._cv_calibration_store)
         self.config.set_procedure_settings(proc_name, settings)
@@ -1717,17 +1704,19 @@ class MainUI:
                     if cal_type == 'phase':
                         self.runner.check_stop("Stop requested before phase compensation")
                         result = b1500.run_cmu_phase_compensation(channel)
-                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, None, proc_name, settings_now)
+                        if int(result.get('result', 1)) != 0:
+                            raise RuntimeError(f"phase compensation returned {result.get('result')}")
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, proc_name, settings_now)
                         self._post_log(f"CMU {cal_type} calibration completed on {channel_name}")
                     else:
-                        result = {}
-                        for freq in frequencies_hz:
-                            self.runner.check_stop("Stop requested during CMU calibration")
-                            freq_key = self._freq_key(freq)
-                            result[freq_key] = b1500.run_cmu_correction(channel, cal_type, freq)
-                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, list(frequencies_hz), proc_name, settings_now)
+                        # One call for every frequency: the instrument's list is rebuilt only when the frequencies change.
+                        result = b1500.measure_cmu_correction(channel, cal_type, frequencies_hz, ac_level_v)
+                        self._post(self._commit_cv_calibration_result, channel, cal_type, result, proc_name, settings_now)
                         freq_labels = ", ".join(f"{format_si_value(f)}Hz" for f in frequencies_hz)
                         self._post_log(f"CMU {cal_type} calibration completed on {channel_name} @ [{freq_labels}]")
+                        if result.get('list_changed'):
+                            self._post_log("The calibration frequencies changed, so the instrument cleared the other "
+                                           "corrections (open/short/load). Measure them again at these frequencies.")
             except (MeasurementAbortRequested, InstrumentCancelled):
                 self._post_log(f"CMU {cal_type} calibration aborted by user.")
                 self._post(self._cv_calib_readout_var.set, "Calibration aborted.")

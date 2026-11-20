@@ -1,5 +1,5 @@
 from plotting import PlotDef, Curve
-from procedures.base import Choice, MeasurementProcedure, ValueList, parameter, action
+from procedures.base import Choice, MeasurementProcedure, ValueList, parameter
 from instrumentio.constants import (
     B1500_CMU_CHANNELS,
     B1500_CMU_INTEGRATION_MODES,
@@ -9,13 +9,10 @@ from instrumentio.constants import (
 from instrumentio.codes import (
     B1500_AUTO_RANGE,
     B1500_CH_ALL,
-    B1500_CMUM_CP_D,
     B1500_CMUM_Z_TDEG,
     B1500_CMUM_Z_TRAD,
     B1500_LAST_STOP,
     B1500_STOP_DISABLE,
-    B1500_SWP_VF_DBLLIN,
-    B1500_SWP_VF_SGLLIN,
 )
 from instrumentio.descriptors import (
     format_cmu_component_label,
@@ -23,26 +20,20 @@ from instrumentio.descriptors import (
     get_cmu_mode_name,
 )
 from procedures._cmu import (
+    CMUCalibration,
+    CV_SWEEP_TYPES,
     append_z_theta_point,
-    calibrated_frequencies,
-    freq_key,
     freq_label,
-    phase_compensated,
+    parse_cmu_frequencies,
     report_cmu_status,
     resolve_cmu_channel,
+    run_cv_sweep,
+    validate_cv_sweep,
     z_theta_plots,
 )
-from si_utils import parse_si_list
 
 
-CV_SWEEP_TYPES = (
-    ('single', 'Single (Start → Stop)'),
-    ('double', 'Double (Start → Stop → Start)'),
-    ('butterfly', 'Butterfly (0 → Vmax → Vmin → 0)'),
-)
-
-
-class CVSweepProcedure(MeasurementProcedure):
+class CVSweepProcedure(CMUCalibration, MeasurementProcedure):
     """CMU-based capacitance-voltage sweep for B1500.
 
     Supports three sweep shapes (sweep_type):
@@ -58,8 +49,9 @@ class CVSweepProcedure(MeasurementProcedure):
     Each point sets DC bias, waits for settling and measures impedance using the
     selected AC frequency/level and CMU integration time. Results plot as acquired.
     PLC integration rejects line-frequency noise: N cycles take N × 20 ms at 50 Hz.
-    Calibration controls apply open/short/load correction and phase compensation.
-    Hover over settings for their meanings.
+    The calibration buttons measure at the sweep frequencies. Every run uses the
+    phase compensation and corrections the instrument holds, and the CSV header
+    names them (cmu_correction). Hover over settings for their meanings.
 
     When cmu_mode is Z-Theta, the plot shows |Z|-Theta (measured), then the
     Nyquist plot (-Z'' against Z', with bias running along each curve), then
@@ -88,12 +80,10 @@ class CVSweepProcedure(MeasurementProcedure):
         parameter('second_delay', 'Second Delay (s)', 0.0, float),
         parameter('require_cmu_calibration', 'Require Calibration', False, bool),
     )
-    UI_ACTIONS = (
-        action("Open", "_on_cv_calibration_button", "open", section="CMU Calibration", tooltip="Open-circuit calibration"),
-        action("Short", "_on_cv_calibration_button", "short", section="CMU Calibration", tooltip="Short-circuit calibration"),
-        action("Phase", "_on_cv_calibration_button", "phase", section="CMU Calibration", tooltip="Phase compensation"),
-        action("Load", "_on_cv_calibration_button", "load", section="CMU Calibration", tooltip="Load calibration"),
-    )
+
+    @classmethod
+    def cmu_calibration_frequencies(cls, settings):
+        return parse_cmu_frequencies(settings.get('frequencies', '100k'))
 
     def __init__(self, settings, output_root, output_relative, runner, fallback_root=None):
         settings = dict(settings)
@@ -106,68 +96,13 @@ class CVSweepProcedure(MeasurementProcedure):
         self.cmu_channel = resolve_cmu_channel(
             self.settings, self.cmu_channel, self.log)
         self.settings['cmu_channel'] = self.cmu_channel
-        self.frequencies = self._parse_frequencies(self.settings.get('frequencies', '100k'))
+        self.frequencies = parse_cmu_frequencies(self.settings.get('frequencies', '100k'))
         self.ac_level = self.ac_level_mv / 1000.0
         self.cmu_calibration = settings.get("cmu_calibration", {}) or {}
         self._validate_settings()
 
-    def _calibration_gaps(self):
-        """Return missing calibration coverage by type for current channel/frequencies."""
-        # Coverage is checked per selected frequency because CMU open/short/load corrections are frequency-specific.
-        selected_keys = {freq_key(f) for f in self.frequencies}
-        calibrated = calibrated_frequencies(self.cmu_calibration, self.cmu_channel)
-        missing = {
-            corr_type: selected_keys - {freq_key(f) for f in calibrated[corr_type]}
-            for corr_type in ("open", "short", "load")
-        }
-        missing["phase"] = not phase_compensated(self.cmu_calibration, self.cmu_channel)
-        return missing
-
-    def _report_calibration_coverage(self):
-        missing = self._calibration_gaps()
-        msgs = []
-        for corr_type in ("open", "short", "load"):
-            miss = missing[corr_type]
-            if not miss:
-                continue
-            freq_list = sorted(float(k) for k in miss)
-            labels = ", ".join(freq_label(f) for f in freq_list)
-            msgs.append(f"{corr_type}: [{labels}]")
-        if missing["phase"]:
-            msgs.append("phase: missing")
-
-        if not msgs:
-            self.log(f"CMU calibration coverage OK on channel {self.cmu_channel}.")
-            return
-
-        joined = "; ".join(msgs)
-        if self.require_cmu_calibration:
-            raise ValueError(
-                f"Missing required CMU calibration on channel {self.cmu_channel}: {joined}"
-            )
-        self.log(
-            f"Warning: incomplete CMU calibration coverage on channel {self.cmu_channel}: {joined}"
-        )
-
-    @staticmethod
-    def _parse_frequencies(text):
-        freqs = sorted(parse_si_list(str(text)))
-        if not freqs:
-            raise ValueError("At least one frequency is required.")
-        for f in freqs:
-            if not (1e3 <= f <= 5e6):
-                raise ValueError(f"Frequency {f:.6g} Hz out of range [1 kHz, 5 MHz].")
-        return freqs
-
     def _validate_settings(self):
-        if self.sweep_type not in ('single', 'double', 'butterfly'):
-            raise ValueError(f"Invalid sweep_type: {self.sweep_type!r}")
-        if self.points < 1:
-            raise ValueError("C-V points must be >= 1")
-        if self.sweep_type == 'butterfly' and self.start_bias == self.stop_bias:
-            raise ValueError("For butterfly sweep, Start Bias (Vmax) and Stop Bias (Vmin) must differ.")
-        if self.sweep_type != 'butterfly' and self.start_bias == self.stop_bias and self.points > 1:
-            raise ValueError("Start Bias and Stop Bias are equal; use points=1 for spot-like measurement.")
+        validate_cv_sweep(self.sweep_type, self.start_bias, self.stop_bias, self.points)
         if not (0.0 <= self.ac_level_mv <= 250.0):
             raise ValueError("AC Level must be between 0 and 250 mV for CMU.")
         if self.integration_mode not in (0, 1, 2):
@@ -175,38 +110,11 @@ class CVSweepProcedure(MeasurementProcedure):
         if self.integration_value < 1:
             raise ValueError("Integration Value must be >= 1.")
 
-    def _compute_butterfly_segments(self):
-        """Split 0 → Vmax → Vmin → 0 into 3 (start, stop, npoints) legs.
-
-        self.start_bias = Vmax (positive peak), self.stop_bias = Vmin (negative peak).
-        Points are distributed proportionally to each leg's voltage span.
-        Legs 2 and 3 share a boundary with the prior leg (their first point is
-        skipped on concatenation), so the pool is self.points + 2.
-        """
-        vmax = self.start_bias
-        vmin = self.stop_bias
-        spans = [abs(vmax), abs(vmax - vmin), abs(vmin)]
-        total_span = sum(spans)
-        if total_span == 0:
-            raise ValueError("Butterfly sweep: all voltage spans are zero.")
-        # Allocate the requested visible points in proportion to voltage span, then remove shared leg boundaries.
-        pool = self.points + 2  # +2 to account for 2 boundary dedup skips
-        raw = [max(2, round(pool * s / total_span)) for s in spans]
-        # Ensure sum(raw) - 2 = self.points by adjusting middle leg
-        diff = (self.points + 2) - sum(raw)
-        raw[1] = max(2, raw[1] + diff)
-        return [
-            (0.0,  vmax, raw[0]),
-            (vmax, vmin, raw[1]),
-            (vmin, 0.0,  raw[2]),
-        ]
-
     def _is_z_theta_mode(self) -> bool:
         return self.cmu_mode in (B1500_CMUM_Z_TDEG, B1500_CMUM_Z_TRAD)
 
     def measure(self, device):
         b1500 = self.b1500
-        self._report_calibration_coverage()
         primary_name, monitor_name = get_cmu_mode_components(self.cmu_mode)
         primary_label = format_cmu_component_label(primary_name)
         monitor_label = format_cmu_component_label(monitor_name)
@@ -222,6 +130,8 @@ class CVSweepProcedure(MeasurementProcedure):
         b1500.reset()
         b1500.set_timeout(10000)
         b1500.enable_error_detect(True)
+        # *RST stops the use of the calibration data; switch it back on.
+        self.apply_cmu_calibration(b1500)
         # Leave the CMU at the final bias level until the explicit cleanup in perform_cv_sweep.
         b1500.stop_mode(B1500_STOP_DISABLE, B1500_LAST_STOP)
 
@@ -269,14 +179,17 @@ class CVSweepProcedure(MeasurementProcedure):
             for index, freq in enumerate(self.frequencies):
                 self.check_stop(b1500)
                 b1500.set_cmu_freq(self.cmu_channel, freq)
-                if self.sweep_type == 'butterfly':
-                    rows = self._run_butterfly_sweep(b1500, index, freq, nonzero_statuses)
-                else:
-                    rows = self._run_standard_sweep(b1500, index, freq, nonzero_statuses)
 
-                for row in rows:
-                    # Prefix every row with frequency so the CSV stays self-describing after concatenating sweeps.
-                    all_results.append([freq] + row)
+                def on_point(source_v, para1, para2, time_s, s1, s2, _curve=index, _freq=freq):
+                    self.check_stop(b1500)
+                    self._plot_point(_curve, source_v, para1, para2, _freq)
+                    report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
+                    # Every row starts with the frequency, so the CSV stays self-describing after concatenating sweeps.
+                    all_results.append([_freq, source_v, para1, para2, time_s, s1, s2, s1 | s2])
+
+                run_cv_sweep(b1500, self.cmu_channel, self.cmu_mode, self.measurement_range, self.sweep_type,
+                             self.start_bias, self.stop_bias, self.points,
+                             self.hold_time, self.delay_time, self.second_delay, on_point)
                 self.report_progress(index + 1, len(self.frequencies), 'Frequency sweeps')
 
         finally:
@@ -308,56 +221,3 @@ class CVSweepProcedure(MeasurementProcedure):
         else:
             self.runner.plot.append_point(f"p_{curve}", source_v, para1)
             self.runner.plot.append_point(f"m_{curve}", source_v, para2)
-
-    def _run_standard_sweep(self, b1500, curve, freq, nonzero_statuses):
-        """Single or double linear sweep with per-point live SCPI streaming."""
-        mode = B1500_SWP_VF_DBLLIN if self.sweep_type == 'double' else B1500_SWP_VF_SGLLIN
-        rows = []
-
-        b1500.reset_timestamp()
-        b1500.set_cv(
-            self.cmu_channel, mode,
-            self.start_bias, self.stop_bias, self.points,
-            hold=self.hold_time, delay=self.delay_time, second_delay=self.second_delay,
-        )
-
-        def on_point(_, source_v, para1, para2, time_s, s1, s2):
-            # stream_cv_sweep calls this once per bias point with source voltage, two CMU values, time, and statuses.
-            self.check_stop(b1500)
-            self._plot_point(curve, source_v, para1, para2, freq)
-            report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
-            rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
-
-        b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, on_point)
-        return rows
-
-    def _run_butterfly_sweep(self, b1500, curve, freq, nonzero_statuses):
-        """Three-segment butterfly sweep (0→Vmax→Vmin→0) with per-point live SCPI streaming."""
-        segments = self._compute_butterfly_segments()
-        rows = []
-
-        for seg_idx, (seg_start, seg_stop, npts) in enumerate(segments):
-            self.check_stop(b1500)
-            # Only the first leg applies hold_time; later legs continue the already-biased waveform.
-            hold = self.hold_time if seg_idx == 0 else 0.0
-            first_point_skip = seg_idx > 0  # skip shared boundary with prior leg
-
-            b1500.reset_timestamp()
-            b1500.set_cv(
-                self.cmu_channel, B1500_SWP_VF_SGLLIN,
-                seg_start, seg_stop, npts,
-                hold=hold, delay=self.delay_time, second_delay=self.second_delay,
-            )
-
-            def on_point(step, source_v, para1, para2, time_s, s1, s2, _skip=first_point_skip):
-                if _skip and step == 0:
-                    # Segment boundaries duplicate the previous endpoint; skip them for clean CSV/plot traces.
-                    return
-                self.check_stop(b1500)
-                self._plot_point(curve, source_v, para1, para2, freq)
-                report_cmu_status(self.runner, self.cmu_channel, nonzero_statuses, s1, s2)
-                rows.append([source_v, para1, para2, time_s, s1, s2, s1 | s2])
-
-            b1500.stream_cv_sweep(self.cmu_channel, self.cmu_mode, self.measurement_range, on_point)
-
-        return rows
